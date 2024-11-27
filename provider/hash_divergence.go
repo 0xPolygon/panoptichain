@@ -8,9 +8,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/rs/zerolog"
 
-	"github.com/maticnetwork/panoptichain/network"
-	"github.com/maticnetwork/panoptichain/observer"
-	"github.com/maticnetwork/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/network"
+	"github.com/0xPolygon/panoptichain/observer"
+	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
 // HashDivergenceProvider is a special type of provider because it's a provider

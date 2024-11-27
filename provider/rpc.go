@@ -23,15 +23,15 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/rs/zerolog"
 
-	"github.com/maticnetwork/panoptichain/api"
-	"github.com/maticnetwork/panoptichain/blockbuffer"
-	"github.com/maticnetwork/panoptichain/config"
-	"github.com/maticnetwork/panoptichain/contracts"
-	"github.com/maticnetwork/panoptichain/log"
-	"github.com/maticnetwork/panoptichain/network"
-	"github.com/maticnetwork/panoptichain/observer"
-	"github.com/maticnetwork/panoptichain/observer/topics"
-	"github.com/maticnetwork/panoptichain/util"
+	"github.com/0xPolygon/panoptichain/api"
+	"github.com/0xPolygon/panoptichain/blockbuffer"
+	"github.com/0xPolygon/panoptichain/config"
+	"github.com/0xPolygon/panoptichain/contracts"
+	"github.com/0xPolygon/panoptichain/log"
+	"github.com/0xPolygon/panoptichain/network"
+	"github.com/0xPolygon/panoptichain/observer"
+	"github.com/0xPolygon/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/util"
 )
 
 // RPCProvider is the generic struct for all EVM style JSON RPC services.

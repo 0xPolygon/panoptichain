@@ -11,9 +11,9 @@ import (
 	"github.com/maticnetwork/polygon-cli/p2p/database"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/maticnetwork/panoptichain/api"
-	"github.com/maticnetwork/panoptichain/metrics"
-	"github.com/maticnetwork/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/api"
+	"github.com/0xPolygon/panoptichain/metrics"
+	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
 const ReorgsKind = "reorgs"

@@ -11,7 +11,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/maticnetwork/panoptichain/observer"
+	"github.com/0xPolygon/panoptichain/observer"
 )
 
 type parsedDesc struct {

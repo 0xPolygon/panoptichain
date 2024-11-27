@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/maticnetwork/panoptichain/observer"
-	"github.com/maticnetwork/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/observer"
+	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
 type SystemProvider struct {

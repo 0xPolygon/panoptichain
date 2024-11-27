@@ -8,9 +8,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/maticnetwork/panoptichain/config"
-	"github.com/maticnetwork/panoptichain/log"
-	"github.com/maticnetwork/panoptichain/runner"
+	"github.com/0xPolygon/panoptichain/config"
+	"github.com/0xPolygon/panoptichain/log"
+	"github.com/0xPolygon/panoptichain/runner"
 )
 
 func main() {

@@ -9,7 +9,7 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/maticnetwork/panoptichain/log"
+	"github.com/0xPolygon/panoptichain/log"
 )
 
 // BufferedBlock is a way to abstract the block for queueing and

@@ -11,7 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	zlog "github.com/rs/zerolog/log"
 
-	"github.com/maticnetwork/panoptichain/config"
+	"github.com/0xPolygon/panoptichain/config"
 )
 
 func init() {
