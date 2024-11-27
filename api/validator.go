@@ -9,7 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/maticnetwork/panoptichain/network"
+	"github.com/0xPolygon/panoptichain/network"
 )
 
 const refreshInterval = time.Hour

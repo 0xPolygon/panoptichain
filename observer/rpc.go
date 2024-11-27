@@ -15,11 +15,11 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/maticnetwork/panoptichain/api"
-	"github.com/maticnetwork/panoptichain/contracts"
-	"github.com/maticnetwork/panoptichain/log"
-	"github.com/maticnetwork/panoptichain/metrics"
-	"github.com/maticnetwork/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/api"
+	"github.com/0xPolygon/panoptichain/contracts"
+	"github.com/0xPolygon/panoptichain/log"
+	"github.com/0xPolygon/panoptichain/metrics"
+	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
 type EmptyBlockObserver struct {

@@ -4,8 +4,8 @@ package network
 import (
 	"fmt"
 
-	"github.com/maticnetwork/panoptichain/config"
-	"github.com/maticnetwork/panoptichain/log"
+	"github.com/0xPolygon/panoptichain/config"
+	"github.com/0xPolygon/panoptichain/log"
 )
 
 // Network is the interface that we need to identify a network.

@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maticnetwork/panoptichain/config"
-	"github.com/maticnetwork/panoptichain/log"
-	"github.com/maticnetwork/panoptichain/network"
-	"github.com/maticnetwork/panoptichain/observer"
-	"github.com/maticnetwork/panoptichain/provider"
-	"github.com/maticnetwork/panoptichain/util"
+	"github.com/0xPolygon/panoptichain/config"
+	"github.com/0xPolygon/panoptichain/log"
+	"github.com/0xPolygon/panoptichain/network"
+	"github.com/0xPolygon/panoptichain/observer"
+	"github.com/0xPolygon/panoptichain/provider"
+	"github.com/0xPolygon/panoptichain/util"
 )
 
 var providers []provider.Provider

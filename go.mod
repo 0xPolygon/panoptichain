@@ -1,4 +1,4 @@
-module github.com/maticnetwork/panoptichain
+module github.com/0xPolygon/panoptichain
 
 go 1.21
 

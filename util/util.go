@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/maticnetwork/panoptichain/log"
+	"github.com/0xPolygon/panoptichain/log"
 )
 
 func BlockFor(ctx context.Context, duration time.Duration) {

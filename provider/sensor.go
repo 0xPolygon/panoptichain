@@ -18,10 +18,10 @@ import (
 	"github.com/rs/zerolog"
 	"google.golang.org/api/iterator"
 
-	"github.com/maticnetwork/panoptichain/api"
-	"github.com/maticnetwork/panoptichain/network"
-	"github.com/maticnetwork/panoptichain/observer"
-	"github.com/maticnetwork/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/api"
+	"github.com/0xPolygon/panoptichain/network"
+	"github.com/0xPolygon/panoptichain/observer"
+	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
 type SensorNetworkProvider struct {

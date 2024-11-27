@@ -10,9 +10,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 
-	"github.com/maticnetwork/panoptichain/config"
-	"github.com/maticnetwork/panoptichain/log"
-	"github.com/maticnetwork/panoptichain/network"
+	"github.com/0xPolygon/panoptichain/config"
+	"github.com/0xPolygon/panoptichain/log"
+	"github.com/0xPolygon/panoptichain/network"
 )
 
 // Observer defines the functioned required for adding a new observer. This
