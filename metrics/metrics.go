@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	"github.com/maticnetwork/panoptichain/config"
+	"github.com/0xPolygon/panoptichain/config"
 )
 
 // Subsystem defines the different types of providers that we use to

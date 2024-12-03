@@ -8,9 +8,9 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/maticnetwork/panoptichain/log"
-	"github.com/maticnetwork/panoptichain/network"
-	"github.com/maticnetwork/panoptichain/observer"
+	"github.com/0xPolygon/panoptichain/log"
+	"github.com/0xPolygon/panoptichain/network"
+	"github.com/0xPolygon/panoptichain/observer"
 )
 
 // Provider must be implemented by any system that's monitoring the

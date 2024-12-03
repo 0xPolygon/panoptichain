@@ -12,11 +12,11 @@ import (
 	"github.com/rs/zerolog"
 	orderedmap "github.com/wk8/go-ordered-map/v2"
 
-	"github.com/maticnetwork/panoptichain/api"
-	"github.com/maticnetwork/panoptichain/blockbuffer"
-	"github.com/maticnetwork/panoptichain/network"
-	"github.com/maticnetwork/panoptichain/observer"
-	"github.com/maticnetwork/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/api"
+	"github.com/0xPolygon/panoptichain/blockbuffer"
+	"github.com/0xPolygon/panoptichain/network"
+	"github.com/0xPolygon/panoptichain/observer"
+	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
 type HeimdallProvider struct {
