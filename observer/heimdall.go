@@ -307,16 +307,17 @@ type HeimdallMilestone struct {
 		MilestoneID string `json:"milestone_id"`
 		Timestamp   uint64 `json:"timestamp"`
 	} `json:"result"`
-	Count uint64 `json:"count"`
+	Count     uint64 `json:"count"`
+	PrevCount uint64
 }
 
 type MilestoneObserver struct {
-	// TODO(praetoriansentry): ... this doesn't seem very useful. We should have a counter and label it by the provider
 	time       *prometheus.GaugeVec
 	height     *prometheus.GaugeVec
 	count      *prometheus.GaugeVec
 	startBlock *prometheus.GaugeVec
 	endBlock   *prometheus.GaugeVec
+	blockRange *prometheus.HistogramVec
 }
 
 func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
@@ -333,10 +334,17 @@ func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 		logger.Error().Msg("Failed to get Heimdall milestone height")
 	}
 
+	start := float64(milestone.Result.StartBlock)
+	end := float64(milestone.Result.EndBlock)
+
 	o.count.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.Count))
 	o.time.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(seconds))
-	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.Result.StartBlock))
-	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.Result.EndBlock))
+	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(start)
+	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(end)
+
+	if milestone.Count > milestone.PrevCount {
+		o.blockRange.WithLabelValues(m.Network().GetName(), m.Provider()).Observe(end - start)
+	}
 }
 
 func (o *MilestoneObserver) Register(eb *EventBus) {
@@ -347,10 +355,16 @@ func (o *MilestoneObserver) Register(eb *EventBus) {
 	o.count = metrics.NewGauge(metrics.Heimdall, "milestone_count", "The milestone count")
 	o.startBlock = metrics.NewGauge(metrics.Heimdall, "milestone_start_block", "The milestone start block")
 	o.endBlock = metrics.NewGauge(metrics.Heimdall, "milestone_end_block", "The milestone end block")
+	o.blockRange = metrics.NewHistogram(
+		metrics.Heimdall,
+		"milestone_block_range",
+		"The number of blocks in the milestone",
+		newExponentialBuckets(2, 10),
+	)
 }
 
 func (o *MilestoneObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.time, o.height, o.count, o.startBlock, o.endBlock}
+	return []prometheus.Collector{o.time, o.height, o.count, o.startBlock, o.endBlock, o.blockRange}
 }
 
 type FailedProposerInfo struct {

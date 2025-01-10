@@ -278,6 +278,7 @@ func (h *HeimdallProvider) refreshMilestone() error {
 		return err
 	}
 
+	h.milestone.PrevCount = max(h.milestone.PrevCount, h.milestone.Count)
 	h.milestone.Count = count.Result.Count
 	h.logger.Info().Any("milestone", h.milestone).Msg("Received Heimdall milestone")
 

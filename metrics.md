@@ -519,6 +519,15 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_heimdall_milestone_block_range
+The number of blocks in the milestone
+
+Metric Type: HistogramVec
+
+Variable Labels:
+- network
+- provider
+
 ## MissedBlockProposalObserver
 
 
