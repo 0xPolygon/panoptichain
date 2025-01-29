@@ -55,14 +55,6 @@ http:
 # differentiate them.
 #
 # The interval field is used to override the runner.interval default.
-#
-# The `rpc` and `heimdall` providers have some co-dependency. For the PoS `rpc`
-# providers, ensure that you have the `heimdall` providers set. As there will be
-# calls to fetch the validators. See `/api/validator.go` for more context. These
-# observers require both to be set:
-# - "bogon_block"
-# - "validator_wallet_balance"
-#
 providers:
   # The system provider captures data for the panoptichain level system metrics.
   # Metrics such as panoptichain uptime are captured by this provider. See
@@ -272,6 +264,19 @@ providers:
   # The intervals for these providers are on a shorter interval to prevent
   # missing data. The heimdall APIs only allows us to fetch the current state,
   # not the previous, so a longer interval may skip over some events.
+  #
+  # The `rpc` and `heimdall` providers have some co-dependency. For the PoS
+  # `rpc` providers, ensure that you have the `heimdall` providers set. As there
+  # will be calls to fetch the validators. See `/api/validator.go` for more
+  # context. These observers require the both providers to be set:
+  # - "bogon_block"
+  # - "validator_wallet_balance"
+  #
+  # A similar situation occurs for `sensor_network` providers as well. These
+  # observers require the both providers to be set:
+  # - "sensor_bogon_block"
+  # - "sealed_out_of_turn"
+  # - "double_sign"
   heimdall:
     - name: "Polygon Mainnet"
       tendermint_url: "https://tendermint-api.polygon.technology"
