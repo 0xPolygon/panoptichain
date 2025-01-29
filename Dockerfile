@@ -1,6 +1,7 @@
 FROM golang:1.21-bullseye AS builder
 WORKDIR /app
 COPY . .
+ENV CGO_ENABLED=0 GOOS=linux
 RUN make
 
 FROM ubuntu:24.04
