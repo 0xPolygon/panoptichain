@@ -49,7 +49,10 @@ var cache sync.Map
 func Validators(n network.Network) ([]*Validator, error) {
 	var heimdallURL *string
 	for _, heimdall := range config.Config().Providers.HeimdallEndpoints {
-		heimdallURL = &heimdall.HeimdallURL
+		if heimdall.Name == n.GetName() {
+			heimdallURL = &heimdall.HeimdallURL
+			break
+		}
 	}
 
 	if heimdallURL == nil {
