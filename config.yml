@@ -36,17 +36,15 @@ http:
 # observe. These are the currently known networks. See ./network/network.go for
 # details.
 #
-# - "Polygon Mumbai"
-#	- "Heimdall Mumbai"
+# - "Polygon Amoy"
+#	- "Heimdall Amoy"
 # - "Polygon Mainnet"
 # - "Heimdall Mainnet"
 #	- "zkEVM Mainnet"
-# - "zkEVM Testnet"
 # - "zkEVM Cardona"
 # - "zkEVM Bali"
 # - "Ethereum"
 # - "Sepolia"
-# - "Goerli"
 #
 # If you wish to have a custom network name, you should define those in the
 # network section in this file.
@@ -57,6 +55,14 @@ http:
 # differentiate them.
 #
 # The interval field is used to override the runner.interval default.
+#
+# The `rpc` and `heimdall` providers have some co-dependency. For the PoS `rpc`
+# providers, ensure that you have the `heimdall` providers set. As there will be
+# calls to fetch the validators. See `/api/validator.go` for more context. These
+# observers require both to be set:
+# - "bogon_block"
+# - "validator_wallet_balance"
+#
 providers:
   # The system provider captures data for the panoptichain level system metrics.
   # Metrics such as panoptichain uptime are captured by this provider. See
