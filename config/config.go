@@ -89,6 +89,11 @@ type SensorNetwork struct {
 	Interval uint   `mapstructure:"interval"`
 }
 
+type Observers struct {
+	Enabled  []string `mapstructure:"enabled"`
+	Disabled []string `mapstructure:"disabled"`
+}
+
 // HTTP defines the HTTP properties that we'll use for exposing metrics.
 type HTTP struct {
 	Port    int    `mapstructure:"port" validate:"required"`
@@ -121,7 +126,7 @@ type config struct {
 	Runner    Runner          `mapstructure:"runner"`
 	HTTP      HTTP            `mapstructure:"http"`
 	Providers *Providers      `mapstructure:"providers"`
-	Observers []string        `mapstructure:"observers"`
+	Observers Observers       `mapstructure:"observers"`
 	Networks  []CustomNetwork `mapstructure:"networks"`
 	Logs      Logs            `mapstructure:"logs"`
 }
