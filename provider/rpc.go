@@ -53,6 +53,7 @@ type RPCProvider struct {
 	accounts         []string
 	accountBalances  observer.AccountBalances
 	timeToFinalized  *uint64
+	blockLookBack    uint64
 
 	// PoS
 	stateSync               map[bool]*observer.StateSync
@@ -90,14 +91,15 @@ type RPCProvider struct {
 }
 
 type RPCProviderOpts struct {
-	Network    network.Network
-	URL        string
-	Label      string
-	EventBus   *observer.EventBus
-	Interval   uint
-	Contracts  config.ContractAddresses
-	TimeToMine *config.TimeToMine
-	Accounts   []string
+	Network       network.Network
+	URL           string
+	Label         string
+	EventBus      *observer.EventBus
+	Interval      uint
+	Contracts     config.ContractAddresses
+	TimeToMine    *config.TimeToMine
+	Accounts      []string
+	BlockLookBack uint64
 }
 
 // NewRPCProvider will create a new RPC provider and configure it's event bus.
@@ -130,6 +132,7 @@ func NewRPCProvider(opts RPCProviderOpts) *RPCProvider {
 		trustedSequencers:    make(map[uint32]*RPCProvider),
 		trustedSequencerURL:  make(chan string),
 		rollupContracts:      make(map[uint32]common.Address),
+		blockLookBack:        opts.BlockLookBack,
 	}
 }
 
@@ -330,6 +333,18 @@ func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Clien
 	return nil
 }
 
+func (r *RPCProvider) getFilterOpts() *bind.FilterOpts {
+	opts := bind.FilterOpts{End: &r.BlockNumber}
+
+	if r.prevBlockNumber > 0 {
+		opts.Start = r.prevBlockNumber
+	} else if r.blockLookBack < r.BlockNumber {
+		opts.Start = r.BlockNumber - r.blockLookBack
+	}
+
+	return &opts
+}
+
 // cast call --rpc-url https://eth.llamarpc.com 0x28e4F3a7f651294B9564800b2D01f35189A5bFbE 'function counter() view returns(uint256)'
 // cast call --rpc-url https://polygon-rpc.com 0x0000000000000000000000000000000000001001 'function lastStateId() view returns(uint256)'
 func (r *RPCProvider) refreshStateSync(ctx context.Context, c *ethclient.Client, finalized bool) error {
@@ -398,7 +413,7 @@ func (r *RPCProvider) refreshCheckpoint(ctx context.Context, c *ethclient.Client
 		return
 	}
 
-	iter, err := contract.FilterNewHeaderBlock(&bind.FilterOpts{Start: r.prevBlockNumber}, nil, nil, nil)
+	iter, err := contract.FilterNewHeaderBlock(r.getFilterOpts(), nil, nil, nil)
 	if iter == nil || err != nil {
 		r.logger.Warn().Err(err).Msg("No NewHeaderBlock events found")
 		return
@@ -972,7 +987,7 @@ func (r *RPCProvider) refreshBridge(ctx context.Context, c *ethclient.Client) er
 		return nil
 	}
 
-	opts := &bind.FilterOpts{Start: r.prevBlockNumber}
+	opts := r.getFilterOpts()
 	r.refreshBridgeEvents(ctx, c, contract, opts)
 	r.refreshClaimEvents(ctx, c, contract, opts)
 
@@ -1263,7 +1278,7 @@ func (r *RPCProvider) refreshRollupManager(ctx context.Context, c *ethclient.Cli
 		return nil
 	}
 
-	opts := &bind.FilterOpts{Start: r.prevBlockNumber}
+	opts := r.getFilterOpts()
 	r.refreshOnSequenceBatches(ctx, c, contract, opts)
 	r.refreshRollupVerifyBatches(ctx, c, contract, opts)
 	r.refreshRollupVerifyBatchesTrustedAggregator(ctx, c, contract, opts)
