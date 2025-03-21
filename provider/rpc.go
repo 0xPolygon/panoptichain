@@ -17,6 +17,7 @@ import (
 	zkevmtypes "github.com/0xPolygonHermez/zkevm-node/jsonrpc/types"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -56,10 +57,10 @@ type RPCProvider struct {
 	blockLookBack    uint64
 
 	// PoS
-	stateSync               map[bool]*observer.StateSync
-	checkpointSignatures    map[bool]*observer.CheckpointSignatures
-	validatorWalletBalances *observer.ValidatorWalletBalances
-	missedBlockProposal     *observer.MissedBlockProposal
+	stateSync            map[bool]*observer.StateSync
+	checkpointSignatures map[bool]*observer.CheckpointSignatures
+	validatorBalances    observer.ValidatorWalletBalances
+	missedBlockProposal  observer.MissedBlockProposal
 
 	// zkEVM
 	batches        observer.ZkEVMBatches
@@ -127,6 +128,8 @@ func NewRPCProvider(opts RPCProviderOpts) *RPCProvider {
 		accountBalances:      make(observer.AccountBalances),
 		stateSync:            make(map[bool]*observer.StateSync),
 		checkpointSignatures: make(map[bool]*observer.CheckpointSignatures),
+		validatorBalances:    make(observer.ValidatorWalletBalances),
+		missedBlockProposal:  make(observer.MissedBlockProposal),
 		bridgeEventTimes:     make(observer.BridgeEventTimes),
 		claimEventTimes:      make(observer.ClaimEventTimes),
 		trustedSequencers:    make(map[uint32]*RPCProvider),
@@ -156,7 +159,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	r.refreshStateSync(ctx, c, true)
 	r.refreshStateSync(ctx, c, false)
 	r.refreshCheckpoint(ctx, c)
-	r.refreshWalletBalance(ctx, c)
+	r.refreshValidatorBalances(ctx, c)
 	r.refreshMissedBlockProposal(ctx, c)
 	r.refreshTxPoolStatus(ctx, c)
 	r.refreshTimeToMine(ctx, c)
@@ -198,7 +201,7 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 		r.bus.Publish(ctx, topics.BlockInterval, interval)
 	}
 
-	if r.missedBlockProposal != nil {
+	if len(r.missedBlockProposal) > 0 {
 		missedBlockProposal := observer.NewMessage(r.Network, r.Label, r.missedBlockProposal)
 		r.bus.Publish(ctx, topics.BorMissedBlockProposal, missedBlockProposal)
 	}
@@ -212,14 +215,14 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 		r.bus.Publish(ctx, topics.CheckpointSignatures, m)
 	}
 
-	if r.validatorWalletBalances != nil {
-		validatorWalletBalance := observer.NewMessage(r.Network, r.Label, r.validatorWalletBalances)
+	if len(r.validatorBalances) > 0 {
+		validatorWalletBalance := observer.NewMessage(r.Network, r.Label, r.validatorBalances)
 		r.bus.Publish(ctx, topics.ValidatorWallet, validatorWalletBalance)
 	}
 
 	if r.txPool != nil {
-		transactionPoolStatus := observer.NewMessage(r.Network, r.Label, r.txPool)
-		r.bus.Publish(ctx, topics.TransactionPool, transactionPoolStatus)
+		txPool := observer.NewMessage(r.Network, r.Label, r.txPool)
+		r.bus.Publish(ctx, topics.TransactionPool, txPool)
 	}
 
 	if r.batches.TrustedBatch.Number > 0 || r.batches.VirtualBatch.Number > 0 || r.batches.VerifiedBatch.Number > 0 {
@@ -307,11 +310,7 @@ func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Clien
 
 	r.logger.Info().Uint64("block_number", r.BlockNumber).Msg("Block state refreshed")
 
-	if r.prevBlockNumber == 0 {
-		r.prevBlockNumber = r.BlockNumber
-	}
-
-	if r.prevBlockNumber != r.BlockNumber {
+	if r.prevBlockNumber != 0 && r.prevBlockNumber != r.BlockNumber {
 		r.fillRange(ctx, r.prevBlockNumber, c)
 	}
 
@@ -341,6 +340,13 @@ func (r *RPCProvider) getFilterOpts() *bind.FilterOpts {
 	} else if r.blockLookBack < r.BlockNumber {
 		opts.Start = r.BlockNumber - r.blockLookBack
 	}
+
+	log.Trace().
+		Any("opts", opts).
+		Any("block_number", r.BlockNumber).
+		Any("prev_block_number", r.prevBlockNumber).
+		Any("block_look_back", r.blockLookBack).
+		Send()
 
 	return &opts
 }
@@ -456,7 +462,7 @@ func (r *RPCProvider) refreshCheckpoint(ctx context.Context, c *ethclient.Client
 		return
 	}
 
-	inputs := make(map[string]interface{})
+	inputs := make(map[string]any)
 	if err := method.Inputs.UnpackIntoMap(inputs, tx.Data()[4:]); err != nil {
 		r.logger.Error().Err(err).Msg("Failed to unpack input params")
 		return
@@ -554,7 +560,7 @@ func padLeft(data []byte, size int) []byte {
 	return data[len(data)-size:]
 }
 
-func (r *RPCProvider) refreshWalletBalance(ctx context.Context, c *ethclient.Client) (err error) {
+func (r *RPCProvider) refreshValidatorBalances(ctx context.Context, c *ethclient.Client) (err error) {
 	signers, err := api.Signers(r.Network)
 	if err != nil {
 		r.logger.Warn().Err(err).Msg("Failed to get signers validator map")
@@ -562,54 +568,47 @@ func (r *RPCProvider) refreshWalletBalance(ctx context.Context, c *ethclient.Cli
 	}
 
 	reqs := make([]rpc.BatchElem, len(signers))
-	signerAddresses := make([]string, 0, len(signers))
+	addresses := make([]string, 0, len(signers))
 
-	index := 0
-	for signerAddress := range signers {
-		addr := common.HexToAddress(signerAddress)
-		signerAddresses = append(signerAddresses, signerAddress)
-		r := new(json.RawMessage)
-		reqs[index] = rpc.BatchElem{
+	for address := range signers {
+		addr := common.HexToAddress(address)
+		addresses = append(addresses, address)
+		reqs = append(reqs, rpc.BatchElem{
 			Method: "eth_getBalance",
-			Args:   []interface{}{addr, "latest"},
-			Result: r,
-			Error:  nil,
-		}
-		index++
+			Args:   []any{addr, "latest"},
+			Result: new(json.RawMessage),
+		})
 	}
 
 	err = c.Client().BatchCallContext(ctx, reqs)
 	if err != nil {
-		r.logger.Warn().Err(err).Msg("Failed to execute batch request for balances")
+		r.logger.Warn().Err(err).Msg("Failed to execute batch request for validator balances")
 		return err
 	}
 
-	balances := make(observer.ValidatorWalletBalances)
 	for i, req := range reqs {
 		logger := r.logger.Warn().Int("index", i)
 
 		if req.Error != nil {
-			logger.Err(req.Error).Msg("Failed to get balance for validator")
+			logger.Err(req.Error).Msg("Failed to get validator balance")
 			continue
 		}
 
-		var balanceStr string
-		if err := json.Unmarshal(*req.Result.(*json.RawMessage), &balanceStr); err != nil {
-			logger.Err(err).Msg("Failed to unmarshal balance for validator")
+		var b string
+		if err := json.Unmarshal(*req.Result.(*json.RawMessage), &b); err != nil {
+			logger.Err(err).Msg("Failed to unmarshal validator balance")
 			continue
 		}
 
-		balance, ok := new(big.Int).SetString(balanceStr[2:], 16)
-		if !ok {
-			logger.Msg("Invalid value for validator")
+		balance, err := hexutil.DecodeBig(b)
+		if err != nil {
+			logger.Err(err).Msg("Failed to decode validator balance")
 			continue
 		}
 
-		signerAddress := signerAddresses[i]
-		balances[signerAddress] = balance
+		address := addresses[i]
+		r.validatorBalances[address] = balance
 	}
-
-	r.validatorWalletBalances = &balances
 
 	return nil
 }
@@ -626,11 +625,9 @@ type SnapshotProposerSequence struct {
 }
 
 func (r *RPCProvider) refreshMissedBlockProposal(ctx context.Context, c *ethclient.Client) error {
-	missedBlockProposal := make(observer.MissedBlockProposal)
-	for i := r.prevBlockNumber + 1; i <= r.BlockNumber && r.prevBlockNumber != 0; i++ {
+	for i := r.prevBlockNumber + 1; i <= r.BlockNumber && r.prevBlockNumber == 0; i++ {
 		var response SnapshotProposerSequence
-		blockNumberHex := fmt.Sprintf("0x%x", i)
-		err := c.Client().CallContext(ctx, &response, "bor_getSnapshotProposerSequence", blockNumberHex)
+		err := c.Client().CallContext(ctx, &response, "bor_getSnapshotProposerSequence", hexutil.EncodeUint64(i))
 		if err != nil {
 			r.logger.Warn().Err(err).Msg("Failed to execute request for snapshot proposer sequence")
 			return err
@@ -647,18 +644,20 @@ func (r *RPCProvider) refreshMissedBlockProposal(ctx context.Context, c *ethclie
 			r.logger.Warn().Err(err).Msg("Failed to get block signer")
 			continue
 		}
-		actualSigner := "0x" + hex.EncodeToString(bytes)
 
-		if actualSigner != response.Author {
-			for _, signerInfo := range response.Signers {
-				if actualSigner == signerInfo.Signer {
-					break
-				}
-				missedBlockProposal[i] = append(missedBlockProposal[i], signerInfo.Signer)
+		signer := "0x" + hex.EncodeToString(bytes)
+		if signer == response.Author {
+			continue
+		}
+
+		for _, info := range response.Signers {
+			if signer == info.Signer {
+				break
 			}
+
+			r.missedBlockProposal[i] = append(r.missedBlockProposal[i], info.Signer)
 		}
 	}
-	r.missedBlockProposal = &missedBlockProposal
 
 	return nil
 }
@@ -916,11 +915,11 @@ func (r *RPCProvider) refreshGlobalExitRoot(ctx context.Context, c *ethclient.Cl
 	t := time.Now()
 	hash, err := contract.GlobalExitRootMap(co, globalExitRoot)
 	if err != nil || hash == nil {
-		r.logger.Error().Err(err).Msg("Failed to block hash from global exit root map")
+		r.logger.Error().Err(err).Msg("Failed to get block hash from global exit root map")
 	} else {
 		header, err := c.HeaderByHash(ctx, common.BigToHash(hash))
 		if err != nil || header == nil {
-			r.logger.Error().Err(err).Msg("Failed to block header from global exit root block hash")
+			r.logger.Error().Err(err).Msg("Failed to get block header from global exit root block hash")
 		} else {
 			t = time.Unix(int64(header.Time), 0)
 		}
@@ -981,10 +980,6 @@ func (r *RPCProvider) refreshBridge(ctx context.Context, c *ethclient.Client) er
 		r.logger.Error().Err(err).Msg("Failed to get last updated deposit count")
 	} else {
 		r.lastUpdatedDepositCount = &ludc
-	}
-
-	if r.prevBlockNumber == 0 {
-		return nil
 	}
 
 	opts := r.getFilterOpts()
@@ -1269,16 +1264,12 @@ func (r *RPCProvider) refreshRollupManager(ctx context.Context, c *ethclient.Cli
 		r.rollupManager.LastAggregationTimestamp = &lat
 	}
 
+	opts := r.getFilterOpts()
+
 	r.refreshBatchFees(contract, co)
 	r.refreshBatchTotals(contract, co)
 	r.refreshRollupCounts(contract, co)
 	r.refreshRollups(ctx, c, contract, co)
-
-	if r.prevBlockNumber == 0 {
-		return nil
-	}
-
-	opts := r.getFilterOpts()
 	r.refreshOnSequenceBatches(ctx, c, contract, opts)
 	r.refreshRollupVerifyBatches(ctx, c, contract, opts)
 	r.refreshRollupVerifyBatchesTrustedAggregator(ctx, c, contract, opts)

@@ -64,7 +64,7 @@ func Init(ctx context.Context) error {
 		}
 
 		// Look back this number of blocks when filtering event logs.
-		var blockLookBack uint64 = 10000
+		var blockLookBack uint64 = 1000
 		if r.BlockLookBack != nil {
 			blockLookBack = *r.BlockLookBack
 		}
