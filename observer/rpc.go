@@ -396,7 +396,7 @@ func (o *TransactionGasPriceObserver) Register(eb *EventBus) {
 		metrics.RPC,
 		"transaction_gas_price",
 		"The transaction gas price (gwei)",
-		newExponentialBuckets(2, 10),
+		newExponentialBuckets(2, 12),
 	)
 }
 
@@ -424,7 +424,7 @@ func (o *TransactionGasFeeCapObserver) Register(eb *EventBus) {
 		metrics.RPC,
 		"transaction_gas_fee_cap",
 		"The transaction gas fee cap (gwei)",
-		newExponentialBuckets(2, 10),
+		newExponentialBuckets(2, 12),
 	)
 }
 
@@ -451,7 +451,7 @@ func (o *TransactionGasTipCapObserver) Register(eb *EventBus) {
 		metrics.RPC,
 		"transaction_gas_tip_cap",
 		"The transaction gas tip cap (gwei)",
-		newExponentialBuckets(2, 10),
+		newExponentialBuckets(2, 12),
 	)
 }
 

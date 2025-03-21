@@ -190,15 +190,33 @@ var observersMap = map[string]Observer{
 }
 
 func GetEnabledObserverSet() ObserverSet {
-	observers := make(ObserverSet, 0, len(observersMap))
+	cfg := config.Config().Observers
+	set := make(map[string]struct{})
 
-	for _, name := range config.Config().Observers {
-		observer, ok := observersMap[name]
-		if !ok {
-			log.Fatal().Msgf("Observer %s does not exist", name)
+	for _, name := range cfg.Enabled {
+		if _, ok := observersMap[name]; !ok {
+			log.Fatal().Str("observer", name).Msg("Failed to enable nonexistent observer")
 		}
+		set[name] = struct{}{}
+	}
 
-		observers = append(observers, observer)
+	// By default, all observers are enabled.
+	if len(cfg.Enabled) == 0 {
+		for name := range observersMap {
+			set[name] = struct{}{}
+		}
+	}
+
+	for _, name := range cfg.Disabled {
+		if _, ok := observersMap[name]; !ok {
+			log.Fatal().Str("observer", name).Msg("Failed to disable nonexistent observer")
+		}
+		delete(set, name)
+	}
+
+	observers := make(ObserverSet, 0, len(observersMap))
+	for name := range set {
+		observers = append(observers, observersMap[name])
 	}
 
 	return observers
