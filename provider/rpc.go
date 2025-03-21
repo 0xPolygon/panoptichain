@@ -538,9 +538,9 @@ type rpcBlock struct {
 
 // getBlockByNumber gets the block given a block number. This is lifted from
 // https://github.com/ethereum/go-ethereum/blob/master/ethclient/ethclient.go
-// with the one change that all transactions are treated as legacy transactions.
-// This allows panoptichain to observe chains that use transaction types that
-// are not supported by geth.
+// with the change that unsupported transactions are treated as legacy
+// transactions. This allows panoptichain to observe chains that use transaction
+// types that are not supported by geth.
 func (r *RPCProvider) getBlockByNumber(ctx context.Context, n *big.Int, c *ethclient.Client) (*types.Block, error) {
 	var raw json.RawMessage
 	err := c.Client().Call(&raw, "eth_getBlockByNumber", hexutil.EncodeBig(n), true)
