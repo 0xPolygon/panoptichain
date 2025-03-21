@@ -604,24 +604,21 @@ func (o *CheckpointObserver) GetCollectors() []prometheus.Collector {
 type ValidatorWalletBalances map[string]*big.Int
 
 type ValidatorWalletBalanceObserver struct {
-	validatorWalletBalance *prometheus.GaugeVec
+	balances *prometheus.GaugeVec
 }
 
 func (o *ValidatorWalletBalanceObserver) Notify(ctx context.Context, m Message) {
-	balances := m.Data().(*ValidatorWalletBalances)
+	balances := m.Data().(ValidatorWalletBalances)
 
-	for signer_address, balance := range *balances {
-		o.validatorWalletBalance.WithLabelValues(
-			m.Network().GetName(),
-			m.Provider(),
-			signer_address,
-		).Set(float64(balance.Uint64()))
+	for address, balance := range balances {
+		wei := float64(balance.Uint64())
+		o.balances.WithLabelValues(m.Network().GetName(), m.Provider(), address).Set(wei)
 	}
 }
 
 func (o *ValidatorWalletBalanceObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.ValidatorWallet, o)
-	o.validatorWalletBalance = metrics.NewGauge(
+	o.balances = metrics.NewGauge(
 		metrics.RPC,
 		"validator_wallet_balance",
 		"PoS validator wallet balance",
@@ -630,28 +627,27 @@ func (o *ValidatorWalletBalanceObserver) Register(eb *EventBus) {
 }
 
 func (o *ValidatorWalletBalanceObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.validatorWalletBalance}
+	return []prometheus.Collector{o.balances}
 }
 
 type MissedBlockProposal map[uint64][]string
 
 type MissedBlockProposalObserver struct {
-	missedBlockProposal *prometheus.CounterVec
+	counter *prometheus.CounterVec
 }
 
 func (o *MissedBlockProposalObserver) Notify(ctx context.Context, m Message) {
 	logger := NewLogger(o, m)
 
-	missedBlockProposal := m.Data().(*MissedBlockProposal)
-
-	for blockNumber, proposers := range *missedBlockProposal {
+	data := m.Data().(MissedBlockProposal)
+	for blockNumber, proposers := range data {
 		logger.Debug().
 			Uint64("block_number", blockNumber).
 			Strs("proposers", proposers).
 			Msg("Missed block proposer update")
 
 		for _, proposer := range proposers {
-			o.missedBlockProposal.WithLabelValues(m.Network().GetName(), m.Provider(), proposer).Inc()
+			o.counter.WithLabelValues(m.Network().GetName(), m.Provider(), proposer).Inc()
 		}
 	}
 }
@@ -659,7 +655,7 @@ func (o *MissedBlockProposalObserver) Notify(ctx context.Context, m Message) {
 func (o *MissedBlockProposalObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.BorMissedBlockProposal, o)
 
-	o.missedBlockProposal = metrics.NewCounter(
+	o.counter = metrics.NewCounter(
 		metrics.RPC,
 		"missed_block_proposal",
 		"Missed block proposals",
@@ -668,7 +664,7 @@ func (o *MissedBlockProposalObserver) Register(eb *EventBus) {
 }
 
 func (o *MissedBlockProposalObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.missedBlockProposal}
+	return []prometheus.Collector{o.counter}
 }
 
 type TransactionPool struct {

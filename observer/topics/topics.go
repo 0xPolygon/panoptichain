@@ -8,14 +8,14 @@ const (
 	BorStateSync                                       // *observer.StateSync
 	BlockInterval                                      // uint64
 	CheckpointSignatures                               // *observer.CheckpointSignatures
-	ValidatorWallet                                    // *observer.ValidatorWalletBalances
+	ValidatorWallet                                    // observer.ValidatorWalletBalances
 	HeimdallBlockInterval                              // uint64
 	NewHeimdallBlock                                   // *observer.HeimdallBlock
 	Milestone                                          // *observer.HeimdallMilestone
 	Reorg                                              // *observer.DatastoreReorg
 	SensorBlocks                                       // *observer.SensorBlocks
 	SensorBlockEvents                                  // *observer.SensorBlockEvents
-	BorMissedBlockProposal                             // *observer.MissedBlockProposal
+	BorMissedBlockProposal                             // observer.MissedBlockProposal
 	HeimdallMissedBlockProposal                        // *observer.HeimdallMissedBlockProposal
 	Checkpoint                                         // *observer.HeimdallCheckpoint
 	MissedCheckpointProposal                           // []string

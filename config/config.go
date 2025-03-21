@@ -28,13 +28,14 @@ type Providers struct {
 
 // RPC defines the various RPC providers that will be monitored.
 type RPC struct {
-	Name       string            `mapstructure:"name"`
-	URL        string            `mapstructure:"url" validate:"url,required_with=Name"`
-	Label      string            `mapstructure:"label" validate:"required_with=Name"`
-	Interval   uint              `mapstructure:"interval"`
-	Contracts  ContractAddresses `mapstructure:"contracts"`
-	TimeToMine *TimeToMine       `mapstructure:"time_to_mine"`
-	Accounts   []string          `mapstructure:"accounts"`
+	Name          string            `mapstructure:"name"`
+	URL           string            `mapstructure:"url" validate:"url,required_with=Name"`
+	Label         string            `mapstructure:"label" validate:"required_with=Name"`
+	Interval      uint              `mapstructure:"interval"`
+	Contracts     ContractAddresses `mapstructure:"contracts"`
+	TimeToMine    *TimeToMine       `mapstructure:"time_to_mine"`
+	Accounts      []string          `mapstructure:"accounts"`
+	BlockLookBack *uint64           `mapstructure:"block_look_back"`
 }
 
 type ContractAddresses struct {

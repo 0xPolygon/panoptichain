@@ -63,15 +63,22 @@ func Init(ctx context.Context) error {
 			interval = r.Interval
 		}
 
+		// Look back this number of blocks when filtering event logs.
+		var blockLookBack uint64 = 1000
+		if r.BlockLookBack != nil {
+			blockLookBack = *r.BlockLookBack
+		}
+
 		p := provider.NewRPCProvider(provider.RPCProviderOpts{
-			Network:    n,
-			URL:        r.URL,
-			Label:      r.Label,
-			EventBus:   eb,
-			Interval:   interval,
-			Contracts:  r.Contracts,
-			TimeToMine: r.TimeToMine,
-			Accounts:   r.Accounts,
+			Network:       n,
+			URL:           r.URL,
+			Label:         r.Label,
+			EventBus:      eb,
+			Interval:      interval,
+			Contracts:     r.Contracts,
+			TimeToMine:    r.TimeToMine,
+			Accounts:      r.Accounts,
+			BlockLookBack: blockLookBack,
 		})
 
 		providers = append(providers, p)
