@@ -625,7 +625,7 @@ type SnapshotProposerSequence struct {
 }
 
 func (r *RPCProvider) refreshMissedBlockProposal(ctx context.Context, c *ethclient.Client) error {
-	for i := r.prevBlockNumber + 1; i <= r.BlockNumber && r.prevBlockNumber == 0; i++ {
+	for i := r.prevBlockNumber + 1; i <= r.BlockNumber && r.prevBlockNumber != 0; i++ {
 		var response SnapshotProposerSequence
 		err := c.Client().CallContext(ctx, &response, "bor_getSnapshotProposerSequence", hexutil.EncodeUint64(i))
 		if err != nil {
