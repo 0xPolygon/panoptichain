@@ -647,6 +647,7 @@ func (r *RPCProvider) fillRange(ctx context.Context, start uint64, c *ethclient.
 
 		if err != nil {
 			r.logger.Warn().Err(err).Uint64("block_number", i).Msg("Unable to get block")
+			break
 		}
 
 		r.blockBuffer.PutBlock(block)
