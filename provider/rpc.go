@@ -692,7 +692,7 @@ func (r *RPCProvider) refreshValidatorBalances(ctx context.Context, c *ethclient
 		return
 	}
 
-	reqs := make([]rpc.BatchElem, len(signers))
+	reqs := make([]rpc.BatchElem, 0, len(signers))
 	addresses := make([]string, 0, len(signers))
 
 	for address := range signers {
