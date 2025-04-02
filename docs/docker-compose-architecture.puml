@@ -1,10 +1,8 @@
-@startuml architecture
+@startuml docker-compose-architecture
 !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
 
 title Panoptichain Architecture
 
-SystemDb(datastore, "Datastore")
-System(sensor_network, "Sensor Network")
 System(zkevm, "zkEVM")
 System_Ext(ethereum, "Ethereum")
 System_Boundary(posv1, "PoSv1") {
@@ -12,29 +10,17 @@ System_Boundary(posv1, "PoSv1") {
   Container(heimdall, "Heimdall")
 }
 
-System_Boundary(gke, "Google Kubernetes Engine") {
+System_Boundary(docker, "Docker Compose") {
   Container(panoptichain, "Panoptichain")
-  Container(dd_agent, "Datadog Agent")
   Container(grafana, "Grafana")
   Container(prometheus, "Prometheus")
 }
 
-System_Ext(slack, "Slack")
-System_Ext(coralogix, "Coralogix")
-System_Ext(datadog, "Datadog")
-
-Rel(sensor_network, datastore, "Writes", "https")
-Rel(panoptichain, datastore, "Reads", "https")
 Rel(panoptichain, zkevm, "Uses", "rpc")
 Rel(panoptichain, ethereum, "Uses", "rpc")
 Rel(panoptichain, bor, "Uses", "rpc")
 Rel(panoptichain, heimdall, "Uses", "https")
 Rel(prometheus, panoptichain, "Scrapes", "https")
 Rel(grafana, prometheus, "Reads", "https")
-Rel(dd_agent, panoptichain, "Scrapes", "https")
-Rel(dd_agent, datadog, "Writes", "https")
-Rel(prometheus, coralogix, "Writes", "https")
-Rel(datadog, slack, "Alerts", "https")
-Rel(sensor_network, bor, "Peers", "devp2p")
 
 @enduml

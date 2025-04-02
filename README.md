@@ -257,6 +257,12 @@ flowchart TB
 
 ### System Architecture
 
+When running with the locally with [`docker-compose.yml`](./docker-compose.yml), the architecture will look something like:
+
+![docker-compose-architecture.svg](./docs/docker-compose-architecture.svg)
+
+When running in production, it may look something closer to:
+
 ![architecture.svg](./docs/architecture.svg)
 
 ### Sequence Diagram
