@@ -116,6 +116,13 @@ func Ecrecover(header *types.Header) ([]byte, error) {
 		return nil, errors.New("unable to recover signature")
 	}
 	signature := header.Extra[start:]
+
+	// Set these to nil or clique.SealHash will panic.
+	header.WithdrawalsHash = nil
+	header.BlobGasUsed = nil
+	header.ExcessBlobGas = nil
+	header.ParentBeaconRoot = nil
+
 	pubkey, err := crypto.Ecrecover(clique.SealHash(header).Bytes(), signature)
 	if err != nil {
 		return nil, err
