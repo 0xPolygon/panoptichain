@@ -111,18 +111,19 @@ func Signers(n network.Network) (map[string]*Validator, error) {
 
 // Ecrecover recovers the block signer given the block header.
 func Ecrecover(header *types.Header) ([]byte, error) {
+	// These values will cause clique.SealHash to panic.
+	if header.WithdrawalsHash != nil ||
+		header.BlobGasUsed != nil ||
+		header.ExcessBlobGas != nil ||
+		header.ParentBeaconRoot != nil {
+		return nil, errors.New("unable to encode clique header")
+	}
+
 	start := len(header.Extra) - crypto.SignatureLength
 	if start < 0 || start > len(header.Extra) {
 		return nil, errors.New("unable to recover signature")
 	}
 	signature := header.Extra[start:]
-
-	// Set these to nil or clique.SealHash will panic.
-	header.WithdrawalsHash = nil
-	header.BlobGasUsed = nil
-	header.ExcessBlobGas = nil
-	header.ParentBeaconRoot = nil
-
 	pubkey, err := crypto.Ecrecover(clique.SealHash(header).Bytes(), signature)
 	if err != nil {
 		return nil, err
