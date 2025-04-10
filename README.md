@@ -62,7 +62,7 @@ options.
    hasn't been configured to work with GCP so, the `sensor_network` providers
    should be commented out.
 
-2. Start panoptichain, prometheus, and grafana locally.
+2. Start Panoptichain, Prometheus, and Grafana locally.
 
    ```bash
    docker compose up --build
@@ -256,6 +256,12 @@ flowchart TB
 ```
 
 ### System Architecture
+
+When running with the locally with [`docker-compose.yml`](./docker-compose.yml), the architecture will look something like:
+
+![docker-compose-architecture.svg](./docs/docker-compose-architecture.svg)
+
+When running in production, it may look something closer to:
 
 ![architecture.svg](./docs/architecture.svg)
 

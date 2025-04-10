@@ -12,15 +12,14 @@ import (
 	"github.com/0xPolygon/panoptichain/log"
 )
 
-// BufferedBlock is a way to abstract the block for queueing and
-// sorting. The only thing we need is a block number in order to keep
-// the blocks ordered.
+// BufferedBlock abstracts the block for queueing and sorting. The only thing
+// needed is a block number in order to keep the blocks ordered.
 type BufferedBlock interface {
 	Number() *big.Int
 }
 
-// The BlockBuffer is a min-heap data structure to keep a set of
-// recent blocks in memory.
+// BlockBuffer represents a min-heap data structure to keep a set of recent
+// blocks in memory.
 type BlockBuffer struct {
 	size    uint                     // the number of blocks to keep in the queue
 	blocks  map[uint64]BufferedBlock // the actual blocks stored in a map
@@ -28,25 +27,25 @@ type BlockBuffer struct {
 	rw      sync.RWMutex
 }
 
-// BigIntHeap implement the heap interface for big Ints.
+// BigIntHeap implements the heap interface for big.Ints.
 type BigIntHeap []*big.Int
 
-// Len will return the length of our heap
+// Len returns the length of the heap.
 func (h BigIntHeap) Len() int { return len(h) }
 
 // Less compares to big.Ints.
 func (h BigIntHeap) Less(i, j int) bool { return h[i].Cmp(h[j]) < 0 }
 
-// Swap will exchange two elements in our heap.
+// Swap exchanges two elements in the heap.
 func (h BigIntHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
 
-// Push will add an element to the heap.
-func (h *BigIntHeap) Push(x interface{}) {
+// Push adds an element to the heap.
+func (h *BigIntHeap) Push(x any) {
 	*h = append(*h, x.(*big.Int))
 }
 
-// Pop will remove the last element in the heap and return it.
-func (h *BigIntHeap) Pop() interface{} {
+// Pop removes the last element in the heap and returns it.
+func (h *BigIntHeap) Pop() any {
 	old := *h
 	n := len(old)
 	x := old[n-1]
@@ -54,7 +53,7 @@ func (h *BigIntHeap) Pop() interface{} {
 	return x
 }
 
-// NewBlockBuffer will return a heap that's constrained to the given size.
+// NewBlockBuffer returns a heap that's constrained to the given size.
 func NewBlockBuffer(size uint) *BlockBuffer {
 	return &BlockBuffer{
 		blocks:  make(map[uint64]BufferedBlock, 0),
@@ -63,7 +62,7 @@ func NewBlockBuffer(size uint) *BlockBuffer {
 	}
 }
 
-// GetBlock will return a block or an error if it doesn't exist.
+// GetBlock returns a block or an error if it doesn't exist.
 func (b *BlockBuffer) GetBlock(number uint64) (BufferedBlock, error) {
 	b.rw.RLock()
 	defer b.rw.RUnlock()
@@ -76,8 +75,8 @@ func (b *BlockBuffer) GetBlock(number uint64) (BufferedBlock, error) {
 	return block, nil
 }
 
-// PutBlock will push a new block into the heap. If adding that block expand the
-// heap beyond the max size, we'll delete the oldest block (based on number).
+// PutBlock pushes a new block into the heap. If adding that block expand the
+// heap beyond the max size, delete the oldest block (based on number).
 func (b *BlockBuffer) PutBlock(block BufferedBlock) error {
 	b.rw.Lock()
 	defer b.rw.Unlock()

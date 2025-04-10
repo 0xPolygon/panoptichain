@@ -14,16 +14,18 @@ import (
 	"github.com/0xPolygon/panoptichain/config"
 )
 
-func init() {
+func Init() error {
 	level, err := zerolog.ParseLevel(config.Config().Logs.Verbosity)
 	if err != nil {
-		level = zerolog.TraceLevel
+		return err
 	}
 	zerolog.SetGlobalLevel(level)
 
 	if config.Config().Logs.Pretty {
 		zlog.Logger = zlog.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	}
+
+	return nil
 }
 
 func Ctx(ctx context.Context) *zerolog.Logger {
@@ -70,11 +72,11 @@ func Panic() *zerolog.Event {
 	return zlog.Panic()
 }
 
-func Print(v ...interface{}) {
+func Print(v ...any) {
 	zlog.Print(v...)
 }
 
-func Printf(format string, v ...interface{}) {
+func Printf(format string, v ...any) {
 	zlog.Printf(format, v...)
 }
 

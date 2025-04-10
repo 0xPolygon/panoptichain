@@ -26,7 +26,7 @@ func (o *SystemObserver) Register(eb *EventBus) {
 	o.uptime = metrics.NewGaugeWithoutLabels(
 		metrics.System,
 		"uptime",
-		"How long panoptichain has been running in seconds",
+		"How long the system has been running in seconds",
 	)
 
 	o.jobs = metrics.NewGaugeWithoutLabels(

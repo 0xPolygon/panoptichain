@@ -17,7 +17,7 @@ import (
 var providers []provider.Provider
 var observers observer.ObserverSet
 
-// Start will start the main infinite loop of this program.
+// Start starts the main infinite loop of this program.
 func Start(ctx context.Context) {
 	log.Info().Msg("Starting main loop")
 
@@ -45,7 +45,7 @@ func Start(ctx context.Context) {
 	wg.Wait()
 }
 
-// Init will configure all the providers and observers of the system.
+// Init configures all the providers and observers of the system.
 func Init(ctx context.Context) error {
 	providers = make([]provider.Provider, 0)
 

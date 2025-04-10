@@ -1,11 +1,9 @@
-// Package confg is a placeholder package for settings that will
-// probably be config values at some point in the future. I couldn't
-// decide on a config package or library. It's hard coded here for now
-// in a way that I hope is convenient for refactoring in the future.
+// Package config handles application configuration by loading values from files
+// and environment variables.
 package config
 
 import (
-	"log"
+	"os"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
@@ -95,15 +93,16 @@ type Observers struct {
 	Disabled []string `mapstructure:"disabled"`
 }
 
-// HTTP defines the HTTP properties that we'll use for exposing metrics.
+// HTTP defines the properties that used for exposing metrics.
 type HTTP struct {
-	Port    int    `mapstructure:"port" validate:"required"`
-	Address string `mapstructure:"address" validate:"required"`
-	Path    string `mapstructure:"path" validate:"required"`
+	PromPort  int    `mapstructure:"port"`
+	PprofPort int    `mapstructure:"pprof_port"`
+	Address   string `mapstructure:"address"`
+	Path      string `mapstructure:"path"`
 }
 
 type CustomNetwork struct {
-	Name    string `mapstructure:"name"`
+	Name    string `mapstructure:"name" validate:"required"`
 	ChainID uint64 `mapstructure:"chain_id"`
 }
 
@@ -126,7 +125,7 @@ type config struct {
 	Namespace string          `mapstructure:"namespace" validate:"required"`
 	Runner    Runner          `mapstructure:"runner"`
 	HTTP      HTTP            `mapstructure:"http"`
-	Providers *Providers      `mapstructure:"providers"`
+	Providers Providers       `mapstructure:"providers"`
 	Observers Observers       `mapstructure:"observers"`
 	Networks  []CustomNetwork `mapstructure:"networks"`
 	Logs      Logs            `mapstructure:"logs"`
@@ -134,32 +133,51 @@ type config struct {
 
 var c *config
 
-// Config will return the current configuration for the entire application
-// (assuming it's been initialized).
+// Config returns the configuration. `Init()` should be called before this.
 func Config() *config {
 	return c
 }
 
-func init() {
+// Init initializes the config. This should be called before using `Config()`.
+func Init(args []string) error {
 	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
 	viper.AddConfigPath(".")
 	viper.AddConfigPath("/etc/panoptichain/")
+
+	if len(args) > 1 {
+		viper.SetConfigFile(args[1])
+	}
 
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("panoptichain")
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
+	viper.SetDefault("namespace", "panoptichain")
+	viper.SetDefault("runner.interval", 30)
+	viper.SetDefault("http.port", 9090)
+	viper.SetDefault("http.pprof_port", 6060)
+	viper.SetDefault("http.address", "localhost")
+	viper.SetDefault("http.path", "/metrics")
+	viper.SetDefault("logs.pretty", false)
+	viper.SetDefault("logs.verbosity", "info")
+
 	if err := viper.ReadInConfig(); err != nil {
-		log.Panicf("Failed to read config: %v", err)
+		return err
+	}
+
+	for _, k := range viper.AllKeys() {
+		v := viper.GetString(k)
+		viper.Set(k, os.ExpandEnv(v))
 	}
 
 	if err := viper.Unmarshal(&c); err != nil {
-		log.Panicf("Failed to load config: %v", err)
+		return err
 	}
 
 	validate := validator.New()
 	if err := validate.Struct(c); err != nil {
-		log.Panicf("Failed to validate config: %v", err)
+		return err
 	}
+
+	return nil
 }

@@ -987,7 +987,7 @@ Variable Labels:
 
 
 ### panoptichain_system_uptime
-How long panoptichain has been running in seconds
+How long the system has been running in seconds
 
 Metric Type: gauge
 

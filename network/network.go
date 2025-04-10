@@ -64,8 +64,8 @@ var KnownNetworks = []Network{
 	&ZkEVMBali,
 
 	&Ethereum,
-	&Sepolia,
 	&Goerli,
+	&Sepolia,
 }
 
 // EVMNetwork is a specific type of network that is assumed to generally follow
@@ -75,36 +75,36 @@ type EVMNetwork struct {
 	ChainID uint64
 }
 
-// GetName returns the name that we've set for the network. It doesn't have to
-// be canonical in anyway. Just something to match configs.
+// GetName returns the network name. It doesn't have to be canonical in anyway.
+// Just something to match configs.
 func (n *EVMNetwork) GetName() string {
 	return n.Name
 }
 
-// GetChainID should return the configured chain id for the network.
+// GetChainID returns the configured chain ID for the network.
 func (n *EVMNetwork) GetChainID() uint64 {
 	return n.ChainID
 }
 
-// TendermintNetwork is close to an EVMNetwork but generally the chain
-// ID is a string and there won't be typical JSON RPC provers.
+// TendermintNetwork is close to an EVMNetwork, but generally, the chain
+// ID is a string, and there won't be typical JSON RPC providers.
 type TendermintNetwork struct {
 	Name    string
 	ChainID string
 }
 
-// GetName will return the configured name for this network.
+// GetName returns the configured name for this network.
 func (n *TendermintNetwork) GetName() string {
 	return n.Name
 }
 
-// GetChainID will return the chain id for the network.
+// GetChainID returns the chain ID for the network.
 func (n *TendermintNetwork) GetChainID() string {
 	return n.ChainID
 }
 
-// GetNetworkByName is a convenience method to convert a name like
-// "Ethereum" into a Network object.
+// GetNetworkByName is a convenience method to convert a name like "Ethereum"
+// into a Network object.
 func GetNetworkByName(name string) (Network, error) {
 	for _, n := range config.Config().Networks {
 		if n.GetName() == name {

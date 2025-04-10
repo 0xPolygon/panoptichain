@@ -241,7 +241,7 @@ func GetCompleteObserverSet() ObserverSet {
 	return observers
 }
 
-// Register handled register methods for the observer set on the whole.
+// Register handles registering methods for the observer set on the whole.
 func (os *ObserverSet) Register(eb *EventBus) {
 	for _, o := range *os {
 		o.Register(eb)

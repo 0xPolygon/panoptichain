@@ -6,6 +6,6 @@ out:
 	mkdir out
 
 metrics.md:
-	go run cmd/read-observers/main.go > metrics.md
+	go run cmd/read-observers/main.go --md > metrics.md
 
 

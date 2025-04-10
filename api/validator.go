@@ -14,8 +14,10 @@ import (
 	"github.com/0xPolygon/panoptichain/network"
 )
 
+// refreshInterval is how long validators will be cached for.
 const refreshInterval = time.Hour
 
+// Validator represents a Polygon PoS validator.
 type Validator struct {
 	ID          uint64 `json:"ID"`
 	Signer      string `json:"signer"`
@@ -29,6 +31,7 @@ type Validator struct {
 	Accum       int64  `json:"accum"`
 }
 
+// ValidatorSet is a set of Polygon PoS validators.
 type ValidatorSet struct {
 	Height string `json:"height"`
 	Result struct {
@@ -37,11 +40,13 @@ type ValidatorSet struct {
 	} `json:"result"`
 }
 
+// ValidatorsCache holds a cache of validators with a time-to-live (TTL).
 type ValidatorsCache struct {
 	validators []*Validator
 	ttl        time.Time
 }
 
+// cache maps network.Network to ValidatorsCache.
 var cache sync.Map
 
 // Validators queries the Heimdall API for the validator set. The validator set

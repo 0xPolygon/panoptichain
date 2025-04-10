@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -11,10 +12,12 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/observer"
 )
 
-type parsedDesc struct {
+// desc stores the parsed prometheus.Desc.
+type desc struct {
 	FQName         string
 	Help           string
 	ConstLabels    []string
@@ -23,7 +26,8 @@ type parsedDesc struct {
 	MetricType     string
 }
 
-func parseDesc(line string) (*parsedDesc, error) {
+// parseDesc parses a prometheus.Desc.
+func parseDesc(line string) (*desc, error) {
 	re := regexp.MustCompile(`Desc{fqName: "(.*)", help: "(.*)", constLabels: {(.*)}, variableLabels: {(.*)}}`)
 	matches := re.FindStringSubmatch(line)
 
@@ -31,7 +35,7 @@ func parseDesc(line string) (*parsedDesc, error) {
 		return nil, fmt.Errorf("invalid input line")
 	}
 
-	return &parsedDesc{
+	return &desc{
 		FQName:         matches[1],
 		Help:           matches[2],
 		ConstLabels:    parseLabels(matches[3]),
@@ -39,6 +43,7 @@ func parseDesc(line string) (*parsedDesc, error) {
 	}, nil
 }
 
+// parseLabels parses a comma-separated string of labels.
 func parseLabels(labels string) []string {
 	labels = strings.TrimSpace(labels)
 	if labels == "" {
@@ -48,7 +53,8 @@ func parseLabels(labels string) []string {
 	return strings.Split(labels, ",")
 }
 
-func printDesc(desc *parsedDesc) {
+// printDesc prints parsed descriptions in Markdown format.
+func printDesc(desc *desc) {
 	fmt.Printf("\n### %s\n", desc.FQName)
 	fmt.Printf("%s\n", desc.Help)
 	fmt.Printf("\nMetric Type: %s\n", desc.MetricType)
@@ -64,6 +70,7 @@ func printDesc(desc *parsedDesc) {
 	}
 }
 
+// printLabels prints labels as lists in Markdown format.
 func printLabels(labels []string) {
 	for _, l := range labels {
 		fmt.Printf("- %s\n", l)
@@ -72,43 +79,52 @@ func printLabels(labels []string) {
 
 func main() {
 	slog.Info("Starting export of observers")
-	jsonMode := false
-	markDownMode := true
 
-	fauxEb := observer.NewEventBus()
-	obs := observer.GetCompleteObserverSet()
-	obs.Register(fauxEb)
+	jsonMode := flag.Bool("json", false, "Print output in JSON format")
+	markdownMode := flag.Bool("md", false, "Print output in Markdown format")
 
-	for _, o := range obs {
+	flag.Parse()
+
+	if err := config.Init(flag.Args()); err != nil {
+		slog.Error("Failed to initialize config", "error", err)
+		return
+	}
+
+	eb := observer.NewEventBus()
+	observers := observer.GetCompleteObserverSet()
+	observers.Register(eb)
+
+	for _, o := range observers {
 		observerType := reflect.ValueOf(o).Elem().Type()
-		if markDownMode {
+
+		if *markdownMode {
 			fmt.Printf("\n## %s\n\n", observerType.Name())
 		}
 
 		for _, c := range o.GetCollectors() {
-			descChan := make(chan *prometheus.Desc)
+			descCh := make(chan *prometheus.Desc)
 			var wg sync.WaitGroup
 			wg.Add(1)
 
 			go func() {
-				desc := <-descChan
+				desc := <-descCh
 				d, _ := parseDesc(desc.String())
 				d.ObserverType = observerType.Name()
 				d.MetricType = reflect.ValueOf(c).Elem().Type().Name()
-				dBytes, _ := json.Marshal(d)
+				bytes, _ := json.Marshal(d)
 
-				if jsonMode {
-					fmt.Println(string(dBytes))
+				if *jsonMode {
+					fmt.Println(string(bytes))
 				}
 
-				if markDownMode {
+				if *markdownMode {
 					printDesc(d)
 				}
 
 				wg.Done()
 			}()
 
-			c.Describe(descChan)
+			c.Describe(descCh)
 			wg.Wait()
 		}
 	}

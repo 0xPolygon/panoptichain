@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// GetJSON fetches JSON data from the specified URL and decodes it into the
+// target variable.
 func GetJSON(url string, target any) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 	r, err := client.Get(url)

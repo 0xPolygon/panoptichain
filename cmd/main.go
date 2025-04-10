@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
@@ -15,29 +16,36 @@ import (
 
 func main() {
 	ctx := context.Background()
+	flag.Parse()
 
-	log.Info().Msg("Starting panoptichain")
+	if err := config.Init(flag.Args()); err != nil {
+		log.Error().Err(err).Msg("Failed to initialize config")
+		return
+	}
 
-	// There are two major components of this setup right now. We
-	// have polling system to read state from various systems and
-	// then we have the metrics / prometheus system to expose
-	// those systems elsewhere.
+	if err := log.Init(); err != nil {
+		log.Error().Err(err).Msg("Failed to initialize logger")
+		return
+	}
+
+	log.Info().Msg("Starting Panoptichain")
+	cfg := config.Config().HTTP
+
+	// There are two major components of this setup right now:
+	// 1. The polling system to read state from various systems.
+	// 2. The metrics / Prometheus system to expose those systems elsewhere.
 	go func() {
-		http.Handle(config.Config().HTTP.Path, promhttp.Handler())
-		address := fmt.Sprintf("%s:%d", config.Config().HTTP.Address, config.Config().HTTP.Port)
-
-		log.Info().
-			Str("path", config.Config().HTTP.Path).
-			Str("address", address).
-			Msg("Starting Prometheus handler")
+		http.Handle(cfg.Path, promhttp.Handler())
+		address := fmt.Sprintf("%s:%d", cfg.Address, cfg.PromPort)
+		log.Info().Str("path", cfg.Path).Str("address", address).Msg("Starting Prometheus")
 
 		if err := http.ListenAndServe(address, nil); err != nil {
-			log.Error().Err(err).Msg("Failed to start server")
+			log.Error().Err(err).Msg("Failed to start Prometheus")
 		}
 	}()
 
 	go func() {
-		address := fmt.Sprintf("%s:%d", config.Config().HTTP.Address, 6060)
+		address := fmt.Sprintf("%s:%d", cfg.Address, cfg.PprofPort)
 		log.Info().Str("address", address).Msg("Starting pprof")
 
 		if err := http.ListenAndServe(address, nil); err != nil {
@@ -46,7 +54,7 @@ func main() {
 	}()
 
 	if err := runner.Init(ctx); err != nil {
-		log.Error().Err(err).Msg("Failed to initialize panoptichain")
+		log.Error().Err(err).Msg("Failed to initialize runner")
 		return
 	}
 
