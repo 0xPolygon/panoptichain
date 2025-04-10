@@ -614,6 +614,9 @@ func (r *RPCProvider) getBlockByNumber(ctx context.Context, n *big.Int, c *ethcl
 	}
 
 	bytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
 
 	var block rpcBlock
 	if err := json.Unmarshal(bytes, &block); err != nil {
