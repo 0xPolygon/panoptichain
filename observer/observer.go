@@ -148,6 +148,7 @@ var observersMap = map[string]Observer{
 	"empty_block":                         new(EmptyBlockObserver),
 	"exchange_rates":                      new(ExchangeRatesObserver),
 	"exit_roots":                          new(ExitRootsObserver),
+	"finalized_height":                    new(FinalizedHeightObserver),
 	"gas_limit":                           new(GasLimitObserver),
 	"gas_used":                            new(GasUsedObserver),
 	"hash_divergence":                     new(HashDivergenceObserver),
