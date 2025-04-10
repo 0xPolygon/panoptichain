@@ -102,6 +102,25 @@ func (o *BlockObserver) GetCollectors() []prometheus.Collector {
 	}
 }
 
+type FinalizedHeightObserver struct {
+	finalizedHeight *prometheus.GaugeVec
+}
+
+func (o *FinalizedHeightObserver) Notify(ctx context.Context, m Message) {
+	finalizedHeight := m.Data().(uint64)
+	o.finalizedHeight.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(finalizedHeight))
+}
+
+func (o *FinalizedHeightObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.FinalizedHeight, o)
+
+	o.finalizedHeight = metrics.NewGauge(metrics.RPC, "finalized_height", "The latest known finalized block heigtht")
+}
+
+func (o *FinalizedHeightObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.finalizedHeight}
+}
+
 type BogonBlockObserver struct {
 	counter *prometheus.CounterVec
 }

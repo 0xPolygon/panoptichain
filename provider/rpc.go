@@ -46,6 +46,7 @@ type RPCProvider struct {
 	logger           zerolog.Logger
 	BlockNumber      uint64
 	prevBlockNumber  uint64
+	finalizedHeight  uint64
 	blockBuffer      *blockbuffer.BlockBuffer
 	txPool           *observer.TransactionPool
 	refreshStateTime *time.Duration
@@ -291,6 +292,11 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 		r.bus.Publish(ctx, topics.TimeToFinalized, m)
 	}
 
+	if r.finalizedHeight > 0 {
+		m := observer.NewMessage(r.Network, r.Label, r.finalizedHeight)
+		r.bus.Publish(ctx, topics.FinalizedHeight, m)
+	}
+
 	r.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(r.Network, r.Label, r.refreshStateTime))
 
 	return nil
@@ -319,6 +325,7 @@ func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Clien
 		r.logger.Warn().Err(err).Msg("Failed to get finalized block header")
 		return err
 	}
+	r.finalizedHeight = finalized.Number.Uint64()
 
 	latest, err := c.HeaderByNumber(ctx, big.NewInt(int64(r.BlockNumber)))
 	if err != nil {
@@ -607,6 +614,9 @@ func (r *RPCProvider) getBlockByNumber(ctx context.Context, n *big.Int, c *ethcl
 	}
 
 	bytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
 
 	var block rpcBlock
 	if err := json.Unmarshal(bytes, &block); err != nil {

@@ -27,6 +27,8 @@ services:
     environment:
       - PANOPTICHAIN_HTTP_ADDRESS=0.0.0.0
       - PANOPTICHAIN_HTTP_PORT=9090
+    volumes:
+      - ./config.yml:/etc/panoptichain/config.yml
 
 volumes:
   grafana:

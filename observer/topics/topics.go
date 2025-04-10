@@ -39,4 +39,5 @@ const (
 	TrustedBatch                                       // *zkevmtypes.Batch
 	ExchangeRate                                       // observer.ExchangeRate
 	TimeToFinalized                                    // uint64
+	FinalizedHeight                                    // uint64
 )

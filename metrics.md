@@ -297,6 +297,18 @@ Variable Labels:
 - network
 - provider
 
+## FinalizedHeightObserver
+
+
+### panoptichain_rpc_finalized_height
+The latest known finalized block heigtht
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## GasLimitObserver
 
 
