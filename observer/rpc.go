@@ -109,7 +109,6 @@ type FinalizedHeightObserver struct {
 func (o *FinalizedHeightObserver) Notify(ctx context.Context, m Message) {
 	finalizedHeight := m.Data().(uint64)
 	o.finalizedHeight.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(finalizedHeight))
-
 }
 
 func (o *FinalizedHeightObserver) Register(eb *EventBus) {
