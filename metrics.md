@@ -301,7 +301,7 @@ Variable Labels:
 
 
 ### panoptichain_rpc_finalized_height
-The latest known finalized block heigtht
+The latest known finalized block height
 
 Metric Type: GaugeVec
 
