@@ -114,7 +114,7 @@ func (o *FinalizedHeightObserver) Notify(ctx context.Context, m Message) {
 func (o *FinalizedHeightObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.FinalizedHeight, o)
 
-	o.finalizedHeight = metrics.NewGauge(metrics.RPC, "finalized_height", "The latest known finalized block heigtht")
+	o.finalizedHeight = metrics.NewGauge(metrics.RPC, "finalized_height", "The latest known finalized block height")
 }
 
 func (o *FinalizedHeightObserver) GetCollectors() []prometheus.Collector {
