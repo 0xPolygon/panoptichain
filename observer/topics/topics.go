@@ -16,7 +16,7 @@ const (
 	SensorBlocks                                       // *observer.SensorBlocks
 	SensorBlockEvents                                  // *observer.SensorBlockEvents
 	BorMissedBlockProposal                             // observer.MissedBlockProposal
-	HeimdallMissedBlockProposal                        // *observer.HeimdallMissedBlockProposal
+	HeimdallMissedBlockProposal                        // observer.HeimdallMissedBlockProposal
 	Checkpoint                                         // *observer.HeimdallCheckpoint
 	MissedCheckpointProposal                           // []string
 	MissedMilestoneProposal                            // []string

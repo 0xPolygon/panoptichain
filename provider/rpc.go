@@ -110,7 +110,7 @@ func NewRPCProvider(opts RPCProviderOpts) *RPCProvider {
 
 	parsedURL, err := url.Parse(opts.URL)
 	if err != nil {
-		logger.Error().Err(err).Msg("Unable to parse RPC URL")
+		logger.Error().Err(err).Msg("Failed to parse RPC URL")
 	}
 
 	return &RPCProvider{
@@ -152,7 +152,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 
 	c, err := ethclient.DialContext(ctx, r.URL)
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Unable to create the client")
+		r.logger.Error().Err(err).Msg("Failed to create the client")
 		return err
 	}
 
@@ -318,11 +318,11 @@ func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Clien
 	r.prevBlockNumber = r.BlockNumber
 	r.BlockNumber, err = c.BlockNumber(ctx)
 	if err != nil {
-		r.logger.Error().Err(err).Any("provider", r).Msg("Unable to get block number")
+		r.logger.Error().Err(err).Any("provider", r).Msg("Failed to get block number")
 		return err
 	}
 
-	r.logger.Info().Uint64("block_number", r.BlockNumber).Msg("Block state refreshed")
+	r.logger.Info().Uint64("block_number", r.BlockNumber).Msg("Refreshed block state")
 
 	if r.prevBlockNumber != 0 && r.prevBlockNumber != r.BlockNumber {
 		r.fillRange(ctx, r.prevBlockNumber, c)
@@ -383,26 +383,26 @@ func (r *RPCProvider) refreshStateSync(ctx context.Context, c *ethclient.Client,
 		address := common.HexToAddress(*r.contracts.StateSyncSenderAddress)
 		ss, err := contracts.NewStateSender(address, c)
 		if err != nil {
-			r.logger.Error().Err(err).Msg("Unable to bind state sender contract")
+			r.logger.Error().Err(err).Msg("Failed to bind state sender contract")
 			return err
 		}
 
 		counter, err = ss.Counter(&co)
 		if err != nil {
-			r.logger.Error().Err(err).Msg("Unable to get counter")
+			r.logger.Error().Err(err).Msg("Failed to get state sender counter")
 			return err
 		}
 	} else if r.contracts.StateSyncReceiverAddress != nil {
 		address := common.HexToAddress(*r.contracts.StateSyncReceiverAddress)
 		sr, err := contracts.NewStateReceiver(address, c)
 		if err != nil {
-			r.logger.Error().Err(err).Msg("Unable to bind state receiver contract")
+			r.logger.Error().Err(err).Msg("Failed to bind state receiver contract")
 			return err
 		}
 
 		counter, err = sr.LastStateId(&co)
 		if err != nil {
-			r.logger.Error().Err(err).Msg("Unable to get counter")
+			r.logger.Error().Err(err).Msg("Failed to get state receiver counter")
 			return err
 		}
 	} else {
@@ -430,7 +430,7 @@ func (r *RPCProvider) refreshCheckpoint(ctx context.Context, c *ethclient.Client
 	address := common.HexToAddress(*r.contracts.CheckpointAddress)
 	contract, err := contracts.NewRootChain(address, c)
 	if contract == nil || err != nil {
-		r.logger.Warn().Err(err).Msg("Unable to bind root chain contract")
+		r.logger.Warn().Err(err).Msg("Failed to bind root chain contract")
 		return
 	}
 
@@ -671,7 +671,6 @@ func (r *RPCProvider) fillRange(ctx context.Context, start uint64, c *ethclient.
 	r.logger.Debug().
 		Uint64("start_block", start).
 		Uint64("end_block", r.BlockNumber).
-		Str("url", r.parsedURL.Host).
 		Msg("Filling block range")
 
 	for i := start + 1; i <= r.BlockNumber; i++ {
@@ -684,7 +683,7 @@ func (r *RPCProvider) fillRange(ctx context.Context, start uint64, c *ethclient.
 		}
 
 		if err != nil {
-			r.logger.Warn().Err(err).Uint64("block_number", i).Msg("Unable to get block")
+			r.logger.Warn().Err(err).Uint64("block_number", i).Msg("Failed to get block")
 			break
 		}
 
@@ -1027,7 +1026,7 @@ func (r *RPCProvider) refreshExitRoots(ctx context.Context, c *ethclient.Client)
 	co := &bind.CallOpts{Context: ctx}
 	contract, err := contracts.NewPolygonZkEVMGlobalExitRootV2(*r.globalExitRootAddress, c)
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Unable to bind global exit root contract")
+		r.logger.Error().Err(err).Msg("Failed to bind global exit root contract")
 		return nil
 	}
 
@@ -1079,7 +1078,7 @@ func (r *RPCProvider) refreshExitRootsL2(ctx context.Context, c *ethclient.Clien
 	address := common.HexToAddress(*r.contracts.GlobalExitRootL2Address)
 	contract, err := contracts.NewPolygonZkEVMGlobalExitRootL2(address, c)
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Unable to bind global exit root l2 contract")
+		r.logger.Error().Err(err).Msg("Failed to bind global exit root l2 contract")
 		return err
 	}
 
@@ -1107,7 +1106,7 @@ func (r *RPCProvider) refreshBridge(ctx context.Context, c *ethclient.Client) er
 	address := common.HexToAddress(*r.contracts.ZkEVMBridgeAddress)
 	contract, err := contracts.NewPolygonZkEVMBridgeV2(address, c)
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Unable to bind zkEVM bridge contract")
+		r.logger.Error().Err(err).Msg("Failed to bind zkEVM bridge contract")
 		return nil
 	}
 
@@ -1186,7 +1185,7 @@ func (r *RPCProvider) getPOL(c *ethclient.Client, address common.Address, co *bi
 
 	erc20, err := contracts.NewERC20(*r.polTokenAddress, c)
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Unable to bind ERC20 contract")
+		r.logger.Error().Err(err).Msg("Failed to bind ERC20 contract")
 		return prev
 	}
 
@@ -1317,7 +1316,7 @@ func runProvider(ctx context.Context, p *RPCProvider) {
 func (r *RPCProvider) refreshZkEVMEtrog(ctx context.Context, c *ethclient.Client, co *bind.CallOpts, rollupID uint32, rollup RollupData) error {
 	contract, err := contracts.NewPolygonZkEVMEtrog(rollup.RollupContract, c)
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Unable to bind zkEVM Etrog contract")
+		r.logger.Error().Err(err).Msg("Failed to bind zkEVM Etrog contract")
 		return nil
 	}
 
@@ -1384,7 +1383,7 @@ func (r *RPCProvider) refreshRollupManager(ctx context.Context, c *ethclient.Cli
 	address := common.HexToAddress(*r.contracts.RollupManagerAddress)
 	contract, err := contracts.NewPolygonRollupManager(address, c)
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Unable to bind rollup manager contract")
+		r.logger.Error().Err(err).Msg("Failed to bind rollup manager contract")
 		return nil
 	}
 

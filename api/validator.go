@@ -31,13 +31,21 @@ type Validator struct {
 	Accum       int64  `json:"accum"`
 }
 
-// ValidatorSet is a set of Polygon PoS validators.
-type ValidatorSet struct {
+// ValidatorSetV1 is a set of Polygon PoS validators from Heimdall v1.
+type ValidatorSetV1 struct {
 	Height string `json:"height"`
 	Result struct {
 		Validators []*Validator `json:"validators"`
 		Proposer   *Validator   `json:"proposer"`
 	} `json:"result"`
+}
+
+// ValidatorSetV1 is a set of Polygon PoS validators from Heimdall v2.
+type ValidatorSetV2 struct {
+	ValidatorSet struct {
+		Validators []*Validator `json:"validators"`
+		Proposer   *Validator   `json:"proposer"`
+	} `json:"validator_set"`
 }
 
 // ValidatorsCache holds a cache of validators with a time-to-live (TTL).
@@ -52,15 +60,18 @@ var cache sync.Map
 // Validators queries the Heimdall API for the validator set. The validator set
 // is cached based on the refreshInterval.
 func Validators(n network.Network) ([]*Validator, error) {
-	var heimdallURL *string
+	var path *string
+	var version uint = 1
+
 	for _, heimdall := range config.Config().Providers.HeimdallEndpoints {
 		if heimdall.Name == n.GetName() {
-			heimdallURL = &heimdall.HeimdallURL
+			path = &heimdall.HeimdallURL
+			version = heimdall.Version
 			break
 		}
 	}
 
-	if heimdallURL == nil {
+	if path == nil {
 		return nil, errors.New("no validators for this network")
 	}
 
@@ -76,12 +87,34 @@ func Validators(n network.Network) ([]*Validator, error) {
 		}
 	}
 
-	path, err := url.JoinPath(*heimdallURL, "staking/validator-set")
+	var validators []*Validator
+	var err error
+	switch version {
+	case 1:
+		validators, err = getValidatorsV1(*path)
+	case 2:
+		validators, err = getValidatorsV2(*path)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	var body *ValidatorSet
+	cache.Store(n, ValidatorsCache{
+		validators: validators,
+		ttl:        time.Now().Add(refreshInterval),
+	})
+
+	return validators, nil
+}
+
+func getValidatorsV1(path string) ([]*Validator, error) {
+	path, err := url.JoinPath(path, "staking/validator-set")
+	if err != nil {
+		return nil, err
+	}
+
+	var body *ValidatorSetV1
 	err = GetJSON(path, &body)
 	if err != nil {
 		return nil, err
@@ -91,12 +124,26 @@ func Validators(n network.Network) ([]*Validator, error) {
 		return nil, errors.New("empty validator body response")
 	}
 
-	cache.Store(n, ValidatorsCache{
-		validators: body.Result.Validators,
-		ttl:        time.Now().Add(refreshInterval),
-	})
-
 	return body.Result.Validators, nil
+}
+
+func getValidatorsV2(path string) ([]*Validator, error) {
+	path, err := url.JoinPath(path, "stake/validator-set")
+	if err != nil {
+		return nil, err
+	}
+
+	var body *ValidatorSetV2
+	err = GetJSON(path, &body)
+	if err != nil {
+		return nil, err
+	}
+
+	if body == nil || body.ValidatorSet.Validators == nil {
+		return nil, errors.New("empty validator body response")
+	}
+
+	return body.ValidatorSet.Validators, nil
 }
 
 // Signers maps the validator signer to the validator.

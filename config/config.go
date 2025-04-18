@@ -95,6 +95,7 @@ type HeimdallEndpoint struct {
 	HeimdallURL   string `mapstructure:"heimdall_url" validate:"url,required_with=Name"`
 	Label         string `mapstructure:"label" validate:"required_with=Name"`
 	Interval      uint   `mapstructure:"interval"`
+	Version       uint   `mapstructure:"version" validate:"oneof=1 2"`
 }
 
 // SensorNetwork configures the sensor network provider. This fetches data from

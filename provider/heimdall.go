@@ -27,28 +27,29 @@ type HeimdallProvider struct {
 	bus           *observer.EventBus
 	interval      uint
 	logger        zerolog.Logger
+	version       uint
 
 	BlockNumber         uint64
 	prevBlockNumber     uint64
 	blockBuffer         *blockbuffer.BlockBuffer
-	missedBlockProposal *observer.HeimdallMissedBlockProposal
+	missedBlockProposal observer.HeimdallMissedBlockProposal
 
-	checkpoint               *observer.HeimdallCheckpoint
-	checkpointProposers      *orderedmap.OrderedMap[string, struct{}]
-	missedCheckpointProposal []string
+	checkpoint                *observer.HeimdallCheckpoint
+	checkpointProposers       *orderedmap.OrderedMap[string, struct{}]
+	missedCheckpointProposers []string
 
-	milestone               *observer.HeimdallMilestone
-	prevMilestoneCount      uint64
-	milestoneProposers      []*api.Validator
-	prevMilestoneProposers  []*api.Validator
-	missedMilestoneProposal []string
+	milestone                *observer.HeimdallMilestone
+	prevMilestoneCount       uint64
+	milestoneProposers       []api.Validator
+	prevMilestoneProposers   []api.Validator
+	missedMilestoneProposers []string
 
 	span *observer.HeimdallSpan
 
 	refreshStateTime *time.Duration
 }
 
-func NewHeimdallProvider(n network.Network, tendermintURL, heimdallURL, label string, eb *observer.EventBus, interval uint) *HeimdallProvider {
+func NewHeimdallProvider(n network.Network, tendermintURL, heimdallURL, label string, eb *observer.EventBus, interval uint, version uint) *HeimdallProvider {
 	return &HeimdallProvider{
 		TendermintURL:       tendermintURL,
 		HeimdallURL:         heimdallURL,
@@ -60,6 +61,7 @@ func NewHeimdallProvider(n network.Network, tendermintURL, heimdallURL, label st
 		logger:              NewLogger(n, label),
 		checkpointProposers: orderedmap.New[string, struct{}](),
 		refreshStateTime:    new(time.Duration),
+		version:             version,
 	}
 }
 
@@ -70,14 +72,20 @@ func (h *HeimdallProvider) SetEventBus(bus *observer.EventBus) {
 func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	defer timer(h.refreshStateTime)()
 
-	h.logger.Debug().Msg("Refreshing Heimdall State")
+	h.logger.Debug().Msg("Refreshing Heimdall state")
 
 	h.refreshBlockBuffer()
-	h.refreshMilestone()
+
+	switch h.version {
+	case 1:
+		h.refreshMilestone()
+		h.refreshMissedMilestoneProposal()
+	case 2:
+	}
+
 	h.refreshCheckpoint()
 	h.refreshMissedCheckpointProposal()
 	h.refreshMissedBlockProposal()
-	h.refreshMissedMilestoneProposal()
 	h.refreshSpan()
 
 	return nil
@@ -129,9 +137,9 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.HeimdallBlockInterval, interval)
 	}
 
-	if h.milestone != nil {
-		m := observer.NewMessage(h.Network, h.Label, h.milestone)
-		h.bus.Publish(ctx, topics.Milestone, m)
+	if h.missedBlockProposal != nil {
+		m := observer.NewMessage(h.Network, h.Label, h.missedBlockProposal)
+		h.bus.Publish(ctx, topics.HeimdallMissedBlockProposal, m)
 	}
 
 	if h.checkpoint != nil {
@@ -139,18 +147,18 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.Checkpoint, m)
 	}
 
-	if len(h.missedCheckpointProposal) > 0 {
-		m := observer.NewMessage(h.Network, h.Label, h.missedCheckpointProposal)
+	if len(h.missedCheckpointProposers) > 0 {
+		m := observer.NewMessage(h.Network, h.Label, h.missedCheckpointProposers)
 		h.bus.Publish(ctx, topics.MissedCheckpointProposal, m)
 	}
 
-	if h.missedBlockProposal != nil {
-		m := observer.NewMessage(h.Network, h.Label, h.missedBlockProposal)
-		h.bus.Publish(ctx, topics.HeimdallMissedBlockProposal, m)
+	if h.milestone != nil {
+		m := observer.NewMessage(h.Network, h.Label, h.milestone)
+		h.bus.Publish(ctx, topics.Milestone, m)
 	}
 
-	if len(h.missedMilestoneProposal) > 0 {
-		m := observer.NewMessage(h.Network, h.Label, h.missedMilestoneProposal)
+	if len(h.missedMilestoneProposers) > 0 {
+		m := observer.NewMessage(h.Network, h.Label, h.missedMilestoneProposers)
 		h.bus.Publish(ctx, topics.MissedMilestoneProposal, m)
 	}
 
@@ -233,13 +241,12 @@ func (h *HeimdallProvider) fillRange(start uint64) {
 	h.logger.Debug().
 		Uint64("start_block", start).
 		Uint64("end_block", h.BlockNumber).
-		Str("url", h.TendermintURL).
 		Msg("Filling block range")
 
 	for i := start + 1; i <= h.BlockNumber; i++ {
 		block := h.getBlock(i)
 		if block == nil {
-			h.logger.Warn().Uint64("block_number", i).Msg("Unable to get block")
+			h.logger.Warn().Uint64("block_number", i).Msg("Failed to get block")
 			break
 		}
 
@@ -254,33 +261,34 @@ func (h *HeimdallProvider) refreshMilestone() error {
 
 	path, err := url.JoinPath(h.HeimdallURL, "milestone/count")
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to join path when fetching Heimdall milestone count")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone count path")
 		return err
 	}
 
-	count := &observer.HeimdallMilestoneCount{}
+	count := &observer.HeimdallMilestoneCountV1{}
 
 	err = api.GetJSON(path, &count)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Unable to get latest Heimdall milestone count")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone count")
 		return err
 	}
 
 	path, err = url.JoinPath(h.HeimdallURL, "milestone", fmt.Sprint(count.Result.Count))
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to join path when fetching Heimdall milestone")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone path")
 		return err
 	}
 
-	err = api.GetJSON(path, &h.milestone)
+	milestone := observer.HeimdallMilestoneV1{}
+	err = api.GetJSON(path, &milestone)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Unable to get latest heimdall milestone")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone")
 		return err
 	}
 
-	h.milestone.PrevCount = max(h.milestone.PrevCount, h.milestone.Count)
+	h.milestone = &milestone.Result
+	h.milestone.PrevCount = max(h.prevMilestoneCount, h.milestone.Count)
 	h.milestone.Count = count.Result.Count
-	h.logger.Info().Any("milestone", h.milestone).Msg("Received Heimdall milestone")
 
 	return nil
 }
@@ -288,39 +296,44 @@ func (h *HeimdallProvider) refreshMilestone() error {
 func (h *HeimdallProvider) refreshCheckpoint() error {
 	path, err := url.JoinPath(h.HeimdallURL, "checkpoints/latest")
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to join path when fetching Heimdall checkpoint")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall latest checkpoint path")
 		return err
 	}
 
-	err = api.GetJSON(path, &h.checkpoint)
+	checkpoint := observer.HeimdallCheckpointV1{}
+	err = api.GetJSON(path, &checkpoint)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Unable to get latest Heimdall checkpoint")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall latest checkpoint")
 		return err
 	}
-
-	h.logger.Info().Any("checkpoint", h.checkpoint).Msg("Received Heimdall checkpoint")
+	h.checkpoint = &checkpoint.Result
 
 	return nil
 }
 
 func (h *HeimdallProvider) refreshMissedCheckpointProposal() error {
+	checkpointProposers := []string{}
+	for pair := h.checkpointProposers.Oldest(); pair != nil; pair = pair.Next() {
+		checkpointProposers = append(checkpointProposers, pair.Key)
+	}
+
 	h.logger.Info().
-		Any("checkpoint_proposers", h.checkpointProposers).
-		Any("missed_checkpoint_proposers", h.missedCheckpointProposal).
+		Any("checkpoint_proposers", checkpointProposers).
+		Any("missed_checkpoint_proposers", h.missedCheckpointProposers).
 		Msg("Refreshing missed checkpoint proposal")
 
-	h.missedCheckpointProposal = nil
-	var currentProposer *observer.HeimdallCurrentProposer
+	h.missedCheckpointProposers = nil
+	var currentProposer *observer.ValidatorV1
 
 	path, err := url.JoinPath(h.HeimdallURL, "staking/current-proposer")
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to join path when fetching Heimdall current checkpoint proposer")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall current checkpoint proposer path")
 		return err
 	}
 
 	err = api.GetJSON(path, &currentProposer)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Unable to get Heimdall current checkpoint proposer")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall current checkpoint proposer")
 		return err
 	}
 
@@ -329,7 +342,7 @@ func (h *HeimdallProvider) refreshMissedCheckpointProposal() error {
 		h.checkpointProposers.Set(signer, struct{}{})
 	}
 
-	latestProposer := h.checkpoint.Result.Proposer
+	latestProposer := h.checkpoint.Proposer
 	if _, ok := h.checkpointProposers.Get(latestProposer); !ok {
 		return nil
 	}
@@ -342,7 +355,7 @@ func (h *HeimdallProvider) refreshMissedCheckpointProposal() error {
 			break
 		}
 
-		h.missedCheckpointProposal = append(h.missedCheckpointProposal, proposer)
+		h.missedCheckpointProposers = append(h.missedCheckpointProposers, proposer)
 	}
 
 	return nil
@@ -351,57 +364,56 @@ func (h *HeimdallProvider) refreshMissedCheckpointProposal() error {
 func (h *HeimdallProvider) refreshMissedBlockProposal() error {
 	missedBlockProposal := make(observer.HeimdallMissedBlockProposal)
 	for i := h.prevBlockNumber + 1; i <= h.BlockNumber && h.prevBlockNumber != 0; i++ {
-		currentBlock := h.getBlock(i)
-		if currentBlock == nil {
-			h.logger.Debug().Msg("Failed to get current block. Skipping.")
+		block := h.getBlock(i)
+		if block == nil {
+			h.logger.Debug().Msg("Failed to get current block")
 			continue
 		}
-		currentBlockProposer := currentBlock.ProposerAddress()
+		proposer := block.ProposerAddress()
 
-		validatorsData := h.getValidators(i - 1)
-		if validatorsData == nil {
-			h.logger.Debug().Msg("Failed to get current validator data. Skipping.")
+		v := h.getValidators(i - 1)
+		if v == nil {
+			h.logger.Debug().Msg("Failed to get validators")
 			continue
 		}
+		validators := v.Validators()
 
-		validators := validatorsData.Validators()
-		// in descending order
+		// Sort validators in descending order.
 		sort.Slice(validators, func(i, j int) bool {
 			pi, _ := strconv.Atoi(validators[i].ProposerPriority)
 			pj, _ := strconv.Atoi(validators[j].ProposerPriority)
 			return pi > pj
 		})
 
-		failedProposers := observer.FailedProposerInfo{}
-
+		proposers := []string{}
 		for _, validator := range validators {
-			if validator.Address == currentBlockProposer {
+			if validator.Address == proposer {
 				break
 			}
-			failedProposers.FailedProposers = append(failedProposers.FailedProposers, validator.Address)
+			proposers = append(proposers, validator.Address)
 		}
 
-		missedBlockProposal[i] = failedProposers
+		missedBlockProposal[i] = proposers
 	}
 
-	h.missedBlockProposal = &missedBlockProposal
+	h.missedBlockProposal = missedBlockProposal
 
 	return nil
 }
 
 func (h *HeimdallProvider) refreshMissedMilestoneProposal() error {
-	h.missedMilestoneProposal = nil
-	var proposers *observer.HeimdallMilestoneProposers
+	h.missedMilestoneProposers = nil
 
 	path, err := url.JoinPath(h.HeimdallURL, "staking/milestoneProposer", fmt.Sprint(500))
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to join path when fetching Heimdall milestone proposers")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone proposers path")
 		return err
 	}
 
+	var proposers *observer.ValidatorsV1
 	err = api.GetJSON(path, &proposers)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Unable to get Heimdall milestone proposers")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone proposers")
 		return err
 	}
 
@@ -425,16 +437,16 @@ func (h *HeimdallProvider) refreshMissedMilestoneProposal() error {
 
 	for _, validator := range h.prevMilestoneProposers {
 		// Stop when we see the latest milestone.
-		if validator.Signer == h.milestone.Result.Proposer {
+		if validator.Signer == h.milestone.Proposer {
 			break
 		}
 
-		h.missedMilestoneProposal = append(h.missedMilestoneProposal, validator.Signer)
+		h.missedMilestoneProposers = append(h.missedMilestoneProposers, validator.Signer)
 	}
 
-	if len(h.missedMilestoneProposal) > 0 {
+	if len(h.missedMilestoneProposers) > 0 {
 		h.logger.Info().
-			Any("missed_milestone_proposal", h.missedMilestoneProposal).
+			Any("missed_milestone_proposers", h.missedMilestoneProposers).
 			Msg("Validators missed milestone proposal")
 	}
 
@@ -444,17 +456,17 @@ func (h *HeimdallProvider) refreshMissedMilestoneProposal() error {
 func (h *HeimdallProvider) refreshSpan() error {
 	url, err := url.JoinPath(h.HeimdallURL, "bor/latest-span")
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Unable to get Heimdall URL")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall latest span path")
 		return err
 	}
 
-	err = api.GetJSON(url, &h.span)
+	span := observer.HeimdallSpanV1{}
+	err = api.GetJSON(url, &span)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Unable to get latest Heimdall span")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall latest span")
 		return err
 	}
-
-	h.logger.Info().Any("span", h.span).Msg("Received Heimdall span")
+	h.span = &span.Result
 
 	return nil
 }

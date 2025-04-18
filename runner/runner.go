@@ -106,7 +106,11 @@ func Init(ctx context.Context) error {
 			interval = h.Interval
 		}
 
-		p := provider.NewHeimdallProvider(n, h.TendermintURL, h.HeimdallURL, h.Label, eb, interval)
+		if h.Version == 0 {
+			h.Version = 1
+		}
+
+		p := provider.NewHeimdallProvider(n, h.TendermintURL, h.HeimdallURL, h.Label, eb, interval, h.Version)
 		providers = append(providers, p)
 	}
 

@@ -308,6 +308,10 @@
     ## @param interval - integer - optional - default: runner.interval
     ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_INTERVAL - integer - optional - default: runner.interval
     ## The polling interval for the `heimdall` provider.
+    ##
+    ## @param version - integer - optional - default: 1
+    ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_VERSION - integer - optional - default: 1
+    ## The Heimdall version.
   #
   # heimdall:
   #   - name: "Polygon Mainnet"
@@ -315,12 +319,14 @@
   #     heimdall_url: "https://heimdall-api.polygon.technology"
   #     label: "polygon.technology"
   #     interval: 5
+  #     version: 1
   #
   #   - name: "Polygon Amoy"
   #     tendermint_url: "https://tendermint-api-amoy.polygon.technology"
   #     heimdall_url: "https://heimdall-api-amoy.polygon.technology"
   #     label: "polygon.technology"
   #     interval: 5
+  #     version: 1
 
   ## @param sensor_network - list of objects - optional
   ## The `sensor_network` provider fetches data from GCP Datastore. Remove these
