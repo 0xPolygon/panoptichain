@@ -2,7 +2,9 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/big"
 	"net/url"
 	"reflect"
 	"sort"
@@ -248,7 +250,7 @@ func (h *HeimdallProvider) fillRange(start uint64) {
 	}
 }
 
-func (h *HeimdallProvider) getHeimdallMilestoneCount() (*observer.HeimdallMilestoneCount, error) {
+func (h *HeimdallProvider) getHeimdallMilestoneCount() (*big.Int, error) {
 	path, err := url.JoinPath(h.HeimdallURL, "milestone/count")
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone count path")
@@ -269,7 +271,12 @@ func (h *HeimdallProvider) getHeimdallMilestoneCount() (*observer.HeimdallMilest
 		}
 	}
 
-	return &count, nil
+	c, ok := new(big.Int).SetString(count.Count.String(), 10)
+	if !ok {
+		return nil, errors.New("failed to parse milestone count")
+	}
+
+	return c, nil
 }
 
 func (h *HeimdallProvider) refreshMilestone() error {
@@ -283,7 +290,7 @@ func (h *HeimdallProvider) refreshMilestone() error {
 		return err
 	}
 
-	path, err := url.JoinPath(h.HeimdallURL, "milestone", fmt.Sprint(count.Count))
+	path, err := url.JoinPath(h.HeimdallURL, "milestone", count.String())
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone path")
 		return err
@@ -310,7 +317,7 @@ func (h *HeimdallProvider) refreshMilestone() error {
 
 	h.milestone = &milestone
 	h.milestone.PrevCount = h.prevMilestoneCount
-	h.milestone.Count, _ = count.Count.Int64()
+	h.milestone.Count = count.Int64()
 
 	return nil
 }
