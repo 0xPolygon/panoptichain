@@ -14,7 +14,6 @@ import (
 
 	"github.com/0xPolygon/panoptichain/api"
 	"github.com/0xPolygon/panoptichain/blockbuffer"
-	"github.com/0xPolygon/panoptichain/log"
 	"github.com/0xPolygon/panoptichain/network"
 	"github.com/0xPolygon/panoptichain/observer"
 	"github.com/0xPolygon/panoptichain/observer/topics"
@@ -394,7 +393,7 @@ func (h *HeimdallProvider) refreshMissedCheckpointProposal() error {
 
 	current, err := h.getCurrentCheckpointProposer()
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to get Heimdall current checkpoint proposer")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall current checkpoint proposer")
 		return err
 	}
 
