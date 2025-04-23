@@ -489,15 +489,6 @@ Variable Labels:
 - network
 - provider
 
-### panoptichain_heimdall_milestone_block_height
-The milestone block height
-
-Metric Type: GaugeVec
-
-Variable Labels:
-- network
-- provider
-
 ### panoptichain_heimdall_milestone_count
 The milestone count
 

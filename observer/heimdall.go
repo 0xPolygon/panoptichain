@@ -245,7 +245,6 @@ type HeimdallMilestoneV2 struct {
 
 type MilestoneObserver struct {
 	time       *prometheus.GaugeVec
-	height     *prometheus.GaugeVec
 	count      *prometheus.GaugeVec
 	startBlock *prometheus.GaugeVec
 	endBlock   *prometheus.GaugeVec
@@ -287,7 +286,6 @@ func (o *MilestoneObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.Milestone, o)
 
 	o.time = metrics.NewGauge(metrics.Heimdall, "time_since_last_milestone", "The time since last milestone")
-	o.height = metrics.NewGauge(metrics.Heimdall, "milestone_block_height", "The milestone block height")
 	o.count = metrics.NewGauge(metrics.Heimdall, "milestone_count", "The milestone count")
 	o.startBlock = metrics.NewGauge(metrics.Heimdall, "milestone_start_block", "The milestone start block")
 	o.endBlock = metrics.NewGauge(metrics.Heimdall, "milestone_end_block", "The milestone end block")
@@ -303,7 +301,6 @@ func (o *MilestoneObserver) Register(eb *EventBus) {
 func (o *MilestoneObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		o.time,
-		o.height,
 		o.count,
 		o.startBlock,
 		o.endBlock,
