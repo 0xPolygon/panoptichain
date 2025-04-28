@@ -1276,18 +1276,18 @@ func (r *RPCProvider) isRollupEnabled(rollupID uint32) bool {
 // is deployed. It distinguishes between rollup managers on the same L1
 // network and includes the rollup ID.
 func (r *RPCProvider) getRollupLabel(rollupID uint32) string {
-	rollupManagers := map[network.Network]map[common.Address]string{
-		network.Ethereum: {
+	rollupManagers := map[string]map[common.Address]string{
+		network.EthereumName: {
 			common.HexToAddress("0x5132A183E9F3CB7C848b0AAC5Ae0c4f0491B7aB2"): "Mainnet",
 		},
-		network.Sepolia: {
+		network.SepoliaName: {
 			common.HexToAddress("0x32d33D5137a7cFFb54c5Bf8371172bcEc5f310ff"): "Cardona",
 			common.HexToAddress("0xE2EF6215aDc132Df6913C8DD16487aBF118d1764"): "Bali",
 		},
 	}
 
 	address := common.HexToAddress(*r.contracts.RollupManagerAddress)
-	if addresses, ok := rollupManagers[r.Network]; ok {
+	if addresses, ok := rollupManagers[r.Network.GetName()]; ok {
 		if name, ok := addresses[address]; ok {
 			return fmt.Sprintf("%s Rollup %d", name, rollupID)
 		}
