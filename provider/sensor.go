@@ -28,7 +28,7 @@ type SensorNetworkProvider struct {
 	Network  network.Network
 	Label    string
 	bus      *observer.EventBus
-	interval uint
+	interval time.Duration
 	db       *datastore.Client
 	logger   zerolog.Logger
 
@@ -50,7 +50,7 @@ type SensorNetworkProvider struct {
 	refreshStateTime *time.Duration
 }
 
-func NewSensorNetworkProvider(ctx context.Context, n network.Network, project, database, label string, eb *observer.EventBus, interval uint) *SensorNetworkProvider {
+func NewSensorNetworkProvider(ctx context.Context, n network.Network, project, database, label string, eb *observer.EventBus, interval time.Duration) *SensorNetworkProvider {
 	logger := NewLogger(n, label)
 
 	db, err := datastore.NewClientWithDatabase(ctx, project, database)
@@ -140,7 +140,7 @@ func (s *SensorNetworkProvider) SetEventBus(bus *observer.EventBus) {
 	s.bus = bus
 }
 
-func (s *SensorNetworkProvider) PollingInterval() uint {
+func (s *SensorNetworkProvider) PollingInterval() time.Duration {
 	return s.interval
 }
 

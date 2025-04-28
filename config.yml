@@ -13,12 +13,12 @@
 #
 # runner:
 #
-  ## @param interval - integer - optional - default 30
-  ## @env PANOPTICHAIN_RUNNER_INTERVAL - integer - optional - default 30
-  ## The default polling interval, in seconds, for providers. If a provider's
-  ## interval is not set, this value is used.
+  ## @param interval - string - optional - default 30s
+  ## @env PANOPTICHAIN_RUNNER_INTERVAL - string - optional - default 30s
+  ## The default polling interval for providers. If a provider's interval is not
+  ## set, this value is used. This follows Go's time.Duration format.
   #
-  # interval: 30
+  # interval: 30s
 
 ## @param http - object - optional
 ## The metrics HTTP endpoint.
@@ -135,11 +135,11 @@
   #
   # system:
   #
-    ## @param interval - integer - optional - default: runner.interval
-    ## @env PANOPTICHAIN_PROVIDERS_SYSTEM_INTERVAL - integer - optional - default: runner.interval
+    ## @param interval - string - optional - default: runner.interval
+    ## @env PANOPTICHAIN_PROVIDERS_SYSTEM_INTERVAL - string - optional - default: runner.interval
     ## The polling interval of the `system` provider.
     #
-    # interval: 30
+    # interval: 30s
 
   ## @param rpc - list of objects - optional
   ## The `rpc` provider fetches data from an Ethereum-based RPC server.
@@ -157,8 +157,8 @@
     ## The label for this provider. This field helps distinguish providers from
     ## each other without exposing the underlying RPC URL.
     ##
-    ## @param interval - integer - optional - default: runner.interval
-    ## @env PANOPTICHAIN_PROVIDERS_RPC_0_INTERVAL - integer - optional - default: runner.interval
+    ## @param interval - string - optional - default: runner.interval
+    ## @env PANOPTICHAIN_PROVIDERS_RPC_0_INTERVAL - string - optional - default: runner.interval
     ## The polling interval of the `rpc` provider.
     ##
     ## @param contracts - object - optional
@@ -276,11 +276,11 @@
   #
   # hash_divergence:
   #
-    ## @param interval - integer - optional - default: runner.interval
-    ## @env PANOPTICHAIN_PROVIDERS_HASH_DIVERGENCE_INTERVAL - integer - optional - default: runner.interval
+    ## @param interval - string - optional - default: runner.interval
+    ## @env PANOPTICHAIN_PROVIDERS_HASH_DIVERGENCE_INTERVAL - string - optional - default: runner.interval
     ## The polling interval for the `hash_divergence` provider.
     #
-    # interval: 30
+    # interval: 30s
 
   ## @param heimdall - list of objects - optional
   ## The `heimdall` provider fetches data from Heimdall and Tendermint APIs. Use
@@ -316,8 +316,8 @@
     ## A label for this `heimdall` provider. This field helps distinguish
     ## providers from one another without exposing the underlying URLs.
     ##
-    ## @param interval - integer - optional - default: runner.interval
-    ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_INTERVAL - integer - optional - default: runner.interval
+    ## @param interval - string - optional - default: runner.interval
+    ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_INTERVAL - string - optional - default: runner.interval
     ## The polling interval for the `heimdall` provider.
     ##
     ## @param version - integer - optional - default: 1
@@ -329,14 +329,14 @@
   #     tendermint_url: "https://tendermint-api.polygon.technology"
   #     heimdall_url: "https://heimdall-api.polygon.technology"
   #     label: "polygon.technology"
-  #     interval: 5
+  #     interval: 5s
   #     version: 1
   #
   #   - name: "Polygon Amoy"
   #     tendermint_url: "https://tendermint-api-amoy.polygon.technology"
   #     heimdall_url: "https://heimdall-api-amoy.polygon.technology"
   #     label: "polygon.technology"
-  #     interval: 5
+  #     interval: 5s
   #     version: 1
 
   ## @param sensor_network - list of objects - optional

@@ -27,7 +27,7 @@ type HeimdallProvider struct {
 	Network       network.Network
 	Label         string
 	bus           *observer.EventBus
-	interval      uint
+	interval      time.Duration
 	logger        zerolog.Logger
 	version       uint
 
@@ -51,7 +51,7 @@ type HeimdallProvider struct {
 	refreshStateTime *time.Duration
 }
 
-func NewHeimdallProvider(n network.Network, tendermintURL, heimdallURL, label string, eb *observer.EventBus, interval uint, version uint) *HeimdallProvider {
+func NewHeimdallProvider(n network.Network, tendermintURL, heimdallURL, label string, eb *observer.EventBus, interval time.Duration, version uint) *HeimdallProvider {
 	return &HeimdallProvider{
 		TendermintURL:       tendermintURL,
 		HeimdallURL:         heimdallURL,
@@ -168,7 +168,7 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
-func (h *HeimdallProvider) PollingInterval() uint {
+func (h *HeimdallProvider) PollingInterval() time.Duration {
 	return h.interval
 }
 

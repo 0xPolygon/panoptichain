@@ -4,7 +4,6 @@ package runner
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/log"
@@ -37,7 +36,7 @@ func Start(ctx context.Context) {
 					log.Error().Err(err).Send()
 				}
 
-				util.BlockFor(ctx, time.Second*time.Duration(p.PollingInterval()))
+				util.BlockFor(ctx, p.PollingInterval())
 			}
 		}(p)
 	}
@@ -50,6 +49,7 @@ func Init(ctx context.Context) error {
 	providers = make([]provider.Provider, 0)
 
 	eb := observer.NewEventBus()
+	interval := config.Config().Runner.Interval
 
 	var rpcProviders []*provider.RPCProvider
 	for _, r := range config.Config().Providers.RPCs {
@@ -58,9 +58,8 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		interval := config.Config().Runner.Interval
-		if r.Interval > 0 {
-			interval = r.Interval
+		if r.Interval == nil {
+			r.Interval = interval
 		}
 
 		// Look back this number of blocks when filtering event logs.
@@ -74,7 +73,7 @@ func Init(ctx context.Context) error {
 			URL:           r.URL,
 			Label:         r.Label,
 			EventBus:      eb,
-			Interval:      interval,
+			Interval:      *r.Interval,
 			Contracts:     r.Contracts,
 			TimeToMine:    r.TimeToMine,
 			Accounts:      r.Accounts,
@@ -87,12 +86,11 @@ func Init(ctx context.Context) error {
 	}
 
 	if hd := config.Config().Providers.HashDivergence; hd != nil {
-		interval := config.Config().Runner.Interval
-		if hd.Interval > 0 {
-			interval = hd.Interval
+		if hd.Interval == nil {
+			hd.Interval = interval
 		}
 
-		p := provider.NewHashDivergenceProvider(rpcProviders, eb, interval)
+		p := provider.NewHashDivergenceProvider(rpcProviders, eb, *hd.Interval)
 		providers = append(providers, p)
 	}
 
@@ -102,16 +100,23 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		interval := config.Config().Runner.Interval
-		if h.Interval > 0 {
-			interval = h.Interval
+		if h.Interval == nil {
+			h.Interval = interval
 		}
 
 		if h.Version == 0 {
 			h.Version = 1
 		}
 
-		p := provider.NewHeimdallProvider(n, h.TendermintURL, h.HeimdallURL, h.Label, eb, interval, h.Version)
+		p := provider.NewHeimdallProvider(
+			n,
+			h.TendermintURL,
+			h.HeimdallURL,
+			h.Label,
+			eb,
+			*h.Interval,
+			h.Version,
+		)
 		providers = append(providers, p)
 	}
 
@@ -121,32 +126,42 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		interval := config.Config().Runner.Interval
-		if s.Interval > 0 {
-			interval = s.Interval
+		if s.Interval == nil {
+			s.Interval = interval
 		}
 
-		p := provider.NewSensorNetworkProvider(ctx, n, s.Project, s.Database, s.Label, eb, interval)
+		p := provider.NewSensorNetworkProvider(
+			ctx,
+			n,
+			s.Project,
+			s.Database,
+			s.Label,
+			eb,
+			*interval,
+		)
 		providers = append(providers, p)
 	}
 
 	if system := config.Config().Providers.System; system != nil {
-		interval := config.Config().Runner.Interval
-		if system.Interval > 0 {
-			interval = system.Interval
+		if system.Interval != nil {
+			system.Interval = interval
 		}
 
-		p := provider.NewSystemProvider(eb, interval)
+		p := provider.NewSystemProvider(eb, *system.Interval)
 		providers = append(providers, p)
 	}
 
 	if er := config.Config().Providers.ExchangeRates; er != nil {
-		interval := config.Config().Runner.Interval
-		if er.Interval > 0 {
-			interval = er.Interval
+		if er.Interval == nil {
+			er.Interval = interval
 		}
 
-		p := provider.NewExchangeRatesProvider(er.CoinbaseURL, er.Tokens, eb, interval)
+		p := provider.NewExchangeRatesProvider(
+			er.CoinbaseURL,
+			er.Tokens,
+			eb,
+			*er.Interval,
+		)
 		providers = append(providers, p)
 	}
 

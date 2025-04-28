@@ -43,7 +43,7 @@ type RPCProvider struct {
 	Label            string
 	parsedURL        *url.URL
 	bus              *observer.EventBus
-	interval         uint
+	interval         time.Duration
 	logger           zerolog.Logger
 	BlockNumber      uint64
 	prevBlockNumber  uint64
@@ -99,7 +99,7 @@ type RPCProviderOpts struct {
 	URL           string
 	Label         string
 	EventBus      *observer.EventBus
-	Interval      uint
+	Interval      time.Duration
 	Contracts     config.Contracts
 	TimeToMine    *config.TimeToMine
 	Accounts      []string
@@ -319,7 +319,7 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
-func (r *RPCProvider) PollingInterval() uint {
+func (r *RPCProvider) PollingInterval() time.Duration {
 	return r.interval
 }
 
@@ -1360,7 +1360,7 @@ func runProvider(ctx context.Context, p *RPCProvider) {
 				p.logger.Error().Err(err).Send()
 			}
 
-			util.BlockFor(ctx, time.Second*time.Duration(p.PollingInterval()))
+			util.BlockFor(ctx, p.PollingInterval())
 		}
 	}
 }
