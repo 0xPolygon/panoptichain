@@ -56,7 +56,7 @@ type RPCProvider struct {
 	accountBalances  observer.AccountBalances
 	timeToFinalized  *uint64
 	blockLookBack    uint64
-	isGeth           bool
+	hasTxPool        bool
 
 	// PoS
 	stateSync            map[bool]*observer.StateSync
@@ -103,7 +103,7 @@ type RPCProviderOpts struct {
 	TimeToMine    *config.TimeToMine
 	Accounts      []string
 	BlockLookBack uint64
-	IsGeth        bool
+	TxPool        bool
 }
 
 // NewRPCProvider creates a new RPC provider and configures it's event bus.
@@ -139,7 +139,7 @@ func NewRPCProvider(opts RPCProviderOpts) *RPCProvider {
 		trustedSequencerURL:  make(chan string),
 		rollupContracts:      make(map[uint32]common.Address),
 		blockLookBack:        opts.BlockLookBack,
-		isGeth:               opts.IsGeth,
+		hasTxPool:            opts.TxPool,
 	}
 }
 
@@ -170,7 +170,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 		r.refreshMissedBlockProposal(ctx, c)
 	}
 
-	if r.isGeth {
+	if r.hasTxPool {
 		r.refreshTxPoolStatus(ctx, c)
 	}
 
@@ -580,8 +580,8 @@ type rpcBlock struct {
 // getBlockByNumber gets the block given a block number. This is lifted from
 // https://github.com/ethereum/go-ethereum/blob/master/ethclient/ethclient.go
 // with the change that unsupported transactions are treated as legacy
-// transactions. This allows panoptichain to observe chains that use transaction
-// types that are not supported by geth.
+// transactions. This allows observation of chains that use transaction types
+// that are not supported by Geth.
 func (r *RPCProvider) getBlockByNumber(ctx context.Context, n *big.Int, c *ethclient.Client) (*types.Block, error) {
 	var raw json.RawMessage
 	err := c.Client().Call(&raw, "eth_getBlockByNumber", hexutil.EncodeBig(n), true)

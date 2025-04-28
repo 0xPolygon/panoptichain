@@ -38,7 +38,7 @@ type RPC struct {
 	TimeToMine    *TimeToMine       `mapstructure:"time_to_mine"`
 	Accounts      []string          `mapstructure:"accounts"`
 	BlockLookBack *uint64           `mapstructure:"block_look_back"`
-	IsGeth        bool              `mapstructure:"is_geth"`
+	TxPool        bool              `mapstructure:"txpool"`
 }
 
 // ContractAddresses maps specific contracts to their addresses. This is used to
