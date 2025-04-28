@@ -171,6 +171,9 @@
     ## - zkevm_bridge_address          (zkEVM, L2)
     ## - global_exit_root_l2_address   (zkEVM, L2)
     ##
+      ## @param rollup_manager - object - optional
+      ## Configure details of the rollup manager contract.
+    ##
     ## @param block_look_back - integer - optional - default 1000
     ## @env PANOPTICHAIN_PROVIDERS_RPC_0_BLOCK_LOOK_BACK - integer - optional - default 1000
     ## The number of blocks to query for logs to populate metrics. Setting this
