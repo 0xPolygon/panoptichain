@@ -79,6 +79,7 @@ func Init(ctx context.Context) error {
 			TimeToMine:    r.TimeToMine,
 			Accounts:      r.Accounts,
 			BlockLookBack: blockLookBack,
+			TxPool:        r.TxPool,
 		})
 
 		providers = append(providers, p)

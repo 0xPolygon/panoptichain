@@ -47,7 +47,7 @@ options.
 3. Start panoptichain
 
    ```bash
-   ./out/panoptichain
+   ./out/panoptichain [config.yml]
    ```
 
 4. Check the metrics

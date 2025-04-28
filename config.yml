@@ -176,6 +176,11 @@
     ## The number of blocks to query for logs to populate metrics. Setting this
     ## value to 0 will not populate metrics with any historical data.
     ##
+    ## @param txpool - boolean - optional - default false
+    ## @env PANOTICHAIN_PROVIDERS_RPC_0_TXPOOL - boolean - optional - default false
+    ## Whether the underlying RPC node is supports `txpool_*` API requests. This
+    ## is usually only available for Geth based clients.
+    ##
     ## @param accounts - list of strings - optional
     ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS - list of strings - optional
     ## Query the balance of specific accounts.
