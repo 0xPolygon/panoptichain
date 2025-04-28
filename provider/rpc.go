@@ -1272,6 +1272,39 @@ func (r *RPCProvider) isRollupEnabled(rollupID uint32) bool {
 	return len(r.contracts.RollupManager.Enabled) == 0
 }
 
+// The label uniquely identifies the network where the rollup manager contract
+// is deployed. It distinguishes between rollup managers on the same L1
+// network and includes the rollup ID.
+func (r *RPCProvider) getRollupLabel(rollupID uint32) string {
+	var name string
+	rollupManager := common.HexToAddress(*r.contracts.RollupManagerAddress)
+
+	switch r.Network.GetName() {
+	case network.EthereumName:
+		if rollupManager.Cmp(common.HexToAddress("0xE2EF6215aDc132Df6913C8DD16487aBF118d1764")) == 0 {
+			name = "Mainnet"
+		}
+	case network.SepoliaName:
+		if rollupManager.Cmp(common.HexToAddress("0x32d33D5137a7cFFb54c5Bf8371172bcEc5f310ff")) == 0 {
+			name = "Cardona"
+		} else if rollupManager.Cmp(common.HexToAddress("0xE2EF6215aDc132Df6913C8DD16487aBF118d1764")) == 0 {
+			name = "Bali"
+		}
+	}
+
+	// If it's an unrecognized rollup manager address, use the combination of the
+	// L1 network name and the rollup manager address.
+	if name == "" {
+		name = fmt.Sprintf("%s %s", r.Network.GetName(), rollupManager.Hex())
+	}
+
+	return fmt.Sprintf(
+		"%s Rollup %d",
+		name,
+		rollupID,
+	)
+}
+
 func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *contracts.PolygonZkEVMEtrog, co *bind.CallOpts, rollupID uint32) error {
 	if !r.isRollupEnabled(rollupID) {
 		return nil
@@ -1287,22 +1320,12 @@ func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *
 		return nil
 	}
 
-	// The label uniquely identifies the network where the rollup manager contract
-	// is deployed. It distinguishes between rollup managers on the same L1
-	// network and includes the rollup ID.
-	label := fmt.Sprintf(
-		"%s %s Rollup %d",
-		r.Network.GetName(),
-		*r.contracts.RollupManagerAddress,
-		rollupID,
-	)
-
 	provider, ok := r.trustedSequencers[rollupID]
 	if !ok {
 		r.trustedSequencers[rollupID] = NewRPCProvider(RPCProviderOpts{
 			Network:  network,
 			URL:      url,
-			Label:    label,
+			Label:    r.getRollupLabel(rollupID),
 			EventBus: r.bus,
 			Interval: r.interval,
 		})
