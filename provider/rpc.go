@@ -1276,31 +1276,27 @@ func (r *RPCProvider) isRollupEnabled(rollupID uint32) bool {
 // is deployed. It distinguishes between rollup managers on the same L1
 // network and includes the rollup ID.
 func (r *RPCProvider) getRollupLabel(rollupID uint32) string {
-	var name string
-	rollupManager := common.HexToAddress(*r.contracts.RollupManagerAddress)
+	rollupManagers := map[network.Network]map[common.Address]string{
+		network.Ethereum: {
+			common.HexToAddress("0x5132A183E9F3CB7C848b0AAC5Ae0c4f0491B7aB2"): "Mainnet",
+		},
+		network.Sepolia: {
+			common.HexToAddress("0x32d33D5137a7cFFb54c5Bf8371172bcEc5f310ff"): "Cardona",
+			common.HexToAddress("0xE2EF6215aDc132Df6913C8DD16487aBF118d1764"): "Bali",
+		},
+	}
 
-	switch r.Network.GetName() {
-	case network.EthereumName:
-		if rollupManager.Cmp(common.HexToAddress("0xE2EF6215aDc132Df6913C8DD16487aBF118d1764")) == 0 {
-			name = "Mainnet"
-		}
-	case network.SepoliaName:
-		if rollupManager.Cmp(common.HexToAddress("0x32d33D5137a7cFFb54c5Bf8371172bcEc5f310ff")) == 0 {
-			name = "Cardona"
-		} else if rollupManager.Cmp(common.HexToAddress("0xE2EF6215aDc132Df6913C8DD16487aBF118d1764")) == 0 {
-			name = "Bali"
+	address := common.HexToAddress(*r.contracts.RollupManagerAddress)
+	if addresses, ok := rollupManagers[r.Network]; ok {
+		if label, ok := addresses[address]; ok {
+			return fmt.Sprintf("%s Rollup %d", label, rollupID)
 		}
 	}
 
-	// If it's an unrecognized rollup manager address, use the combination of the
-	// L1 network name and the rollup manager address.
-	if name == "" {
-		name = fmt.Sprintf("%s %s", r.Network.GetName(), rollupManager.Hex())
-	}
-
-	return fmt.Sprintf(
-		"%s Rollup %d",
-		name,
+	// Fallback to "<network> <address> Rollup <id>".
+	return fmt.Sprintf("%s %s Rollup %d",
+		r.Network.GetName(),
+		address.Hex(),
 		rollupID,
 	)
 }
