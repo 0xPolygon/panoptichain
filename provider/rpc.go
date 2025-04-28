@@ -1288,8 +1288,8 @@ func (r *RPCProvider) getRollupLabel(rollupID uint32) string {
 
 	address := common.HexToAddress(*r.contracts.RollupManagerAddress)
 	if addresses, ok := rollupManagers[r.Network]; ok {
-		if label, ok := addresses[address]; ok {
-			return fmt.Sprintf("%s Rollup %d", label, rollupID)
+		if name, ok := addresses[address]; ok {
+			return fmt.Sprintf("%s Rollup %d", name, rollupID)
 		}
 	}
 
