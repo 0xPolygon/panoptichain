@@ -1238,19 +1238,56 @@ func (r *RPCProvider) refreshTrustedSequencerBalance(ctx context.Context, c *eth
 	balances.POL = r.getPOL(c, address, co, balances.POL)
 }
 
+// rollupManagers maps L1 network names to their corresponding rollup manager
+// addresses and labels. It is used to identify the rollup manager contracts
+// deployed on different networks. This should not be modified during runtime.
+var rollupManagers = map[string]map[common.Address]string{
+	network.EthereumName: {
+		common.HexToAddress("0x5132A183E9F3CB7C848b0AAC5Ae0c4f0491B7aB2"): "Mainnet",
+	},
+	network.SepoliaName: {
+		common.HexToAddress("0x32d33D5137a7cFFb54c5Bf8371172bcEc5f310ff"): "Cardona",
+		common.HexToAddress("0xE2EF6215aDc132Df6913C8DD16487aBF118d1764"): "Bali",
+	},
+}
+
+// getRollupNetwork determines the appropriate network configuration for a given
+// rollup ID. It prioritizes a network name override if available, then checks
+// known rollup manager addresses, and finally constructs a default name if
+// necessary.
 func (r *RPCProvider) getRollupNetwork(contract *contracts.PolygonZkEVMEtrog, co *bind.CallOpts, rollupID uint32) network.Network {
-	// If there is a network name override, use it. Otherwise, fallback to the
-	// network name defined in the contract.
+	// Use the network name override if available.
 	if rollup, ok := r.contracts.RollupManager.Rollups[rollupID]; ok && rollup.Name != nil {
 		if n, err := network.GetNetworkByName(*rollup.Name); err == nil {
 			return n
 		}
 	}
 
-	name, err := contract.NetworkName(co)
+	address := common.HexToAddress(*r.contracts.RollupManagerAddress)
+
+	rollupManagerName := ""
+	if addresses, ok := rollupManagers[r.Network.GetName()]; ok {
+		if name, ok := addresses[address]; ok {
+			rollupManagerName = name
+		}
+	}
+
+	var name string
+	if rollupManagerName != "" {
+		name = fmt.Sprintf("%s Rollup %d", rollupManagerName, rollupID)
+	} else {
+		name = fmt.Sprintf("%s %s Rollup %d",
+			r.Network.GetName(),
+			address.Hex(),
+			rollupID,
+		)
+	}
+
+	networkName, err := contract.NetworkName(co)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to get rollup network name")
-		return nil
+		log.Warn().Err(err).Msg("Failed to get rollup network name")
+	} else if networkName != "" {
+		name = fmt.Sprintf("%s - %s", name, networkName)
 	}
 
 	return &config.Network{
@@ -1272,42 +1309,15 @@ func (r *RPCProvider) isRollupEnabled(rollupID uint32) bool {
 	return len(r.contracts.RollupManager.Enabled) == 0
 }
 
-// The label uniquely identifies the network where the rollup manager contract
-// is deployed. It distinguishes between rollup managers on the same L1
-// network and includes the rollup ID.
-func (r *RPCProvider) getRollupLabel(rollupID uint32) string {
-	rollupManagers := map[string]map[common.Address]string{
-		network.EthereumName: {
-			common.HexToAddress("0x5132A183E9F3CB7C848b0AAC5Ae0c4f0491B7aB2"): "Mainnet",
-		},
-		network.SepoliaName: {
-			common.HexToAddress("0x32d33D5137a7cFFb54c5Bf8371172bcEc5f310ff"): "Cardona",
-			common.HexToAddress("0xE2EF6215aDc132Df6913C8DD16487aBF118d1764"): "Bali",
-		},
-	}
-
-	address := common.HexToAddress(*r.contracts.RollupManagerAddress)
-	if addresses, ok := rollupManagers[r.Network.GetName()]; ok {
-		if name, ok := addresses[address]; ok {
-			return fmt.Sprintf("%s Rollup %d", name, rollupID)
-		}
-	}
-
-	// Fallback to "<network> <address> Rollup <id>".
-	return fmt.Sprintf("%s %s Rollup %d",
-		r.Network.GetName(),
-		address.Hex(),
-		rollupID,
-	)
-}
-
-func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *contracts.PolygonZkEVMEtrog, co *bind.CallOpts, rollupID uint32) error {
+func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *contracts.PolygonZkEVMEtrog, co *bind.CallOpts, rollupID uint32) (err error) {
 	if !r.isRollupEnabled(rollupID) {
 		return nil
 	}
 
-	url, err := contract.TrustedSequencerURL(co)
-	if err != nil {
+	var url string
+	if rollup, ok := r.contracts.RollupManager.Rollups[rollupID]; ok && rollup.URL != nil {
+		url = *rollup.URL
+	} else if url, err = contract.TrustedSequencerURL(co); err != nil {
 		return err
 	}
 
@@ -1321,7 +1331,7 @@ func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *
 		r.trustedSequencers[rollupID] = NewRPCProvider(RPCProviderOpts{
 			Network:  network,
 			URL:      url,
-			Label:    r.getRollupLabel(rollupID),
+			Label:    r.Label,
 			EventBus: r.bus,
 			Interval: r.interval,
 		})
