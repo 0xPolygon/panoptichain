@@ -146,22 +146,22 @@ type Network struct {
 }
 
 // GetName returns the network name.
-func (n *Network) GetName() string {
+func (n Network) GetName() string {
 	return n.Name
 }
 
 // GetChainID returns the network chain ID.
-func (n *Network) GetChainID() uint64 {
+func (n Network) GetChainID() uint64 {
 	return n.ChainID
 }
 
 // IsPolygonPoS returns if this is a Polygon PoS chain.
-func (n *Network) IsPolygonPoS() bool {
+func (n Network) IsPolygonPoS() bool {
 	return n.PolygonPoS
 }
 
 // IsPolygonZkEVM returns if the network is a Polygon zkEVM chain.
-func (n *Network) IsPolygonZkEVM() bool {
+func (n Network) IsPolygonZkEVM() bool {
 	return n.PolygonZkEVM
 }
 
