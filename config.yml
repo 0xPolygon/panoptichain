@@ -180,15 +180,15 @@
         ## @param enabled - list of integers - optional
         ## @env PANOPTICHAIN_PROVIDERS_RPC_0_CONTRACTS_ROLLUP_MANAGER_ENABLED - list of integers - optional
         ## Only monitor specific rollups. By default, all rollups are enabled.
-        ## To monitor no rollups at all set this value to [0].
+        ## To monitor no rollups at all, set this value to [0].
         ##
         ## @param disabled - list of integers - optional
         ## @env PANOPTICHAIN_PROVIDERS_RPC_0_CONTRACTS_ROLLUP_MANAGER_DISABLED - list of integers - optional
         ## Disable these specific rollups from being observed.
         ##
         ## @param rollups - maps integer to object - optional
-        ## Override the RPC configuration of when calling the rollup trusted
-        ## sequencer. All values of the `rpc` provider can be optionally
+        ## Override the RPC configuration when calling the rollup trusted
+        ## sequencer. All values from the `rpc` provider can optionally be
         ## overridden.
     ##
     ## @param block_look_back - integer - optional - default 1000
