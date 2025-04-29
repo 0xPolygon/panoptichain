@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/viper"
 )
 
+const DefaultBlockLookBack uint64 = 1000
+
 // Runner configures the execution interval of the job system.
 type Runner struct {
 	Interval uint `mapstructure:"interval" validate:"required"`
@@ -30,29 +32,44 @@ type Providers struct {
 
 // RPC defines the various RPC providers that will be monitored.
 type RPC struct {
-	Name          string            `mapstructure:"name"`
-	URL           string            `mapstructure:"url" validate:"url,required_with=Name"`
-	Label         string            `mapstructure:"label" validate:"required_with=Name"`
-	Interval      uint              `mapstructure:"interval"`
-	Contracts     ContractAddresses `mapstructure:"contracts"`
-	TimeToMine    *TimeToMine       `mapstructure:"time_to_mine"`
-	Accounts      []string          `mapstructure:"accounts"`
-	BlockLookBack *uint64           `mapstructure:"block_look_back"`
-	TxPool        bool              `mapstructure:"txpool"`
+	Name          string      `mapstructure:"name"`
+	URL           string      `mapstructure:"url" validate:"url,required_with=Name"`
+	Label         string      `mapstructure:"label" validate:"required_with=Name"`
+	Interval      uint        `mapstructure:"interval"`
+	Contracts     Contracts   `mapstructure:"contracts"`
+	TimeToMine    *TimeToMine `mapstructure:"time_to_mine"`
+	Accounts      []string    `mapstructure:"accounts"`
+	BlockLookBack *uint64     `mapstructure:"block_look_back"`
+	TxPool        bool        `mapstructure:"txpool"`
 }
 
-// ContractAddresses maps specific contracts to their addresses. This is used to
+// Contracts maps specific contracts to their addresses. This is used to
 // fetch on-chain data from these contracts.
-type ContractAddresses struct {
+type Contracts struct {
 	// PoS
 	StateSyncSenderAddress   *string `mapstructure:"state_sync_sender_address"`
 	StateSyncReceiverAddress *string `mapstructure:"state_sync_receiver_address"`
 	CheckpointAddress        *string `mapstructure:"checkpoint_address"`
 
 	// zkEVM
-	GlobalExitRootL2Address *string `mapstructure:"global_exit_root_l2_address"`
-	ZkEVMBridgeAddress      *string `mapstructure:"zkevm_bridge_address"`
-	RollupManagerAddress    *string `mapstructure:"rollup_manager_address"`
+	GlobalExitRootL2Address *string       `mapstructure:"global_exit_root_l2_address"`
+	ZkEVMBridgeAddress      *string       `mapstructure:"zkevm_bridge_address"`
+	RollupManagerAddress    *string       `mapstructure:"rollup_manager_address"`
+	RollupManager           RollupManager `mapstructure:"rollup_manager"`
+}
+
+type RollupManager struct {
+	Rollups  map[uint32]Rollup `mapstructure:"rollups"`
+	Enabled  []uint32          `mapstructure:"enabled"`
+	Disabled []uint32          `mapstructure:"disabled"`
+}
+
+type Rollup struct {
+	RPC
+	Name     *string `mapstructure:"name"`
+	URL      *string `mapstructure:"url"`
+	Label    *string `mapstructure:"label"`
+	Interval *uint   `mapstructure:"interval"`
 }
 
 // TimeToMine configures the time to mine provider. This periodically sends
@@ -133,22 +150,22 @@ type Network struct {
 }
 
 // GetName returns the network name.
-func (n *Network) GetName() string {
+func (n Network) GetName() string {
 	return n.Name
 }
 
 // GetChainID returns the network chain ID.
-func (n *Network) GetChainID() uint64 {
+func (n Network) GetChainID() uint64 {
 	return n.ChainID
 }
 
 // IsPolygonPoS returns if this is a Polygon PoS chain.
-func (n *Network) IsPolygonPoS() bool {
+func (n Network) IsPolygonPoS() bool {
 	return n.PolygonPoS
 }
 
 // IsPolygonZkEVM returns if the network is a Polygon zkEVM chain.
-func (n *Network) IsPolygonZkEVM() bool {
+func (n Network) IsPolygonZkEVM() bool {
 	return n.PolygonZkEVM
 }
 

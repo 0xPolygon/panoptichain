@@ -171,6 +171,26 @@
     ## - zkevm_bridge_address          (zkEVM, L2)
     ## - global_exit_root_l2_address   (zkEVM, L2)
     ##
+      ## @param rollup_manager - object - optional
+      ## Configure details of the rollup manager contract. If the
+      ## `rollup_manager_address` is set, then consider prefixing the `label` of
+      ## the `rpc` provider with `cardona.` or `bali.` to differentiate between
+      ## the rollup manager contracts.
+      ##
+        ## @param enabled - list of integers - optional
+        ## @env PANOPTICHAIN_PROVIDERS_RPC_0_CONTRACTS_ROLLUP_MANAGER_ENABLED - list of integers - optional
+        ## Only monitor specific rollups. By default, all rollups are enabled.
+        ## To monitor no rollups at all, set this value to [0].
+        ##
+        ## @param disabled - list of integers - optional
+        ## @env PANOPTICHAIN_PROVIDERS_RPC_0_CONTRACTS_ROLLUP_MANAGER_DISABLED - list of integers - optional
+        ## Disable these specific rollups from being observed.
+        ##
+        ## @param rollups - maps integer to object - optional
+        ## Override the RPC configuration when calling the rollup trusted
+        ## sequencer. All values from the `rpc` provider can optionally be
+        ## overridden.
+    ##
     ## @param block_look_back - integer - optional - default 1000
     ## @env PANOPTICHAIN_PROVIDERS_RPC_0_BLOCK_LOOK_BACK - integer - optional - default 1000
     ## The number of blocks to query for logs to populate metrics. Setting this
@@ -254,6 +274,13 @@
   #       state_sync_sender_address: "0x28e4F3a7f651294B9564800b2D01f35189A5bFbE"
   #       checkpoint_address: "0x86E4Dc95c7FBdBf52e33D563BbDB00823894C287"
   #       rollup_manager_address: "0x5132A183E9F3CB7C848b0AAC5Ae0c4f0491B7aB2"
+  #       rollup_manager:
+  #         enabled: [1, 3, 7, 8, 10, 14, 15, 16, 18]
+  #         disabled: [2, 4, 5, 6, 9, 11, 12, 13, 17, 19]
+  #         rollups:
+  #           1:
+  #             name: "zkEVM Mainnet"
+  #             url: "https://zkevm-rpc.com"
   #
   #   - name: "Sepolia"
   #     url: "https://ethereum-sepolia.publicnode.com"
@@ -262,6 +289,13 @@
   #       state_sync_sender_address: "0x49E307Fa5a58ff1834E0F8a60eB2a9609E6A5F50"
   #       checkpoint_address: "0xbd07D7E1E93c8d4b2a261327F3C28a8EA7167209"
   #       rollup_manager_address: "0x32d33D5137a7cFFb54c5Bf8371172bcEc5f310ff"
+  #       rollup_manager:
+  #         enabled: [1, 3, 10, 11, 12, 14, 15, 16, 22, 25, 30, 31]
+  #         disabled: [2, 4, 5, 6, 7, 8, 9, 13, 17, 18, 19, 20, 21, 23, 24, 26, 27, 28, 29, 32]
+  #         rollups:
+  #           1:
+  #             name: "zkEVM Cardona"
+  #             url: "https://rpc.cardona.zkevm-rpc.com"
 
   ## @param hash_divergence - object - optional
   ## The `hash_divergence` provider tracks whether block numbers from the same
