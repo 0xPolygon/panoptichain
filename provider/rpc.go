@@ -160,7 +160,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 		return err
 	}
 
-	err = r.refreshBlockBuffer(ctx, c)
+	r.refreshBlockBuffer(ctx, c)
 
 	r.refreshStateSync(ctx, c, true)
 	r.refreshStateSync(ctx, c, false)
@@ -187,9 +187,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	r.refreshExitRootsL2(ctx, c)
 	r.refreshBridge(ctx, c)
 
-	// At a minimum, blocks should be able to be fetched, so return an error if
-	// they are unable to be queried.
-	return err
+	return nil
 }
 
 func (r *RPCProvider) PublishEvents(ctx context.Context) error {
