@@ -325,7 +325,7 @@ func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Clien
 	r.prevBlockNumber = r.BlockNumber
 	r.BlockNumber, err = c.BlockNumber(ctx)
 	if err != nil {
-		r.logger.Error().Err(err).Any("provider", r).Msg("Failed to get block number")
+		r.logger.Error().Err(err).Msg("Failed to get block number")
 		return err
 	}
 
