@@ -1314,26 +1314,48 @@ func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *
 		return nil
 	}
 
-	var url string
-	if rollup, ok := r.contracts.RollupManager.Rollups[rollupID]; ok && rollup.URL != nil {
-		url = *rollup.URL
-	} else if url, err = contract.TrustedSequencerURL(co); err != nil {
-		return err
-	}
-
 	network := r.getRollupNetwork(contract, co, rollupID)
 	if network == nil {
 		return nil
 	}
 
+	rollup, ok := r.contracts.RollupManager.Rollups[rollupID]
+
+	var url string
+	if ok && rollup.URL != nil {
+		url = *rollup.URL
+	} else if url, err = contract.TrustedSequencerURL(co); err != nil {
+		return err
+	}
+
+	label := r.Label
+	if ok && rollup.Label != nil {
+		label = *rollup.Label
+	}
+
+	interval := config.Config().Runner.Interval
+	if ok && rollup.Interval != nil {
+		interval = *rollup.Interval
+	}
+
+	blockLookBack := config.DefaultBlockLookBack
+	if ok && rollup.BlockLookBack != nil {
+		blockLookBack = *rollup.BlockLookBack
+	}
+
 	provider, ok := r.trustedSequencers[rollupID]
 	if !ok {
 		r.trustedSequencers[rollupID] = NewRPCProvider(RPCProviderOpts{
-			Network:  network,
-			URL:      url,
-			Label:    r.Label,
-			EventBus: r.bus,
-			Interval: r.interval,
+			Network:       network,
+			URL:           url,
+			Label:         label,
+			EventBus:      r.bus,
+			Interval:      interval,
+			Contracts:     rollup.Contracts,
+			TimeToMine:    rollup.TimeToMine,
+			Accounts:      rollup.Accounts,
+			BlockLookBack: blockLookBack,
+			TxPool:        rollup.TxPool,
 		})
 		go runProvider(ctx, r.trustedSequencers[rollupID])
 		return nil

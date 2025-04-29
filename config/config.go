@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/viper"
 )
 
+const DefaultBlockLookBack uint64 = 1000
+
 // Runner configures the execution interval of the job system.
 type Runner struct {
 	Interval uint `mapstructure:"interval" validate:"required"`
@@ -63,8 +65,11 @@ type RollupManager struct {
 }
 
 type Rollup struct {
-	Name *string `mapstructure:"name"`
-	URL  *string `mapstructure:"url"`
+	RPC
+	Name     *string `mapstructure:"name"`
+	URL      *string `mapstructure:"url"`
+	Label    *string `mapstructure:"label"`
+	Interval *uint   `mapstructure:"interval"`
 }
 
 // TimeToMine configures the time to mine provider. This periodically sends
