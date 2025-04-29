@@ -67,11 +67,10 @@ type RollupManager struct {
 }
 
 type Rollup struct {
-	RPC
-	Name     *string `mapstructure:"name"`
-	URL      *string `mapstructure:"url"`
-	Label    *string `mapstructure:"label"`
-	Interval *uint   `mapstructure:"interval"`
+	RPC   `mapstructure:",squash"`
+	Name  *string `mapstructure:"name"`
+	URL   *string `mapstructure:"url"`
+	Label *string `mapstructure:"label"`
 }
 
 // TimeToMine configures the time to mine provider. This periodically sends

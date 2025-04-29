@@ -1263,29 +1263,22 @@ func (r *RPCProvider) getRollupNetwork(contract *contracts.PolygonZkEVMEtrog, co
 
 	address := common.HexToAddress(*r.contracts.RollupManagerAddress)
 
-	rollupManagerName := ""
+	name := fmt.Sprintf("%s %s Rollup %d",
+		r.Network.GetName(),
+		address.Hex(),
+		rollupID,
+	)
+
 	if addresses, ok := rollupManagers[r.Network.GetName()]; ok {
-		if name, ok := addresses[address]; ok {
-			rollupManagerName = name
+		if rollupManagerName, ok := addresses[address]; ok {
+			name = fmt.Sprintf("%s Rollup %d", rollupManagerName, rollupID)
 		}
 	}
 
-	var name string
-	if rollupManagerName != "" {
-		name = fmt.Sprintf("%s Rollup %d", rollupManagerName, rollupID)
-	} else {
-		name = fmt.Sprintf("%s %s Rollup %d",
-			r.Network.GetName(),
-			address.Hex(),
-			rollupID,
-		)
-	}
-
-	networkName, err := contract.NetworkName(co)
-	if err != nil {
+	if networkName, err := contract.NetworkName(co); err != nil {
 		log.Warn().Err(err).Msg("Failed to get rollup network name")
 	} else if networkName != "" {
-		name = fmt.Sprintf("%s - %s", name, networkName)
+		name = fmt.Sprintf("%s %s", name, networkName)
 	}
 
 	return &config.Network{
@@ -1331,7 +1324,7 @@ func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *
 		label = *rollup.Label
 	}
 
-	interval := config.Config().Runner.Interval
+	interval := *config.Config().Runner.Interval
 	if ok && rollup.Interval != nil {
 		interval = *rollup.Interval
 	}
