@@ -60,12 +60,15 @@ type Contracts struct {
 	RollupManager           RollupManager `mapstructure:"rollup_manager"`
 }
 
+// RollupManager defines the configuration for managing a set of rollups.
 type RollupManager struct {
 	Rollups  map[uint32]Rollup `mapstructure:"rollups"`
 	Enabled  []uint32          `mapstructure:"enabled"`
 	Disabled []uint32          `mapstructure:"disabled"`
 }
 
+// Rollup represents the configuration for a single rollup. Every field of the
+// `RPC` provider can be overridden here.
 type Rollup struct {
 	RPC   `mapstructure:",squash"`
 	Name  *string `mapstructure:"name"`
