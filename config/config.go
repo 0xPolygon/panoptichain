@@ -60,7 +60,6 @@ type RollupManager struct {
 	Rollups  map[uint32]Rollup `mapstructure:"rollups"`
 	Enabled  []uint32          `mapstructure:"enabled"`
 	Disabled []uint32          `mapstructure:"disabled"`
-	Timeout  string            `mapstructure:"timeout"`
 }
 
 type Rollup struct {
