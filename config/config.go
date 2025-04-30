@@ -18,7 +18,7 @@ const DefaultBlockLookBack uint64 = 1000
 
 // Runner configures the execution interval of the job system.
 type Runner struct {
-	Interval *time.Duration `mapstructure:"interval"`
+	Interval *time.Duration `mapstructure:"interval" validate:"required"`
 }
 
 // Providers encloses the different providers configurations. Providers are
