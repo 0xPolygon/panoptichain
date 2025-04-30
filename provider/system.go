@@ -10,12 +10,12 @@ import (
 
 type SystemProvider struct {
 	bus      *observer.EventBus
-	interval uint
+	interval time.Duration
 
 	start time.Time
 }
 
-func NewSystemProvider(eb *observer.EventBus, interval uint) *SystemProvider {
+func NewSystemProvider(eb *observer.EventBus, interval time.Duration) *SystemProvider {
 	return &SystemProvider{
 		bus:      eb,
 		interval: interval,
@@ -41,6 +41,6 @@ func (s *SystemProvider) SetEventBus(bus *observer.EventBus) {
 	s.bus = bus
 }
 
-func (s *SystemProvider) PollingInterval() uint {
+func (s *SystemProvider) PollingInterval() time.Duration {
 	return s.interval
 }

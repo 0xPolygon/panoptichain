@@ -7,8 +7,10 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 )
 
@@ -16,7 +18,7 @@ const DefaultBlockLookBack uint64 = 1000
 
 // Runner configures the execution interval of the job system.
 type Runner struct {
-	Interval uint `mapstructure:"interval" validate:"required"`
+	Interval *time.Duration `mapstructure:"interval" validate:"required"`
 }
 
 // Providers encloses the different providers configurations. Providers are
@@ -32,15 +34,15 @@ type Providers struct {
 
 // RPC defines the various RPC providers that will be monitored.
 type RPC struct {
-	Name          string      `mapstructure:"name"`
-	URL           string      `mapstructure:"url" validate:"url,required_with=Name"`
-	Label         string      `mapstructure:"label" validate:"required_with=Name"`
-	Interval      uint        `mapstructure:"interval"`
-	Contracts     Contracts   `mapstructure:"contracts"`
-	TimeToMine    *TimeToMine `mapstructure:"time_to_mine"`
-	Accounts      []string    `mapstructure:"accounts"`
-	BlockLookBack *uint64     `mapstructure:"block_look_back"`
-	TxPool        bool        `mapstructure:"txpool"`
+	Name          string         `mapstructure:"name"`
+	URL           string         `mapstructure:"url" validate:"url,required_with=Name"`
+	Label         string         `mapstructure:"label" validate:"required_with=Name"`
+	Interval      *time.Duration `mapstructure:"interval"`
+	Contracts     Contracts      `mapstructure:"contracts"`
+	TimeToMine    *TimeToMine    `mapstructure:"time_to_mine"`
+	Accounts      []string       `mapstructure:"accounts"`
+	BlockLookBack *uint64        `mapstructure:"block_look_back"`
+	TxPool        bool           `mapstructure:"txpool"`
 }
 
 // Contracts maps specific contracts to their addresses. This is used to
@@ -58,18 +60,20 @@ type Contracts struct {
 	RollupManager           RollupManager `mapstructure:"rollup_manager"`
 }
 
+// RollupManager defines the configuration for managing a set of rollups.
 type RollupManager struct {
 	Rollups  map[uint32]Rollup `mapstructure:"rollups"`
 	Enabled  []uint32          `mapstructure:"enabled"`
 	Disabled []uint32          `mapstructure:"disabled"`
 }
 
+// Rollup represents the configuration for a single rollup. Every field of the
+// `RPC` provider can be overridden here.
 type Rollup struct {
-	RPC
-	Name     *string `mapstructure:"name"`
-	URL      *string `mapstructure:"url"`
-	Label    *string `mapstructure:"label"`
-	Interval *uint   `mapstructure:"interval"`
+	RPC   `mapstructure:",squash"`
+	Name  *string `mapstructure:"name"`
+	URL   *string `mapstructure:"url"`
+	Label *string `mapstructure:"label"`
 }
 
 // TimeToMine configures the time to mine provider. This periodically sends
@@ -88,13 +92,13 @@ type TimeToMine struct {
 // HashDivergence configures the hash divergence provider. This tracks whether
 // blocks with the same block number have different hashes.
 type HashDivergence struct {
-	Interval uint `mapstructure:"interval"`
+	Interval *time.Duration `mapstructure:"interval"`
 }
 
 // System configures the system provider. This keeps system diagnostic metrics
 // such as uptime.
 type System struct {
-	Interval uint `mapstructure:"interval"`
+	Interval *time.Duration `mapstructure:"interval"`
 }
 
 // ExchangeRates configures the exchange rates provider. This fetches exchange
@@ -102,28 +106,28 @@ type System struct {
 type ExchangeRates struct {
 	CoinbaseURL string              `mapstructure:"coinbase_url" validate:"required"`
 	Tokens      map[string][]string `mapstructure:"tokens"`
-	Interval    uint                `mapstructure:"interval"`
+	Interval    *time.Duration      `mapstructure:"interval"`
 }
 
 // HeimdallEndpoint configures the heimdall provider. This provider fetches data
 // from the consensus layer endpoints for Polygon PoS chains.
 type HeimdallEndpoint struct {
-	Name          string `mapstructure:"name"`
-	TendermintURL string `mapstructure:"tendermint_url" validate:"url,required_with=Name"`
-	HeimdallURL   string `mapstructure:"heimdall_url" validate:"url,required_with=Name"`
-	Label         string `mapstructure:"label" validate:"required_with=Name"`
-	Interval      uint   `mapstructure:"interval"`
-	Version       uint   `mapstructure:"version" validate:"omitempty,oneof=1 2"`
+	Name          string         `mapstructure:"name"`
+	TendermintURL string         `mapstructure:"tendermint_url" validate:"url,required_with=Name"`
+	HeimdallURL   string         `mapstructure:"heimdall_url" validate:"url,required_with=Name"`
+	Label         string         `mapstructure:"label" validate:"required_with=Name"`
+	Interval      *time.Duration `mapstructure:"interval"`
+	Version       *uint          `mapstructure:"version" validate:"omitempty,oneof=1 2"`
 }
 
 // SensorNetwork configures the sensor network provider. This fetches data from
 // GCP Datastore where the sensors write their data.
 type SensorNetwork struct {
-	Name     string `mapstructure:"name"`
-	Label    string `mapstructure:"label" validate:"required_with=Name"`
-	Project  string `mapstructure:"project" validate:"required_with=Name"`
-	Database string `mapstructure:"database"`
-	Interval uint   `mapstructure:"interval"`
+	Name     string         `mapstructure:"name"`
+	Label    string         `mapstructure:"label" validate:"required_with=Name"`
+	Project  string         `mapstructure:"project" validate:"required_with=Name"`
+	Database string         `mapstructure:"database"`
+	Interval *time.Duration `mapstructure:"interval"`
 }
 
 // Observers defines which observers should be enabled or disabled. Observers
@@ -192,14 +196,15 @@ func Config() *config {
 	return c
 }
 
-// expandEnv expands environment variables when the viper is unmarhsalling into
-// the `config` struct.
-func expandEnv(f reflect.Type, _ reflect.Type, data any) (any, error) {
-	if f.Kind() == reflect.String {
-		return os.ExpandEnv(data.(string)), nil
+// expandEnvHookFunc expands environment variables when the viper is decoding
+// into the `config` struct.
+func expandEnvHookFunc() mapstructure.DecodeHookFunc {
+	return func(f reflect.Type, t reflect.Type, data any) (any, error) {
+		if f.Kind() == reflect.String && t.Kind() == reflect.String {
+			return os.ExpandEnv(data.(string)), nil
+		}
+		return data, nil
 	}
-
-	return data, nil
 }
 
 // Init initializes the config. This should be called before using `Config()`.
@@ -217,7 +222,7 @@ func Init() error {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	viper.SetDefault("namespace", "panoptichain")
-	viper.SetDefault("runner.interval", 30)
+	viper.SetDefault("runner.interval", "30s")
 	viper.SetDefault("http.port", 9090)
 	viper.SetDefault("http.pprof_port", 6060)
 	viper.SetDefault("http.address", "localhost")
@@ -229,7 +234,14 @@ func Init() error {
 		return err
 	}
 
-	if err := viper.Unmarshal(&c, viper.DecodeHook(expandEnv)); err != nil {
+	opts := viper.DecodeHook(
+		mapstructure.ComposeDecodeHookFunc(
+			expandEnvHookFunc(),
+			mapstructure.StringToTimeDurationHookFunc(),
+		),
+	)
+
+	if err := viper.Unmarshal(&c, opts); err != nil {
 		return err
 	}
 

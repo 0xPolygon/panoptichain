@@ -43,7 +43,7 @@ type RPCProvider struct {
 	Label            string
 	parsedURL        *url.URL
 	bus              *observer.EventBus
-	interval         uint
+	interval         time.Duration
 	logger           zerolog.Logger
 	BlockNumber      uint64
 	prevBlockNumber  uint64
@@ -99,7 +99,7 @@ type RPCProviderOpts struct {
 	URL           string
 	Label         string
 	EventBus      *observer.EventBus
-	Interval      uint
+	Interval      time.Duration
 	Contracts     config.Contracts
 	TimeToMine    *config.TimeToMine
 	Accounts      []string
@@ -317,7 +317,7 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
-func (r *RPCProvider) PollingInterval() uint {
+func (r *RPCProvider) PollingInterval() time.Duration {
 	return r.interval
 }
 
@@ -329,7 +329,7 @@ func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Clien
 		return err
 	}
 
-	r.logger.Info().Uint64("block_number", r.BlockNumber).Msg("Refreshed block state")
+	r.logger.Info().Uint64("block_number", r.BlockNumber).Msg("Refreshing block state")
 
 	if r.prevBlockNumber != 0 && r.prevBlockNumber != r.BlockNumber {
 		r.fillRange(ctx, r.prevBlockNumber, c)
@@ -443,7 +443,7 @@ func (r *RPCProvider) refreshCheckpoint(ctx context.Context, c *ethclient.Client
 
 	iter, err := contract.FilterNewHeaderBlock(r.getFilterOpts(), nil, nil, nil)
 	if iter == nil || err != nil {
-		r.logger.Warn().Err(err).Msg("No NewHeaderBlock events found")
+		r.logger.Error().Err(err).Msg("Failed to filter NewHeaderBlock events")
 		return
 	}
 
@@ -454,7 +454,7 @@ func (r *RPCProvider) refreshCheckpoint(ctx context.Context, c *ethclient.Client
 	}
 
 	if event == nil {
-		r.logger.Error().Msg("NewHeaderBlock event is nil")
+		r.logger.Debug().Msg("No NewHeaderBlock events found")
 		return
 	}
 
@@ -1216,11 +1216,6 @@ func (r *RPCProvider) refreshTrustedSequencerBalance(ctx context.Context, c *eth
 		return
 	}
 
-	if address.Cmp(common.Address{}) == 0 {
-		r.logger.Warn().Msg("Invalid trusted sequencer address")
-		return
-	}
-
 	balances := &r.rollupManager.Rollups[rollupID].TrustedSequencerBalances
 
 	eth, err := c.BalanceAt(ctx, address, nil)
@@ -1263,29 +1258,22 @@ func (r *RPCProvider) getRollupNetwork(contract *contracts.PolygonZkEVMEtrog, co
 
 	address := common.HexToAddress(*r.contracts.RollupManagerAddress)
 
-	rollupManagerName := ""
+	name := fmt.Sprintf("%s %s Rollup %d",
+		r.Network.GetName(),
+		address.Hex(),
+		rollupID,
+	)
+
 	if addresses, ok := rollupManagers[r.Network.GetName()]; ok {
-		if name, ok := addresses[address]; ok {
-			rollupManagerName = name
+		if rollupManagerName, ok := addresses[address]; ok {
+			name = fmt.Sprintf("%s Rollup %d", rollupManagerName, rollupID)
 		}
 	}
 
-	var name string
-	if rollupManagerName != "" {
-		name = fmt.Sprintf("%s Rollup %d", rollupManagerName, rollupID)
-	} else {
-		name = fmt.Sprintf("%s %s Rollup %d",
-			r.Network.GetName(),
-			address.Hex(),
-			rollupID,
-		)
-	}
-
-	networkName, err := contract.NetworkName(co)
-	if err != nil {
+	if networkName, err := contract.NetworkName(co); err != nil {
 		log.Warn().Err(err).Msg("Failed to get rollup network name")
 	} else if networkName != "" {
-		name = fmt.Sprintf("%s - %s", name, networkName)
+		name = fmt.Sprintf("%s %s", name, networkName)
 	}
 
 	return &config.Network{
@@ -1331,7 +1319,7 @@ func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *
 		label = *rollup.Label
 	}
 
-	interval := config.Config().Runner.Interval
+	interval := *config.Config().Runner.Interval
 	if ok && rollup.Interval != nil {
 		interval = *rollup.Interval
 	}
@@ -1380,7 +1368,7 @@ func runProvider(ctx context.Context, p *RPCProvider) {
 				p.logger.Error().Err(err).Send()
 			}
 
-			util.BlockFor(ctx, time.Second*time.Duration(p.PollingInterval()))
+			util.BlockFor(ctx, p.PollingInterval())
 		}
 	}
 }

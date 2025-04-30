@@ -20,7 +20,7 @@ import (
 // See ../runner/runner.go to see how this provider is initialized.
 type HashDivergenceProvider struct {
 	bus      *observer.EventBus
-	interval uint
+	interval time.Duration
 	label    string
 	logger   zerolog.Logger
 
@@ -33,7 +33,7 @@ type HashDivergenceProvider struct {
 	refreshStateTime    *time.Duration
 }
 
-func NewHashDivergenceProvider(rpcProviders []*RPCProvider, eb *observer.EventBus, interval uint) *HashDivergenceProvider {
+func NewHashDivergenceProvider(rpcProviders []*RPCProvider, eb *observer.EventBus, interval time.Duration) *HashDivergenceProvider {
 	label := "hash-divergence"
 	networkProvidersMap := make(map[string][]*RPCProvider)
 	networkBlockNumbers := make(map[string]uint64)
@@ -139,6 +139,6 @@ func (h *HashDivergenceProvider) SetEventBus(bus *observer.EventBus) {
 	h.bus = bus
 }
 
-func (h *HashDivergenceProvider) PollingInterval() uint {
+func (h *HashDivergenceProvider) PollingInterval() time.Duration {
 	return h.interval
 }

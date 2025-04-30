@@ -106,16 +106,39 @@ type ValidatorsCache struct {
 // cache maps network.Network to ValidatorsCache.
 var cache sync.Map
 
+// getCachedValidators attempts to retrieve a cached set of validators for the
+// given network.
+func getCachedValidators(n network.Network) ([]Validator, bool) {
+	value, ok := cache.Load(n)
+	if !ok {
+		return nil, false
+	}
+
+	vc := value.(ValidatorsCache)
+	if time.Now().After(vc.ttl) {
+		return nil, false
+	}
+
+	return vc.validators, true
+}
+
 // Validators queries the Heimdall API for the validator set. The validator set
 // is cached based on the refreshInterval.
 func Validators(n network.Network) ([]Validator, error) {
+	validators, ok := getCachedValidators(n)
+	if ok {
+		return validators, nil
+	}
+
 	var path *string
 	var version uint = 1
 
 	for _, heimdall := range config.Config().Providers.HeimdallEndpoints {
 		if heimdall.Name == n.GetName() {
 			path = &heimdall.HeimdallURL
-			version = heimdall.Version
+			if heimdall.Version != nil {
+				version = *heimdall.Version
+			}
 			break
 		}
 	}
@@ -124,19 +147,6 @@ func Validators(n network.Network) ([]Validator, error) {
 		return nil, errors.New("no validators for this network")
 	}
 
-	value, ok := cache.Load(n)
-	if ok {
-		vc, ok := value.(ValidatorsCache)
-		if !ok {
-			return nil, errors.New("validator cache type assertion failed")
-		}
-
-		if time.Now().Before(vc.ttl) {
-			return vc.validators, nil
-		}
-	}
-
-	var validators []Validator
 	var err error
 	switch version {
 	case 1:

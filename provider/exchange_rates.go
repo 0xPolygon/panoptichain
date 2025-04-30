@@ -16,7 +16,7 @@ import (
 
 type ExchangeRatesProvider struct {
 	bus         *observer.EventBus
-	interval    uint
+	interval    time.Duration
 	logger      zerolog.Logger
 	coinbaseURL string
 	tokens      map[string][]string
@@ -32,7 +32,7 @@ type CoinbaseExchangeRates struct {
 	} `json:"data"`
 }
 
-func NewExchangeRatesProvider(coinbaseURL string, tokens map[string][]string, eb *observer.EventBus, interval uint) *ExchangeRatesProvider {
+func NewExchangeRatesProvider(coinbaseURL string, tokens map[string][]string, eb *observer.EventBus, interval time.Duration) *ExchangeRatesProvider {
 	return &ExchangeRatesProvider{
 		bus:              eb,
 		interval:         interval,
@@ -105,6 +105,6 @@ func (e *ExchangeRatesProvider) SetEventBus(bus *observer.EventBus) {
 	e.bus = bus
 }
 
-func (e *ExchangeRatesProvider) PollingInterval() uint {
+func (e *ExchangeRatesProvider) PollingInterval() time.Duration {
 	return e.interval
 }

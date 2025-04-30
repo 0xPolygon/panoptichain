@@ -33,7 +33,7 @@ type Provider interface {
 
 	// PollingInterval returns how often the provider should refresh it state and
 	// publish events in seconds.
-	PollingInterval() uint
+	PollingInterval() time.Duration
 }
 
 func timer(duration *time.Duration) func() {
