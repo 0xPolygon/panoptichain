@@ -196,14 +196,15 @@ func Config() *config {
 	return c
 }
 
-// expandEnv expands environment variables when the viper is decoding into
-// the `config` struct.
-func expandEnv(f reflect.Type, _ reflect.Type, data any) (any, error) {
-	if f.Kind() == reflect.String {
-		return os.ExpandEnv(data.(string)), nil
+// expandEnvHookFunc expands environment variables when the viper is decoding
+// into the `config` struct.
+func expandEnvHookFunc() mapstructure.DecodeHookFunc {
+	return func(f reflect.Type, t reflect.Type, data any) (any, error) {
+		if f.Kind() == reflect.String && t.Kind() == reflect.String {
+			return os.ExpandEnv(data.(string)), nil
+		}
+		return data, nil
 	}
-
-	return data, nil
 }
 
 // Init initializes the config. This should be called before using `Config()`.
@@ -233,12 +234,14 @@ func Init() error {
 		return err
 	}
 
-	err := viper.Unmarshal(
-		&c,
-		viper.DecodeHook(expandEnv),
-		viper.DecodeHook(mapstructure.StringToTimeDurationHookFunc()),
+	opts := viper.DecodeHook(
+		mapstructure.ComposeDecodeHookFunc(
+			expandEnvHookFunc(),
+			mapstructure.StringToTimeDurationHookFunc(),
+		),
 	)
-	if err != nil {
+
+	if err := viper.Unmarshal(&c, opts); err != nil {
 		return err
 	}
 
