@@ -189,7 +189,8 @@
         ## @param rollups - maps integer to object - optional
         ## Override the RPC configuration when calling the rollup trusted
         ## sequencer. All values from the `rpc` provider can optionally be
-        ## overridden.
+        ## overridden. If overriding the network name, make sure the network is
+        ## defined in `networks`.
     ##
     ## @param block_look_back - integer - optional - default 1000
     ## @env PANOPTICHAIN_PROVIDERS_RPC_0_BLOCK_LOOK_BACK - integer - optional - default 1000
