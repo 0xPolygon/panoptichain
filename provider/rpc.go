@@ -443,7 +443,7 @@ func (r *RPCProvider) refreshCheckpoint(ctx context.Context, c *ethclient.Client
 
 	iter, err := contract.FilterNewHeaderBlock(r.getFilterOpts(), nil, nil, nil)
 	if iter == nil || err != nil {
-		r.logger.Warn().Err(err).Msg("No NewHeaderBlock events found")
+		r.logger.Error().Err(err).Msg("Failed to filter NewHeaderBlock events")
 		return
 	}
 
@@ -454,7 +454,7 @@ func (r *RPCProvider) refreshCheckpoint(ctx context.Context, c *ethclient.Client
 	}
 
 	if event == nil {
-		r.logger.Error().Msg("NewHeaderBlock event is nil")
+		r.logger.Debug().Msg("No NewHeaderBlock events found")
 		return
 	}
 
