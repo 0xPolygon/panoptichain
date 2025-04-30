@@ -329,7 +329,7 @@ func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Clien
 		return err
 	}
 
-	r.logger.Info().Uint64("block_number", r.BlockNumber).Msg("Refreshed block state")
+	r.logger.Info().Uint64("block_number", r.BlockNumber).Msg("Refreshing block state")
 
 	if r.prevBlockNumber != 0 && r.prevBlockNumber != r.BlockNumber {
 		r.fillRange(ctx, r.prevBlockNumber, c)

@@ -164,13 +164,13 @@ func (s *SensorNetworkProvider) refreshBlockBuffer(ctx context.Context) error {
 	}
 	s.BlockNumber = bn
 
+	s.logger.Trace().
+		Uint64("block_number", s.BlockNumber).
+		Msg("Refreshing sensor network block state")
+
 	if s.prevBlockNumber != 0 && s.prevBlockNumber != s.BlockNumber {
 		s.fillRange(ctx, s.prevBlockNumber)
 	}
-
-	s.logger.Trace().
-		Uint64("block_number", s.BlockNumber).
-		Msg("Sensor network block state refreshed")
 
 	return nil
 }

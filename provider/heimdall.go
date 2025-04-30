@@ -185,7 +185,7 @@ func (h *HeimdallProvider) refreshBlockBuffer() {
 	}
 	h.BlockNumber = bn.Uint64()
 
-	h.logger.Debug().Uint64("block_number", h.BlockNumber).Msg("Refreshed Heimdall state")
+	h.logger.Debug().Uint64("block_number", h.BlockNumber).Msg("Refreshing Heimdall state")
 	if h.prevBlockNumber != 0 && h.prevBlockNumber != h.BlockNumber {
 		h.fillRange(h.prevBlockNumber)
 	}
