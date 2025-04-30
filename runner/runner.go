@@ -104,8 +104,9 @@ func Init(ctx context.Context) error {
 			h.Interval = interval
 		}
 
-		if h.Version == 0 {
-			h.Version = 1
+		version := uint(1)
+		if h.Version != nil {
+			version = *h.Version
 		}
 
 		p := provider.NewHeimdallProvider(
@@ -115,7 +116,7 @@ func Init(ctx context.Context) error {
 			h.Label,
 			eb,
 			*h.Interval,
-			h.Version,
+			version,
 		)
 		providers = append(providers, p)
 	}
