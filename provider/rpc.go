@@ -1216,11 +1216,6 @@ func (r *RPCProvider) refreshTrustedSequencerBalance(ctx context.Context, c *eth
 		return
 	}
 
-	if address.Cmp(common.Address{}) == 0 {
-		r.logger.Warn().Msg("Invalid trusted sequencer address")
-		return
-	}
-
 	balances := &r.rollupManager.Rollups[rollupID].TrustedSequencerBalances
 
 	eth, err := c.BalanceAt(ctx, address, nil)
