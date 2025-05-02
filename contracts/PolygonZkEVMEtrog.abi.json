@@ -127,6 +127,11 @@
   },
   {
     "inputs": [],
+    "name": "InitSequencedBatchDoesNotMatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "InvalidInitializeTransaction",
     "type": "error"
   },
@@ -148,6 +153,11 @@
   {
     "inputs": [],
     "name": "InvalidRangeMultiplierBatchFee",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "MaxTimestampSequenceInvalid",
     "type": "error"
   },
   {
@@ -632,6 +642,19 @@
   },
   {
     "inputs": [],
+    "name": "TIMESTAMP_RANGE",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "acceptAdminRole",
     "outputs": [],
     "stateMutability": "nonpayable",
@@ -992,6 +1015,21 @@
         "internalType": "struct PolygonRollupBaseEtrog.BatchData[]",
         "name": "batches",
         "type": "tuple[]"
+      },
+      {
+        "internalType": "uint32",
+        "name": "l1InfoTreeLeafCount",
+        "type": "uint32"
+      },
+      {
+        "internalType": "uint64",
+        "name": "maxSequenceTimestamp",
+        "type": "uint64"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedFinalAccInputHash",
+        "type": "bytes32"
       },
       {
         "internalType": "address",

@@ -1,0 +1,11 @@
+logs:
+  pretty: true
+  verbosity: "info"
+
+providers:
+  sequence_sender:
+    - name: "zkEVM Mainnet"
+      label: "zkevm-rpc.com"
+      l1_url: https://ethereum-rpc.publicnode.com
+      l2_url: https://zkevm-rpc.com
+      rollup_address: "0x519E42c24163192Dca44CD3fBDCEBF6be9130987"
