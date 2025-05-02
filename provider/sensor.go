@@ -19,14 +19,15 @@ import (
 	"google.golang.org/api/iterator"
 
 	"github.com/0xPolygon/panoptichain/api"
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/network"
 	"github.com/0xPolygon/panoptichain/observer"
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
 type SensorNetworkProvider struct {
-	Network  network.Network
-	Label    string
+	network  network.Network
+	label    string
 	bus      *observer.EventBus
 	interval time.Duration
 	db       *datastore.Client
@@ -35,7 +36,7 @@ type SensorNetworkProvider struct {
 	// Because blockbuffer stores blocks with the block number as the key, this
 	// wouldn't be usable for the sensor network.
 	blocks          *list.List
-	BlockNumber     uint64
+	blockNumber     uint64
 	prevBlockNumber uint64
 
 	blockEvents     []*observer.SensorBlockEvents
@@ -50,19 +51,19 @@ type SensorNetworkProvider struct {
 	refreshStateTime *time.Duration
 }
 
-func NewSensorNetworkProvider(ctx context.Context, n network.Network, project, database, label string, eb *observer.EventBus, interval time.Duration) *SensorNetworkProvider {
-	logger := NewLogger(n, label)
+func NewSensorNetworkProvider(ctx context.Context, n network.Network, eb *observer.EventBus, cfg config.SensorNetwork) *SensorNetworkProvider {
+	logger := NewLogger(n, cfg.Label)
 
-	db, err := datastore.NewClientWithDatabase(ctx, project, database)
+	db, err := datastore.NewClientWithDatabase(ctx, cfg.Project, cfg.Database)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to connect to Datastore")
 	}
 
 	return &SensorNetworkProvider{
-		Network:          n,
-		Label:            label,
+		network:          n,
+		label:            cfg.Label,
 		bus:              eb,
-		interval:         interval,
+		interval:         GetInterval(cfg.Interval),
 		db:               db,
 		logger:           logger,
 		blocks:           list.New(),
@@ -102,14 +103,14 @@ func (s *SensorNetworkProvider) PublishEvents(ctx context.Context) error {
 
 		blocks = append(blocks, block)
 
-		m := observer.NewMessage(s.Network, s.Label, block)
+		m := observer.NewMessage(s.network, s.label, block)
 		s.bus.Publish(ctx, topics.NewEVMBlock, m)
 	}
 
 	if len(blocks) > 0 {
-		m := observer.NewMessage(s.Network, s.Label, &observer.SensorBlocks{
+		m := observer.NewMessage(s.network, s.label, &observer.SensorBlocks{
 			Start:  s.prevBlockNumber,
-			End:    s.BlockNumber,
+			End:    s.blockNumber,
 			Blocks: blocks,
 		})
 
@@ -117,21 +118,21 @@ func (s *SensorNetworkProvider) PublishEvents(ctx context.Context) error {
 	}
 
 	for _, event := range s.blockEvents {
-		m := observer.NewMessage(s.Network, s.Label, event)
+		m := observer.NewMessage(s.network, s.label, event)
 		s.bus.Publish(ctx, topics.SensorBlockEvents, m)
 	}
 
 	for _, reorg := range s.reorgs {
-		m := observer.NewMessage(s.Network, s.Label, reorg)
+		m := observer.NewMessage(s.network, s.label, reorg)
 		s.bus.Publish(ctx, topics.Reorg, m)
 	}
 
 	for _, stolenBlock := range s.stolenBlocks {
-		m := observer.NewMessage(s.Network, s.Label, stolenBlock)
+		m := observer.NewMessage(s.network, s.label, stolenBlock)
 		s.bus.Publish(ctx, topics.StolenBlock, m)
 	}
 
-	s.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(s.Network, s.Label, s.refreshStateTime))
+	s.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(s.network, s.label, s.refreshStateTime))
 
 	return nil
 }
@@ -147,8 +148,8 @@ func (s *SensorNetworkProvider) PollingInterval() time.Duration {
 func (s *SensorNetworkProvider) refreshBlockBuffer(ctx context.Context) error {
 	s.blockEvents = nil
 
-	if s.BlockNumber > s.prevBlockNumber {
-		s.prevBlockNumber = s.BlockNumber
+	if s.blockNumber > s.prevBlockNumber {
+		s.prevBlockNumber = s.blockNumber
 	}
 
 	query := datastore.NewQuery(database.BlocksKind).Order("-TimeFirstSeen").Limit(1)
@@ -162,13 +163,13 @@ func (s *SensorNetworkProvider) refreshBlockBuffer(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.BlockNumber = bn
+	s.blockNumber = bn
 
 	s.logger.Trace().
-		Uint64("block_number", s.BlockNumber).
+		Uint64("block_number", s.blockNumber).
 		Msg("Refreshing sensor network block state")
 
-	if s.prevBlockNumber != 0 && s.prevBlockNumber != s.BlockNumber {
+	if s.prevBlockNumber != 0 && s.prevBlockNumber != s.blockNumber {
 		s.fillRange(ctx, s.prevBlockNumber)
 	}
 
@@ -178,7 +179,7 @@ func (s *SensorNetworkProvider) refreshBlockBuffer(ctx context.Context) error {
 func (s *SensorNetworkProvider) fillRange(ctx context.Context, start uint64) {
 	s.logger.Debug().
 		Uint64("start", start).
-		Uint64("end", s.BlockNumber).
+		Uint64("end", s.blockNumber).
 		Msg("Filling sensor network block range")
 
 	// This query is slightly different from the other ones found in rpc.go and
@@ -189,7 +190,7 @@ func (s *SensorNetworkProvider) fillRange(ctx context.Context, start uint64) {
 	query := datastore.NewQuery(database.BlocksKind).
 		Order("Number").
 		FilterField("Number", ">=", fmt.Sprint(start)).
-		FilterField("Number", "<", fmt.Sprint(s.BlockNumber))
+		FilterField("Number", "<", fmt.Sprint(s.blockNumber))
 	iter := s.db.Run(ctx, query)
 
 	var wg sync.WaitGroup
@@ -319,7 +320,7 @@ func (s *SensorNetworkProvider) refreshReorgs(ctx context.Context) error {
 }
 
 func (s *SensorNetworkProvider) getNonBogonBlocks() []*types.Block {
-	signers, err := api.Signers(s.Network)
+	signers, err := api.Signers(s.network)
 	if err != nil {
 		s.logger.Warn().Err(err).Msg("Failed to get signers validator map")
 		return nil

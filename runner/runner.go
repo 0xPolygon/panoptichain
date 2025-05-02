@@ -46,51 +46,27 @@ func Start(ctx context.Context) {
 
 // Init configures all the providers and observers of the system.
 func Init(ctx context.Context) error {
-	providers = make([]provider.Provider, 0)
-
 	eb := observer.NewEventBus()
-	interval := config.Config().Runner.Interval
+	providers = []provider.Provider{}
+	rpcProviders := []*provider.RPCProvider{}
 
-	var rpcProviders []*provider.RPCProvider
 	for _, r := range config.Config().Providers.RPCs {
 		n, err := network.GetNetworkByName(r.Name)
 		if err != nil {
 			return err
 		}
 
-		if r.Interval == nil {
-			r.Interval = interval
-		}
-
-		// Look back this number of blocks when filtering event logs.
-		blockLookBack := config.DefaultBlockLookBack
-		if r.BlockLookBack != nil {
-			blockLookBack = *r.BlockLookBack
-		}
-
-		p := provider.NewRPCProvider(provider.RPCProviderOpts{
-			Network:       n,
-			URL:           r.URL,
-			Label:         r.Label,
-			EventBus:      eb,
-			Interval:      *r.Interval,
-			Contracts:     r.Contracts,
-			TimeToMine:    r.TimeToMine,
-			Accounts:      r.Accounts,
-			BlockLookBack: blockLookBack,
-			TxPool:        r.TxPool,
-		})
-
+		p := provider.NewRPCProvider(n, eb, r)
 		providers = append(providers, p)
 		rpcProviders = append(rpcProviders, p)
 	}
 
 	if hd := config.Config().Providers.HashDivergence; hd != nil {
-		if hd.Interval == nil {
-			hd.Interval = interval
-		}
-
-		p := provider.NewHashDivergenceProvider(rpcProviders, eb, *hd.Interval)
+		p := provider.NewHashDivergenceProvider(
+			rpcProviders,
+			eb,
+			provider.GetInterval(hd.Interval),
+		)
 		providers = append(providers, p)
 	}
 
@@ -100,24 +76,7 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		if h.Interval == nil {
-			h.Interval = interval
-		}
-
-		version := uint(1)
-		if h.Version != nil {
-			version = *h.Version
-		}
-
-		p := provider.NewHeimdallProvider(
-			n,
-			h.TendermintURL,
-			h.HeimdallURL,
-			h.Label,
-			eb,
-			*h.Interval,
-			version,
-		)
+		p := provider.NewHeimdallProvider(n, eb, h)
 		providers = append(providers, p)
 	}
 
@@ -127,42 +86,17 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		if s.Interval == nil {
-			s.Interval = interval
-		}
-
-		p := provider.NewSensorNetworkProvider(
-			ctx,
-			n,
-			s.Project,
-			s.Database,
-			s.Label,
-			eb,
-			*interval,
-		)
+		p := provider.NewSensorNetworkProvider(ctx, n, eb, s)
 		providers = append(providers, p)
 	}
 
 	if system := config.Config().Providers.System; system != nil {
-		if system.Interval == nil {
-			system.Interval = interval
-		}
-
-		p := provider.NewSystemProvider(eb, *system.Interval)
+		p := provider.NewSystemProvider(eb, provider.GetInterval(system.Interval))
 		providers = append(providers, p)
 	}
 
 	if er := config.Config().Providers.ExchangeRates; er != nil {
-		if er.Interval == nil {
-			er.Interval = interval
-		}
-
-		p := provider.NewExchangeRatesProvider(
-			er.CoinbaseURL,
-			er.Tokens,
-			eb,
-			*er.Interval,
-		)
+		p := provider.NewExchangeRatesProvider(eb, *er)
 		providers = append(providers, p)
 	}
 

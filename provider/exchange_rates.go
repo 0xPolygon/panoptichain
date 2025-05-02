@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/observer"
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
@@ -32,13 +33,13 @@ type CoinbaseExchangeRates struct {
 	} `json:"data"`
 }
 
-func NewExchangeRatesProvider(coinbaseURL string, tokens map[string][]string, eb *observer.EventBus, interval time.Duration) *ExchangeRatesProvider {
+func NewExchangeRatesProvider(eb *observer.EventBus, cfg config.ExchangeRates) *ExchangeRatesProvider {
 	return &ExchangeRatesProvider{
 		bus:              eb,
-		interval:         interval,
+		interval:         GetInterval(cfg.Interval),
 		logger:           NewLogger(nil, "exchange-rates"),
-		coinbaseURL:      coinbaseURL,
-		tokens:           tokens,
+		coinbaseURL:      cfg.CoinbaseURL,
+		tokens:           cfg.Tokens,
 		refreshStateTime: new(time.Duration),
 	}
 }

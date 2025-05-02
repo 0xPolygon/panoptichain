@@ -8,9 +8,9 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/log"
 	"github.com/0xPolygon/panoptichain/network"
-	"github.com/0xPolygon/panoptichain/observer"
 )
 
 // Provider must be implemented by any system that's monitoring the
@@ -27,9 +27,6 @@ type Provider interface {
 	// state at all. The Start function in runner.go will call PublishEvents of
 	// every provider after RefreshState.
 	PublishEvents(context.Context) error
-
-	// SetEventBus is used to configure the providers currently used message bus.
-	SetEventBus(*observer.EventBus)
 
 	// PollingInterval returns how often the provider should refresh it state and
 	// publish events in seconds.
@@ -53,4 +50,12 @@ func NewLogger(n network.Network, provider string) zerolog.Logger {
 		Str("network", network).
 		Str("provider", provider).
 		Logger()
+}
+
+func GetInterval(interval *time.Duration) time.Duration {
+	if interval != nil {
+		return *interval
+	}
+
+	return *config.Config().Runner.Interval
 }
