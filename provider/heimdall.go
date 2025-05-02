@@ -73,10 +73,6 @@ func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.He
 	}
 }
 
-func (h *HeimdallProvider) SetEventBus(bus *observer.EventBus) {
-	h.bus = bus
-}
-
 func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	defer timer(h.refreshStateTime)()
 

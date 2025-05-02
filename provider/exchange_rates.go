@@ -102,10 +102,6 @@ func (e *ExchangeRatesProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
-func (e *ExchangeRatesProvider) SetEventBus(bus *observer.EventBus) {
-	e.bus = bus
-}
-
 func (e *ExchangeRatesProvider) PollingInterval() time.Duration {
 	return e.interval
 }

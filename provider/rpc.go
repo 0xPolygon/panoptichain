@@ -127,10 +127,6 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 	}
 }
 
-func (r *RPCProvider) SetEventBus(bus *observer.EventBus) {
-	r.bus = bus
-}
-
 // RefreshState is going to get the current head block and request all
 // of the blocks between the current head and the last head. All of
 // those blocks will be pushed into the buffer.

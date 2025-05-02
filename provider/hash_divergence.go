@@ -135,10 +135,6 @@ func (h *HashDivergenceProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
-func (h *HashDivergenceProvider) SetEventBus(bus *observer.EventBus) {
-	h.bus = bus
-}
-
 func (h *HashDivergenceProvider) PollingInterval() time.Duration {
 	return h.interval
 }

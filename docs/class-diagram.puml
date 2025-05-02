@@ -6,7 +6,6 @@ package provider {
   interface Provider {
 	  {abstract} RefreshState(context.Context) error
 	  {abstract} PublishEvents(context.Context) error
-	  {abstract} SetEventBus(*observer.EventBus)
 	  {abstract} PollingInterval() uint
   }
 
@@ -52,7 +51,6 @@ package observer {
 }
 
 RPCProvider::bus *-- EventBus
-Provider::SetEventBus --* RPCProvider::bus
 EventBus::Subscribe --* ObservableTopic
 EventBus::Subscribe --* Observer
 EventBus::Publish --* ObservableTopic

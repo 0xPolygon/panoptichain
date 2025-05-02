@@ -137,10 +137,6 @@ func (s *SensorNetworkProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
-func (s *SensorNetworkProvider) SetEventBus(bus *observer.EventBus) {
-	s.bus = bus
-}
-
 func (s *SensorNetworkProvider) PollingInterval() time.Duration {
 	return s.interval
 }
