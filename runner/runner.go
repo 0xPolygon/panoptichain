@@ -144,7 +144,7 @@ func Init(ctx context.Context) error {
 	}
 
 	if system := config.Config().Providers.System; system != nil {
-		if system.Interval != nil {
+		if system.Interval == nil {
 			system.Interval = interval
 		}
 
@@ -163,6 +163,11 @@ func Init(ctx context.Context) error {
 			eb,
 			*er.Interval,
 		)
+		providers = append(providers, p)
+	}
+
+	for _, s := range config.Config().Providers.SequenceSender {
+		p := provider.NewSequenceSenderProvider(eb, s)
 		providers = append(providers, p)
 	}
 

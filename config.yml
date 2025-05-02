@@ -291,8 +291,8 @@
   #       checkpoint_address: "0xbd07D7E1E93c8d4b2a261327F3C28a8EA7167209"
   #       rollup_manager_address: "0x32d33D5137a7cFFb54c5Bf8371172bcEc5f310ff"
   #       rollup_manager:
-  #         enabled: [1, 3, 10, 11, 12, 14, 15, 16, 22, 25, 30, 31]
-  #         disabled: [2, 4, 5, 6, 7, 8, 9, 13, 17, 18, 19, 20, 21, 23, 24, 26, 27, 28, 29, 32]
+  #         enabled: [1, 3, 10, 11, 12, 14, 15, 16, 22, 25, 30, 31, 33, 34]
+  #         disabled: [2, 4, 5, 6, 7, 8, 9, 13, 17, 18, 19, 20, 21, 23, 24, 26, 27, 28, 29, 32, 35]
   #         rollups:
   #           1:
   #             name: "zkEVM Cardona"

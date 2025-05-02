@@ -30,6 +30,7 @@ type Providers struct {
 	HashDivergence    *HashDivergence    `mapstructure:"hash_divergence"`
 	System            *System            `mapstructure:"system"`
 	ExchangeRates     *ExchangeRates     `mapstructure:"exchange_rates"`
+	SequenceSender    []SequenceSender   `mapstructure:"sequence_sender"`
 }
 
 // RPC defines the various RPC providers that will be monitored.
@@ -128,6 +129,14 @@ type SensorNetwork struct {
 	Project  string         `mapstructure:"project" validate:"required_with=Name"`
 	Database string         `mapstructure:"database"`
 	Interval *time.Duration `mapstructure:"interval"`
+}
+
+type SequenceSender struct {
+	Name          string         `mapstructure:"name"`
+	Interval      *time.Duration `mapstructure:"interval"`
+	L1URL         string         `mapstructure:"l1_url" validate:"required"`
+	L2URL         string         `mapstructure:"l2_url" validate:"required"`
+	RollupAddress string         `mapstructure:"rollup_address" validate:"required"`
 }
 
 // Observers defines which observers should be enabled or disabled. Observers
