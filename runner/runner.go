@@ -144,7 +144,7 @@ func Init(ctx context.Context) error {
 	}
 
 	if system := config.Config().Providers.System; system != nil {
-		if system.Interval != nil {
+		if system.Interval == nil {
 			system.Interval = interval
 		}
 
