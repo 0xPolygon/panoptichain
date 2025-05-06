@@ -377,10 +377,16 @@ run `go generate ./...` from the project root.
 ### Providers
 
 Providers are the main components that are fetching data. They handle all state
-storage and requests to data sources. There are currently three types of
-providers: [RPC](./provider/rpc.go), [Heimdall](./provider/heimdall.go),
-and [Sensor](./provider/sensor.go). These providers will query data from their
+storage and requests to data sources. Providers will query data from their
 respective data sources and send them to an [ObservableTopic](./observer/topics/topics.go).
+These are the available types of providers:
+
+- [`rpc`](./provider/rpc.go)
+- [`heimdall`](./provider/heimdall.go)
+- [`sensor`](./provider/sensor.go)
+- [`system`](./provider/system.go)
+- [`hash_divergence`](./provider/exchange_rates.go)
+- [`exchange_rates`](./provider/exchange_rates.go)
 
 All providers implement the `Provider` interface, and creating a provider is a
 little more involved than an observer. Before creating one, make sure that the

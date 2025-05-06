@@ -39,8 +39,8 @@ func NewHashDivergenceProvider(rpcProviders []*RPCProvider, eb *observer.EventBu
 	networkBlockNumbers := make(map[string]uint64)
 
 	for _, provider := range rpcProviders {
-		networkProvidersMap[provider.Network.GetName()] = append(networkProvidersMap[provider.Network.GetName()], provider)
-		networkBlockNumbers[provider.Network.GetName()] = 0
+		networkProvidersMap[provider.network.GetName()] = append(networkProvidersMap[provider.network.GetName()], provider)
+		networkBlockNumbers[provider.network.GetName()] = 0
 	}
 
 	return &HashDivergenceProvider{
@@ -67,8 +67,8 @@ loop:
 		for _, provider := range providers {
 			// Find the minimum BlockNumber to ensure that all providers have at least
 			// that block number.
-			if blockNumber == 0 || blockNumber > provider.BlockNumber {
-				blockNumber = provider.BlockNumber
+			if blockNumber == 0 || blockNumber > provider.blockNumber {
+				blockNumber = provider.blockNumber
 			}
 		}
 
@@ -133,10 +133,6 @@ func (h *HashDivergenceProvider) PublishEvents(ctx context.Context) error {
 	h.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(nil, h.label, h.refreshStateTime))
 
 	return nil
-}
-
-func (h *HashDivergenceProvider) SetEventBus(bus *observer.EventBus) {
-	h.bus = bus
 }
 
 func (h *HashDivergenceProvider) PollingInterval() time.Duration {

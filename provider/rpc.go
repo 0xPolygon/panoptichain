@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,14 +37,13 @@ import (
 
 // RPCProvider is the generic struct for all EVM style JSON RPC services.
 type RPCProvider struct {
-	URL              string
-	Network          network.Network
-	Label            string
-	parsedURL        *url.URL
+	url              string
+	network          network.Network
+	label            string
 	bus              *observer.EventBus
 	interval         time.Duration
 	logger           zerolog.Logger
-	BlockNumber      uint64
+	blockNumber      uint64
 	prevBlockNumber  uint64
 	finalizedHeight  uint64
 	blockBuffer      *blockbuffer.BlockBuffer
@@ -94,41 +92,26 @@ type RPCProvider struct {
 	globalExitRootAddress *common.Address
 }
 
-type RPCProviderOpts struct {
-	Network       network.Network
-	URL           string
-	Label         string
-	EventBus      *observer.EventBus
-	Interval      time.Duration
-	Contracts     config.Contracts
-	TimeToMine    *config.TimeToMine
-	Accounts      []string
-	BlockLookBack uint64
-	TxPool        bool
-}
-
-// NewRPCProvider creates a new RPC provider and configures it's event bus.
-func NewRPCProvider(opts RPCProviderOpts) *RPCProvider {
-	logger := NewLogger(opts.Network, opts.Label)
-
-	parsedURL, err := url.Parse(opts.URL)
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to parse RPC URL")
+// NewRPCProvider creates a new RPC provider.
+func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *RPCProvider {
+	// Look back this number of blocks when filtering event logs.
+	blb := config.DefaultBlockLookBack
+	if cfg.BlockLookBack != nil {
+		blb = *cfg.BlockLookBack
 	}
 
 	return &RPCProvider{
-		URL:                  opts.URL,
-		Label:                opts.Label,
-		parsedURL:            parsedURL,
+		url:                  cfg.URL,
+		network:              n,
+		label:                cfg.Label,
+		bus:                  eb,
 		blockBuffer:          blockbuffer.NewBlockBuffer(128),
-		Network:              opts.Network,
-		bus:                  opts.EventBus,
-		interval:             opts.Interval,
-		logger:               logger,
+		interval:             GetInterval(cfg.Interval),
+		logger:               NewLogger(n, cfg.Label),
 		refreshStateTime:     new(time.Duration),
-		contracts:            opts.Contracts,
-		timeToMine:           opts.TimeToMine,
-		accounts:             opts.Accounts,
+		contracts:            cfg.Contracts,
+		timeToMine:           cfg.TimeToMine,
+		accounts:             cfg.Accounts,
 		accountBalances:      make(observer.AccountBalances),
 		stateSync:            make(map[bool]*observer.StateSync),
 		checkpointSignatures: make(map[bool]*observer.CheckpointSignatures),
@@ -139,13 +122,9 @@ func NewRPCProvider(opts RPCProviderOpts) *RPCProvider {
 		trustedSequencers:    make(map[uint32]*RPCProvider),
 		trustedSequencerURL:  make(chan string),
 		rollupContracts:      make(map[uint32]common.Address),
-		blockLookBack:        opts.BlockLookBack,
-		hasTxPool:            opts.TxPool,
+		blockLookBack:        blb,
+		hasTxPool:            cfg.TxPool,
 	}
-}
-
-func (r *RPCProvider) SetEventBus(bus *observer.EventBus) {
-	r.bus = bus
 }
 
 // RefreshState is going to get the current head block and request all
@@ -154,7 +133,7 @@ func (r *RPCProvider) SetEventBus(bus *observer.EventBus) {
 func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	defer timer(r.refreshStateTime)()
 
-	c, err := ethclient.DialContext(ctx, r.URL)
+	c, err := ethclient.DialContext(ctx, r.url)
 	if err != nil {
 		r.logger.Error().Err(err).Msg("Failed to create the client")
 		return err
@@ -166,7 +145,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	r.refreshStateSync(ctx, c, false)
 	r.refreshCheckpoint(ctx, c)
 
-	if r.Network.IsPolygonPoS() {
+	if r.network.IsPolygonPoS() {
 		r.refreshValidatorBalances(ctx, c)
 		r.refreshMissedBlockProposal(ctx, c)
 	}
@@ -178,7 +157,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	r.refreshTimeToMine(ctx, c)
 	r.refreshAccountBalances(ctx, c)
 
-	if r.Network.IsPolygonZkEVM() {
+	if r.network.IsPolygonZkEVM() {
 		r.refreshBatches(ctx, c)
 	}
 
@@ -191,7 +170,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 }
 
 func (r *RPCProvider) PublishEvents(ctx context.Context) error {
-	for i := r.prevBlockNumber + 1; i <= r.BlockNumber && r.prevBlockNumber != 0; i++ {
+	for i := r.prevBlockNumber + 1; i <= r.blockNumber && r.prevBlockNumber != 0; i++ {
 		b, err := r.blockBuffer.GetBlock(i)
 		if err != nil {
 			continue
@@ -201,7 +180,7 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 			continue
 		}
 
-		m := observer.NewMessage(r.Network, r.Label, block)
+		m := observer.NewMessage(r.network, r.label, block)
 		r.bus.Publish(ctx, topics.NewEVMBlock, m)
 
 		pb, err := r.blockBuffer.GetBlock(b.Number().Uint64() - 1)
@@ -213,36 +192,36 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 			continue
 		}
 
-		interval := observer.NewMessage(r.Network, r.Label, block.Time()-prev.Time())
+		interval := observer.NewMessage(r.network, r.label, block.Time()-prev.Time())
 		r.bus.Publish(ctx, topics.BlockInterval, interval)
 	}
 
 	if len(r.missedBlockProposal) > 0 {
-		missedBlockProposal := observer.NewMessage(r.Network, r.Label, r.missedBlockProposal)
+		missedBlockProposal := observer.NewMessage(r.network, r.label, r.missedBlockProposal)
 		r.bus.Publish(ctx, topics.BorMissedBlockProposal, missedBlockProposal)
 	}
 
 	for _, stateSync := range r.stateSync {
-		r.bus.Publish(ctx, topics.BorStateSync, observer.NewMessage(r.Network, r.Label, stateSync))
+		r.bus.Publish(ctx, topics.BorStateSync, observer.NewMessage(r.network, r.label, stateSync))
 	}
 
 	for _, checkpointSignatures := range r.checkpointSignatures {
-		m := observer.NewMessage(r.Network, r.Label, checkpointSignatures)
+		m := observer.NewMessage(r.network, r.label, checkpointSignatures)
 		r.bus.Publish(ctx, topics.CheckpointSignatures, m)
 	}
 
 	if len(r.validatorBalances) > 0 {
-		validatorWalletBalance := observer.NewMessage(r.Network, r.Label, r.validatorBalances)
+		validatorWalletBalance := observer.NewMessage(r.network, r.label, r.validatorBalances)
 		r.bus.Publish(ctx, topics.ValidatorWallet, validatorWalletBalance)
 	}
 
 	if r.txPool != nil {
-		txPool := observer.NewMessage(r.Network, r.Label, r.txPool)
+		txPool := observer.NewMessage(r.network, r.label, r.txPool)
 		r.bus.Publish(ctx, topics.TransactionPool, txPool)
 	}
 
 	if r.batches.TrustedBatch.Number > 0 || r.batches.VirtualBatch.Number > 0 || r.batches.VerifiedBatch.Number > 0 {
-		r.bus.Publish(ctx, topics.ZkEVMBatches, observer.NewMessage(r.Network, r.Label, r.batches))
+		r.bus.Publish(ctx, topics.ZkEVMBatches, observer.NewMessage(r.network, r.label, r.batches))
 	}
 
 	if r.globalExitRoot != nil || r.mainnetExitRoot != nil || r.rollupExitRoot != nil {
@@ -251,18 +230,18 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 			MainnetExitRoot: r.mainnetExitRoot,
 			RollupExitRoot:  r.rollupExitRoot,
 		}
-		r.bus.Publish(ctx, topics.ExitRoots, observer.NewMessage(r.Network, r.Label, er))
+		r.bus.Publish(ctx, topics.ExitRoots, observer.NewMessage(r.network, r.label, er))
 	}
 
 	if r.rollupExitRootL2 != nil {
 		er := &observer.ExitRoots{
 			RollupExitRoot: r.rollupExitRootL2,
 		}
-		r.bus.Publish(ctx, topics.ExitRoots, observer.NewMessage(r.Network, r.Label, er))
+		r.bus.Publish(ctx, topics.ExitRoots, observer.NewMessage(r.network, r.label, er))
 	}
 
 	if r.depositCount != nil || r.lastUpdatedDepositCount != nil {
-		m := observer.NewMessage(r.Network, r.Label, &observer.DepositCounts{
+		m := observer.NewMessage(r.network, r.label, &observer.DepositCounts{
 			DepositCount:            r.depositCount,
 			LastUpdatedDepositCount: r.lastUpdatedDepositCount,
 		})
@@ -270,49 +249,49 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 	}
 
 	for _, bridgeEvent := range r.bridgeEvents {
-		r.bus.Publish(ctx, topics.BridgeEvent, observer.NewMessage(r.Network, r.Label, bridgeEvent))
+		r.bus.Publish(ctx, topics.BridgeEvent, observer.NewMessage(r.network, r.label, bridgeEvent))
 	}
 
 	for _, claimEvent := range r.claimEvents {
-		r.bus.Publish(ctx, topics.ClaimEvent, observer.NewMessage(r.Network, r.Label, claimEvent))
+		r.bus.Publish(ctx, topics.ClaimEvent, observer.NewMessage(r.network, r.label, claimEvent))
 	}
 
 	if len(r.bridgeEventTimes) > 0 {
-		m := observer.NewMessage(r.Network, r.Label, r.bridgeEventTimes)
+		m := observer.NewMessage(r.network, r.label, r.bridgeEventTimes)
 		r.bus.Publish(ctx, topics.BridgeEventTimes, m)
 	}
 
 	if len(r.claimEventTimes) > 0 {
-		m := observer.NewMessage(r.Network, r.Label, r.claimEventTimes)
+		m := observer.NewMessage(r.network, r.label, r.claimEventTimes)
 		r.bus.Publish(ctx, topics.ClaimEventTimes, m)
 	}
 
 	if r.rollupManager != nil {
-		m := observer.NewMessage(r.Network, r.Label, r.rollupManager)
+		m := observer.NewMessage(r.network, r.label, r.rollupManager)
 		r.bus.Publish(ctx, topics.RollupManager, m)
 	}
 
 	if len(r.accountBalances) > 0 {
-		m := observer.NewMessage(r.Network, r.Label, r.accountBalances)
+		m := observer.NewMessage(r.network, r.label, r.accountBalances)
 		r.bus.Publish(ctx, topics.AccountBalances, m)
 	}
 
 	for _, batch := range r.trustedBatches {
-		m := observer.NewMessage(r.Network, r.Label, batch)
+		m := observer.NewMessage(r.network, r.label, batch)
 		r.bus.Publish(ctx, topics.TrustedBatch, m)
 	}
 
 	if r.timeToFinalized != nil {
-		m := observer.NewMessage(r.Network, r.Label, r.timeToFinalized)
+		m := observer.NewMessage(r.network, r.label, r.timeToFinalized)
 		r.bus.Publish(ctx, topics.TimeToFinalized, m)
 	}
 
 	if r.finalizedHeight > 0 {
-		m := observer.NewMessage(r.Network, r.Label, r.finalizedHeight)
+		m := observer.NewMessage(r.network, r.label, r.finalizedHeight)
 		r.bus.Publish(ctx, topics.FinalizedHeight, m)
 	}
 
-	r.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(r.Network, r.Label, r.refreshStateTime))
+	r.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(r.network, r.label, r.refreshStateTime))
 
 	return nil
 }
@@ -322,16 +301,16 @@ func (r *RPCProvider) PollingInterval() time.Duration {
 }
 
 func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Client) (err error) {
-	r.prevBlockNumber = r.BlockNumber
-	r.BlockNumber, err = c.BlockNumber(ctx)
+	r.prevBlockNumber = r.blockNumber
+	r.blockNumber, err = c.BlockNumber(ctx)
 	if err != nil {
 		r.logger.Error().Err(err).Msg("Failed to get block number")
 		return err
 	}
 
-	r.logger.Info().Uint64("block_number", r.BlockNumber).Msg("Refreshing block state")
+	r.logger.Info().Uint64("block_number", r.blockNumber).Msg("Refreshing block state")
 
-	if r.prevBlockNumber != 0 && r.prevBlockNumber != r.BlockNumber {
+	if r.prevBlockNumber != 0 && r.prevBlockNumber != r.blockNumber {
 		r.fillRange(ctx, r.prevBlockNumber, c)
 	}
 
@@ -342,7 +321,7 @@ func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Clien
 	}
 	r.finalizedHeight = finalized.Number.Uint64()
 
-	latest, err := c.HeaderByNumber(ctx, big.NewInt(int64(r.BlockNumber)))
+	latest, err := c.HeaderByNumber(ctx, big.NewInt(int64(r.blockNumber)))
 	if err != nil {
 		r.logger.Warn().Err(err).Msg("Failed to get latest block header")
 		return err
@@ -355,17 +334,17 @@ func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Clien
 }
 
 func (r *RPCProvider) getFilterOpts() *bind.FilterOpts {
-	opts := bind.FilterOpts{End: &r.BlockNumber}
+	opts := bind.FilterOpts{End: &r.blockNumber}
 
 	if r.prevBlockNumber > 0 {
 		opts.Start = r.prevBlockNumber
-	} else if r.blockLookBack < r.BlockNumber {
-		opts.Start = r.BlockNumber - r.blockLookBack
+	} else if r.blockLookBack < r.blockNumber {
+		opts.Start = r.blockNumber - r.blockLookBack
 	}
 
 	log.Trace().
 		Any("opts", opts).
-		Any("block_number", r.BlockNumber).
+		Any("block_number", r.blockNumber).
 		Any("prev_block_number", r.prevBlockNumber).
 		Any("block_look_back", r.blockLookBack).
 		Msg("Getting filter options")
@@ -465,7 +444,7 @@ func (r *RPCProvider) refreshCheckpoint(ctx context.Context, c *ethclient.Client
 		return
 	}
 
-	r.logger.Trace().Any("event", event).Str("network", r.Network.GetName()).Msg("Latest NewHeaderBlock event")
+	r.logger.Trace().Any("event", event).Str("network", r.network.GetName()).Msg("Latest NewHeaderBlock event")
 	tx, _, err := c.TransactionByHash(ctx, event.Raw.TxHash)
 	if err != nil {
 		r.logger.Error().Err(err).Msg("Could not find submitCheckpoint transaction")
@@ -677,10 +656,10 @@ func (r *RPCProvider) getBlockByNumber(ctx context.Context, n *big.Int, c *ethcl
 func (r *RPCProvider) fillRange(ctx context.Context, start uint64, c *ethclient.Client) {
 	r.logger.Debug().
 		Uint64("start_block", start).
-		Uint64("end_block", r.BlockNumber).
+		Uint64("end_block", r.blockNumber).
 		Msg("Filling block range")
 
-	for i := start + 1; i <= r.BlockNumber; i++ {
+	for i := start + 1; i <= r.blockNumber; i++ {
 		num := new(big.Int).SetUint64(i)
 		block, err := c.BlockByNumber(ctx, num)
 
@@ -710,7 +689,7 @@ func padLeft(data []byte, size int) []byte {
 }
 
 func (r *RPCProvider) refreshValidatorBalances(ctx context.Context, c *ethclient.Client) (err error) {
-	signers, err := api.Signers(r.Network)
+	signers, err := api.Signers(r.network)
 	if err != nil {
 		r.logger.Warn().Err(err).Msg("Failed to get signers validator map")
 		return
@@ -774,7 +753,7 @@ type SnapshotProposerSequence struct {
 }
 
 func (r *RPCProvider) refreshMissedBlockProposal(ctx context.Context, c *ethclient.Client) error {
-	for i := r.prevBlockNumber + 1; i <= r.BlockNumber && r.prevBlockNumber != 0; i++ {
+	for i := r.prevBlockNumber + 1; i <= r.blockNumber && r.prevBlockNumber != 0; i++ {
 		var response SnapshotProposerSequence
 		err := c.Client().CallContext(ctx, &response, "bor_getSnapshotProposerSequence", hexutil.EncodeUint64(i))
 		if err != nil {
@@ -932,7 +911,7 @@ func (r *RPCProvider) refreshTimeToMine(ctx context.Context, c *ethclient.Client
 			GasPriceFactor: gasPriceFactor,
 		}
 
-		m := observer.NewMessage(r.Network, r.Label, ttm)
+		m := observer.NewMessage(r.network, r.label, ttm)
 		r.bus.Publish(ctx, topics.TimeToMine, m)
 	}()
 
@@ -1259,12 +1238,12 @@ func (r *RPCProvider) getRollupNetwork(contract *contracts.PolygonZkEVMEtrog, co
 	address := common.HexToAddress(*r.contracts.RollupManagerAddress)
 
 	name := fmt.Sprintf("%s %s Rollup %d",
-		r.Network.GetName(),
+		r.network.GetName(),
 		address.Hex(),
 		rollupID,
 	)
 
-	if addresses, ok := rollupManagers[r.Network.GetName()]; ok {
+	if addresses, ok := rollupManagers[r.network.GetName()]; ok {
 		if rollupManagerName, ok := addresses[address]; ok {
 			name = fmt.Sprintf("%s Rollup %d", rollupManagerName, rollupID)
 		}
@@ -1305,49 +1284,31 @@ func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *
 		return nil
 	}
 
-	rollup, ok := r.contracts.RollupManager.Rollups[rollupID]
-
-	var url string
-	if ok && rollup.URL != nil {
-		url = *rollup.URL
-	} else if url, err = contract.TrustedSequencerURL(co); err != nil {
+	url, err := contract.TrustedSequencerURL(co)
+	if err != nil {
 		return err
 	}
 
-	label := r.Label
+	rollup, ok := r.contracts.RollupManager.Rollups[rollupID]
+	if ok && rollup.URL != nil {
+		rollup.RPC.URL = *rollup.URL
+	} else {
+		rollup.RPC.URL = url
+	}
+
+	rollup.RPC.Label = r.label
 	if ok && rollup.Label != nil {
-		label = *rollup.Label
-	}
-
-	interval := *config.Config().Runner.Interval
-	if ok && rollup.Interval != nil {
-		interval = *rollup.Interval
-	}
-
-	blockLookBack := config.DefaultBlockLookBack
-	if ok && rollup.BlockLookBack != nil {
-		blockLookBack = *rollup.BlockLookBack
+		rollup.RPC.Label = *rollup.Label
 	}
 
 	provider, ok := r.trustedSequencers[rollupID]
 	if !ok {
-		r.trustedSequencers[rollupID] = NewRPCProvider(RPCProviderOpts{
-			Network:       network,
-			URL:           url,
-			Label:         label,
-			EventBus:      r.bus,
-			Interval:      interval,
-			Contracts:     rollup.Contracts,
-			TimeToMine:    rollup.TimeToMine,
-			Accounts:      rollup.Accounts,
-			BlockLookBack: blockLookBack,
-			TxPool:        rollup.TxPool,
-		})
+		r.trustedSequencers[rollupID] = NewRPCProvider(network, r.bus, rollup.RPC)
 		go runProvider(ctx, r.trustedSequencers[rollupID])
 		return nil
 	}
 
-	if provider.URL != url {
+	if provider.url != url {
 		provider.trustedSequencerURL <- url
 	}
 
@@ -1358,7 +1319,7 @@ func runProvider(ctx context.Context, p *RPCProvider) {
 	for {
 		select {
 		case url := <-p.trustedSequencerURL:
-			p.URL = url
+			p.url = url
 		default:
 			if err := p.RefreshState(ctx); err != nil {
 				p.logger.Error().Err(err).Send()

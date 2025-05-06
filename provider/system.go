@@ -37,10 +37,6 @@ func (s *SystemProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
-func (s *SystemProvider) SetEventBus(bus *observer.EventBus) {
-	s.bus = bus
-}
-
 func (s *SystemProvider) PollingInterval() time.Duration {
 	return s.interval
 }

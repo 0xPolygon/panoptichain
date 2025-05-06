@@ -34,9 +34,9 @@ type Providers struct {
 
 // RPC defines the various RPC providers that will be monitored.
 type RPC struct {
-	Name          string         `mapstructure:"name"`
-	URL           string         `mapstructure:"url" validate:"url,required_with=Name"`
-	Label         string         `mapstructure:"label" validate:"required_with=Name"`
+	Name          string         `mapstructure:"name" validate:"required"`
+	URL           string         `mapstructure:"url" validate:"url,required"`
+	Label         string         `mapstructure:"label" validate:"required"`
 	Interval      *time.Duration `mapstructure:"interval"`
 	Contracts     Contracts      `mapstructure:"contracts"`
 	TimeToMine    *TimeToMine    `mapstructure:"time_to_mine"`
@@ -72,7 +72,7 @@ type RollupManager struct {
 type Rollup struct {
 	RPC   `mapstructure:",squash"`
 	Name  *string `mapstructure:"name"`
-	URL   *string `mapstructure:"url"`
+	URL   *string `mapstructure:"url" validate:"url"`
 	Label *string `mapstructure:"label"`
 }
 
@@ -112,10 +112,10 @@ type ExchangeRates struct {
 // HeimdallEndpoint configures the heimdall provider. This provider fetches data
 // from the consensus layer endpoints for Polygon PoS chains.
 type HeimdallEndpoint struct {
-	Name          string         `mapstructure:"name"`
-	TendermintURL string         `mapstructure:"tendermint_url" validate:"url,required_with=Name"`
-	HeimdallURL   string         `mapstructure:"heimdall_url" validate:"url,required_with=Name"`
-	Label         string         `mapstructure:"label" validate:"required_with=Name"`
+	Name          string         `mapstructure:"name" validate:"required"`
+	TendermintURL string         `mapstructure:"tendermint_url" validate:"url,required"`
+	HeimdallURL   string         `mapstructure:"heimdall_url" validate:"url,required"`
+	Label         string         `mapstructure:"label" validate:"required"`
 	Interval      *time.Duration `mapstructure:"interval"`
 	Version       *uint          `mapstructure:"version" validate:"omitempty,oneof=1 2"`
 }
@@ -123,9 +123,9 @@ type HeimdallEndpoint struct {
 // SensorNetwork configures the sensor network provider. This fetches data from
 // GCP Datastore where the sensors write their data.
 type SensorNetwork struct {
-	Name     string         `mapstructure:"name"`
-	Label    string         `mapstructure:"label" validate:"required_with=Name"`
-	Project  string         `mapstructure:"project" validate:"required_with=Name"`
+	Name     string         `mapstructure:"name" validate:"required"`
+	Label    string         `mapstructure:"label" validate:"required"`
+	Project  string         `mapstructure:"project" validate:"required"`
 	Database string         `mapstructure:"database"`
 	Interval *time.Duration `mapstructure:"interval"`
 }
@@ -139,10 +139,10 @@ type Observers struct {
 
 // HTTP defines the properties that used for exposing metrics.
 type HTTP struct {
-	PromPort  int    `mapstructure:"port"`
-	PprofPort int    `mapstructure:"pprof_port"`
-	Address   string `mapstructure:"address"`
-	Path      string `mapstructure:"path"`
+	PromPort  int    `mapstructure:"port" validate:"required"`
+	PprofPort int    `mapstructure:"pprof_port" validate:"required"`
+	Address   string `mapstructure:"address" validate:"required"`
+	Path      string `mapstructure:"path" validate:"required"`
 }
 
 // Network defines metadata about a blockchain network.
