@@ -192,7 +192,7 @@ func getValidatorsV1(path string) ([]Validator, error) {
 }
 
 func getValidatorsV2(path string) ([]Validator, error) {
-	path, err := url.JoinPath(path, "stake/validator-set")
+	path, err := url.JoinPath(path, "stake/validators-set")
 	if err != nil {
 		return nil, err
 	}
