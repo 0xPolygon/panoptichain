@@ -382,7 +382,11 @@ func (o *HeimdallCheckpointObserver) Notify(ctx context.Context, m Message) {
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to get checkpoint timestamp")
 	}
-	seconds := m.Time().Sub(time.Unix(timestamp, 0)).Seconds()
+
+	var seconds float64
+	if timestamp != 0 {
+		seconds = m.Time().Sub(time.Unix(timestamp, 0)).Seconds()
+	}
 
 	startBlock, err := checkpoint.StartBlock.Float64()
 	if err != nil {
@@ -402,7 +406,7 @@ func (o *HeimdallCheckpointObserver) Notify(ctx context.Context, m Message) {
 	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(startBlock))
 	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(endBlock))
 	o.id.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(id))
-	o.time.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(seconds))
+	o.time.WithLabelValues(m.Network().GetName(), m.Provider()).Set(seconds)
 }
 
 func (o *HeimdallCheckpointObserver) Register(eb *EventBus) {
