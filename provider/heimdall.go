@@ -253,7 +253,12 @@ func (h *HeimdallProvider) fillRange(start uint64) {
 }
 
 func (h *HeimdallProvider) getHeimdallMilestoneCount() (*big.Int, error) {
-	path, err := url.JoinPath(h.heimdallURL, "milestone/count")
+	milestonePath := "milestone"
+	if h.version == 2 {
+		milestonePath = "milestones"
+	}
+
+	path, err := url.JoinPath(h.heimdallURL, milestonePath, "count")
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone count path")
 		return nil, err
@@ -292,7 +297,12 @@ func (h *HeimdallProvider) refreshMilestone() error {
 		return err
 	}
 
-	path, err := url.JoinPath(h.heimdallURL, "milestone", count.String())
+	milestonePath := "milestone"
+	if h.version == 2 {
+		milestonePath = "milestones"
+	}
+
+	path, err := url.JoinPath(h.heimdallURL, milestonePath, count.String())
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone path")
 		return err
