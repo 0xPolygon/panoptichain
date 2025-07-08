@@ -395,7 +395,7 @@ func (h *HeimdallProvider) refreshMissedBlockProposal() error {
 }
 
 func (h *HeimdallProvider) refreshSpan() error {
-	url, err := url.JoinPath(h.heimdallURL, "bor", "span", "latest")
+	url, err := url.JoinPath(h.heimdallURL, "bor", "spans", "latest")
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get Heimdall latest span path")
 		return err
