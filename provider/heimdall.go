@@ -272,15 +272,13 @@ func (h *HeimdallProvider) refreshMilestone() error {
 		return err
 	}
 
-	var milestone observer.HeimdallMilestone
 	var v2 observer.HeimdallMilestoneV2
 	if err = api.GetJSON(path, &v2); err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone")
 		return err
 	}
 
-	milestone = v2.Milestone
-	h.milestone = &milestone
+	h.milestone = &v2.Milestone
 	h.milestone.PrevCount = h.prevMilestoneCount
 	h.milestone.Count = count.Int64()
 
