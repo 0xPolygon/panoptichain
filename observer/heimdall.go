@@ -4,14 +4,12 @@ package observer
 
 import (
 	"context"
-	"encoding/json"
 	"math/big"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/0xPolygon/panoptichain/api"
-	"github.com/0xPolygon/panoptichain/log"
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
@@ -214,17 +212,17 @@ func (o *HeimdallSignatureCountObserver) GetCollectors() []prometheus.Collector 
 }
 
 type HeimdallMilestoneCount struct {
-	Count json.Number `json:"count"`
+	Count uint64 `json:"count,string"`
 }
 
 type HeimdallMilestone struct {
-	Proposer    string      `json:"proposer"`
-	StartBlock  json.Number `json:"start_block"`
-	EndBlock    json.Number `json:"end_block"`
-	Hash        string      `json:"hash"`
-	BorChainID  json.Number `json:"bor_chain_id"`
-	MilestoneID string      `json:"milestone_id"`
-	Timestamp   json.Number `json:"timestamp"`
+	Proposer    string `json:"proposer"`
+	StartBlock  uint64 `json:"start_block,string"`
+	EndBlock    uint64 `json:"end_block,string"`
+	Hash        string `json:"hash"`
+	BorChainID  uint64 `json:"bor_chain_id,string"`
+	MilestoneID string `json:"milestone_id"`
+	Timestamp   int64  `json:"timestamp,string"`
 	Count       int64
 	PrevCount   int64
 }
@@ -245,30 +243,18 @@ type MilestoneObserver struct {
 func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 	milestone := m.Data().(*HeimdallMilestone)
 
-	timestamp, err := milestone.Timestamp.Int64()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to get milestone timestamp")
-	}
-	seconds := time.Now().Sub(time.Unix(timestamp, 0)).Seconds()
-
-	startBlock, err := milestone.StartBlock.Float64()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to get milestone start block")
-	}
-
-	endBlock, err := milestone.EndBlock.Float64()
-	if err != nil {
-		log.Error().Err(err).Msg("Failed to get milestone end block")
-	}
+	seconds := time.Now().Sub(time.Unix(milestone.Timestamp, 0)).Seconds()
+	startBlock := milestone.StartBlock
+	endBlock := milestone.EndBlock
 
 	o.count.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.Count))
 	o.time.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(seconds))
-	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(startBlock)
-	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(endBlock)
+	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.StartBlock))
+	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.EndBlock))
 
 	if milestone.Count > milestone.PrevCount {
 		o.observed.WithLabelValues(m.Network().GetName(), m.Provider()).Inc()
-		o.blockRange.WithLabelValues(m.Network().GetName(), m.Provider()).Observe(endBlock - startBlock)
+		o.blockRange.WithLabelValues(m.Network().GetName(), m.Provider()).Observe(float64(endBlock - startBlock))
 	}
 }
 

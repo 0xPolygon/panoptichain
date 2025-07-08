@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -247,12 +246,7 @@ func (h *HeimdallProvider) getHeimdallMilestoneCount() (*big.Int, error) {
 		return nil, err
 	}
 
-	c, ok := new(big.Int).SetString(count.Count.String(), 10)
-	if !ok {
-		return nil, errors.New("failed to parse milestone count")
-	}
-
-	return c, nil
+	return new(big.Int).SetUint64(count.Count), nil
 }
 
 func (h *HeimdallProvider) refreshMilestone() error {
