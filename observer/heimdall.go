@@ -16,12 +16,6 @@ import (
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
-// HeimdallResult wraps responses payloads in Heimdall v1.
-type HeimdallResult[T any] struct {
-	Height string `json:"height"`
-	Result T      `json:"result"`
-}
-
 type PreCommit struct {
 	Type    uint64 `json:"type"`
 	Height  string `json:"height"`
@@ -223,8 +217,6 @@ type HeimdallMilestoneCount struct {
 	Count json.Number `json:"count"`
 }
 
-type HeimdallMilestoneCountV1 HeimdallResult[HeimdallMilestoneCount]
-
 type HeimdallMilestone struct {
 	Proposer    string      `json:"proposer"`
 	StartBlock  json.Number `json:"start_block"`
@@ -236,8 +228,6 @@ type HeimdallMilestone struct {
 	Count       int64
 	PrevCount   int64
 }
-
-type HeimdallMilestoneV1 HeimdallResult[HeimdallMilestone]
 
 type HeimdallMilestoneV2 struct {
 	Milestone HeimdallMilestone `json:"milestone"`
@@ -351,16 +341,14 @@ func (o *HeimdallMissedBlockProposalObserver) GetCollectors() []prometheus.Colle
 }
 
 type HeimdallCheckpoint struct {
-	ID         json.Number `json:"id"`
-	StartBlock json.Number `json:"start_block"`
-	EndBlock   json.Number `json:"end_block"`
-	RootHash   string      `json:"root_hash"`
-	BorChainID json.Number `json:"bor_chain_id"`
-	Timestamp  json.Number `json:"timestamp"`
-	Proposer   string      `json:"proposer"`
+	ID         uint64 `json:"id,string"`
+	StartBlock uint64 `json:"start_block,string"`
+	EndBlock   uint64 `json:"end_block,string"`
+	RootHash   string `json:"root_hash"`
+	BorChainID uint64 `json:"bor_chain_id,string"`
+	Timestamp  uint64 `json:"timestamp,string"`
+	Proposer   string `json:"proposer"`
 }
-
-type HeimdallCheckpointV1 HeimdallResult[HeimdallCheckpoint]
 
 type HeimdallCheckpointV2 struct {
 	Checkpoint HeimdallCheckpoint `json:"checkpoint"`
@@ -374,38 +362,16 @@ type HeimdallCheckpointObserver struct {
 }
 
 func (o *HeimdallCheckpointObserver) Notify(ctx context.Context, m Message) {
-	logger := NewLogger(o, m)
-
 	checkpoint := m.Data().(*HeimdallCheckpoint)
 
-	timestamp, err := checkpoint.Timestamp.Int64()
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get checkpoint timestamp")
-	}
-
 	var seconds float64
-	if timestamp != 0 {
-		seconds = m.Time().Sub(time.Unix(timestamp, 0)).Seconds()
+	if checkpoint.Timestamp != 0 {
+		seconds = m.Time().Sub(time.Unix(int64(checkpoint.Timestamp), 0)).Seconds()
 	}
 
-	startBlock, err := checkpoint.StartBlock.Float64()
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get checkpoint start block")
-	}
-
-	endBlock, err := checkpoint.EndBlock.Float64()
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get checkpoint end block")
-	}
-
-	id, err := checkpoint.ID.Float64()
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get checkpoint id")
-	}
-
-	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(startBlock))
-	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(endBlock))
-	o.id.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(id))
+	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(checkpoint.StartBlock))
+	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(checkpoint.EndBlock))
+	o.id.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(checkpoint.ID))
 	o.time.WithLabelValues(m.Network().GetName(), m.Provider()).Set(seconds)
 }
 
@@ -422,26 +388,24 @@ func (o *HeimdallCheckpointObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.startBlock, o.endBlock, o.id, o.time}
 }
 
-type HeimdallCurrentCheckpointProposerV1 HeimdallResult[api.ValidatorV1]
-
-type HeimdallCurrentCheckpointProposerV2 struct {
-	Validator api.ValidatorV2 `json:"validator"`
+type HeimdallCurrentCheckpointProposer struct {
+	Validator api.Validator `json:"validator"`
 }
 
 type HeimdallMissedCheckpointProposalObserver struct {
-	missedCheckpointProposal *prometheus.CounterVec
+	counter *prometheus.CounterVec
 }
 
 func (o *HeimdallMissedCheckpointProposalObserver) Notify(ctx context.Context, m Message) {
 	proposers := m.Data().([]string)
 	for _, proposer := range proposers {
-		o.missedCheckpointProposal.WithLabelValues(m.Network().GetName(), m.Provider(), proposer).Inc()
+		o.counter.WithLabelValues(m.Network().GetName(), m.Provider(), proposer).Inc()
 	}
 }
 
 func (o *HeimdallMissedCheckpointProposalObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.MissedCheckpointProposal, o)
-	o.missedCheckpointProposal = metrics.NewCounter(
+	o.counter = metrics.NewCounter(
 		metrics.Heimdall,
 		"missed_checkpoint_proposal",
 		"Missed checkpoint proposals",
@@ -450,63 +414,16 @@ func (o *HeimdallMissedCheckpointProposalObserver) Register(eb *EventBus) {
 }
 
 func (o *HeimdallMissedCheckpointProposalObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.missedCheckpointProposal}
+	return []prometheus.Collector{o.counter}
 }
 
-type ValidatorsV1 HeimdallResult[[]api.ValidatorV1]
-
-type HeimdallMissedMilestoneProposal struct {
-	missedMilestoneProposal *prometheus.CounterVec
-}
-
-func (o *HeimdallMissedMilestoneProposal) Notify(ctx context.Context, m Message) {
-	proposers := m.Data().([]string)
-	for _, proposer := range proposers {
-		o.missedMilestoneProposal.WithLabelValues(m.Network().GetName(), m.Provider(), proposer).Inc()
-	}
-}
-
-func (o *HeimdallMissedMilestoneProposal) Register(eb *EventBus) {
-	eb.Subscribe(topics.MissedMilestoneProposal, o)
-	o.missedMilestoneProposal = metrics.NewCounter(
-		metrics.Heimdall,
-		"missed_milestone_proposal",
-		"Missed milestone proposals",
-		"signer_address",
-	)
-}
-
-func (o *HeimdallMissedMilestoneProposal) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.missedMilestoneProposal}
-}
-
-type HeimdallSpan interface {
-	GetID() uint64
-	GetStartBlock() uint64
-	GetEndBlock() uint64
-}
-
-type HeimdallSpanV1 HeimdallResult[struct {
-	SpanID     uint64 `json:"span_id"`
-	StartBlock uint64 `json:"start_block"`
-	EndBlock   uint64 `json:"end_block"`
-}]
-
-func (h HeimdallSpanV1) GetID() uint64         { return h.Result.SpanID }
-func (h HeimdallSpanV1) GetStartBlock() uint64 { return h.Result.StartBlock }
-func (h HeimdallSpanV1) GetEndBlock() uint64   { return h.Result.EndBlock }
-
-type HeimdallSpanV2 struct {
+type HeimdallSpan struct {
 	Span struct {
 		ID         uint64 `json:"id,string"`
 		StartBlock uint64 `json:"start_block,string"`
 		EndBlock   uint64 `json:"end_block,string"`
 	} `json:"span"`
 }
-
-func (h HeimdallSpanV2) GetID() uint64         { return h.Span.ID }
-func (h HeimdallSpanV2) GetStartBlock() uint64 { return h.Span.StartBlock }
-func (h HeimdallSpanV2) GetEndBlock() uint64   { return h.Span.EndBlock }
 
 type HeimdallSpanObserver struct {
 	spanID     *prometheus.GaugeVec
@@ -525,9 +442,9 @@ func (o *HeimdallSpanObserver) Register(eb *EventBus) {
 func (o *HeimdallSpanObserver) Notify(ctx context.Context, m Message) {
 	span := m.Data().(HeimdallSpan)
 
-	o.spanID.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.GetID()))
-	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.GetStartBlock()))
-	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.GetEndBlock()))
+	o.spanID.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.Span.ID))
+	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.Span.StartBlock))
+	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.Span.EndBlock))
 }
 
 func (o *HeimdallSpanObserver) GetCollectors() []prometheus.Collector {

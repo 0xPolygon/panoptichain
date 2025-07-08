@@ -19,7 +19,6 @@ const (
 	HeimdallMissedBlockProposal                        // observer.HeimdallMissedBlockProposal
 	Checkpoint                                         // *observer.HeimdallCheckpoint
 	MissedCheckpointProposal                           // []string
-	MissedMilestoneProposal                            // []string
 	TransactionPool                                    // *observer.TransactionPool
 	StolenBlock                                        // *types.Block
 	HashDivergence                                     // *observer.HashDivergence

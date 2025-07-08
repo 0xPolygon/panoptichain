@@ -23,32 +23,31 @@ func _() {
 	_ = x[HeimdallMissedBlockProposal-12]
 	_ = x[Checkpoint-13]
 	_ = x[MissedCheckpointProposal-14]
-	_ = x[MissedMilestoneProposal-15]
-	_ = x[TransactionPool-16]
-	_ = x[StolenBlock-17]
-	_ = x[HashDivergence-18]
-	_ = x[System-19]
-	_ = x[RefreshStateTime-20]
-	_ = x[ZkEVMBatches-21]
-	_ = x[ExitRoots-22]
-	_ = x[BridgeEvent-23]
-	_ = x[ClaimEvent-24]
-	_ = x[DepositCounts-25]
-	_ = x[BridgeEventTimes-26]
-	_ = x[ClaimEventTimes-27]
-	_ = x[RollupManager-28]
-	_ = x[Span-29]
-	_ = x[TimeToMine-30]
-	_ = x[AccountBalances-31]
-	_ = x[TrustedBatch-32]
-	_ = x[ExchangeRate-33]
-	_ = x[TimeToFinalized-34]
-	_ = x[FinalizedHeight-35]
+	_ = x[TransactionPool-15]
+	_ = x[StolenBlock-16]
+	_ = x[HashDivergence-17]
+	_ = x[System-18]
+	_ = x[RefreshStateTime-19]
+	_ = x[ZkEVMBatches-20]
+	_ = x[ExitRoots-21]
+	_ = x[BridgeEvent-22]
+	_ = x[ClaimEvent-23]
+	_ = x[DepositCounts-24]
+	_ = x[BridgeEventTimes-25]
+	_ = x[ClaimEventTimes-26]
+	_ = x[RollupManager-27]
+	_ = x[Span-28]
+	_ = x[TimeToMine-29]
+	_ = x[AccountBalances-30]
+	_ = x[TrustedBatch-31]
+	_ = x[ExchangeRate-32]
+	_ = x[TimeToFinalized-33]
+	_ = x[FinalizedHeight-34]
 }
 
-const _ObservableTopic_name = "NewEVMBlockBorStateSyncBlockIntervalCheckpointSignaturesValidatorWalletHeimdallBlockIntervalNewHeimdallBlockMilestoneReorgSensorBlocksSensorBlockEventsBorMissedBlockProposalHeimdallMissedBlockProposalCheckpointMissedCheckpointProposalMissedMilestoneProposalTransactionPoolStolenBlockHashDivergenceSystemRefreshStateTimeZkEVMBatchesExitRootsBridgeEventClaimEventDepositCountsBridgeEventTimesClaimEventTimesRollupManagerSpanTimeToMineAccountBalancesTrustedBatchExchangeRateTimeToFinalizedFinalizedHeight"
+const _ObservableTopic_name = "NewEVMBlockBorStateSyncBlockIntervalCheckpointSignaturesValidatorWalletHeimdallBlockIntervalNewHeimdallBlockMilestoneReorgSensorBlocksSensorBlockEventsBorMissedBlockProposalHeimdallMissedBlockProposalCheckpointMissedCheckpointProposalTransactionPoolStolenBlockHashDivergenceSystemRefreshStateTimeZkEVMBatchesExitRootsBridgeEventClaimEventDepositCountsBridgeEventTimesClaimEventTimesRollupManagerSpanTimeToMineAccountBalancesTrustedBatchExchangeRateTimeToFinalizedFinalizedHeight"
 
-var _ObservableTopic_index = [...]uint16{0, 11, 23, 36, 56, 71, 92, 108, 117, 122, 134, 151, 173, 200, 210, 234, 257, 272, 283, 297, 303, 319, 331, 340, 351, 361, 374, 390, 405, 418, 422, 432, 447, 459, 471, 486, 501}
+var _ObservableTopic_index = [...]uint16{0, 11, 23, 36, 56, 71, 92, 108, 117, 122, 134, 151, 173, 200, 210, 234, 249, 260, 274, 280, 296, 308, 317, 328, 338, 351, 367, 382, 395, 399, 409, 424, 436, 448, 463, 478}
 
 func (i ObservableTopic) String() string {
 	if i < 0 || i >= ObservableTopic(len(_ObservableTopic_index)-1) {
