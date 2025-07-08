@@ -418,11 +418,13 @@ func (o *HeimdallMissedCheckpointProposalObserver) GetCollectors() []prometheus.
 }
 
 type HeimdallSpan struct {
-	Span struct {
-		ID         uint64 `json:"id,string"`
-		StartBlock uint64 `json:"start_block,string"`
-		EndBlock   uint64 `json:"end_block,string"`
-	} `json:"span"`
+	ID         uint64 `json:"id,string"`
+	StartBlock uint64 `json:"start_block,string"`
+	EndBlock   uint64 `json:"end_block,string"`
+}
+
+type HeimdallSpanV2 struct {
+	Span HeimdallSpan `json:"span"`
 }
 
 type HeimdallSpanObserver struct {
@@ -440,11 +442,11 @@ func (o *HeimdallSpanObserver) Register(eb *EventBus) {
 }
 
 func (o *HeimdallSpanObserver) Notify(ctx context.Context, m Message) {
-	span := m.Data().(HeimdallSpan)
+	span := m.Data().(*HeimdallSpan)
 
-	o.spanID.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.Span.ID))
-	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.Span.StartBlock))
-	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.Span.EndBlock))
+	o.spanID.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.ID))
+	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.StartBlock))
+	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.EndBlock))
 }
 
 func (o *HeimdallSpanObserver) GetCollectors() []prometheus.Collector {

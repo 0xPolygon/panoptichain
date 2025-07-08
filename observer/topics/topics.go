@@ -32,7 +32,7 @@ const (
 	BridgeEventTimes                                   // *observer.BridgeEventTimes
 	ClaimEventTimes                                    // *observer.ClaimEventTimes
 	RollupManager                                      // *observer.RollupManager
-	Span                                               // observer.HeimdallSpan
+	Span                                               // *observer.HeimdallSpan
 	TimeToMine                                         // float64
 	AccountBalances                                    // observer.AccountBalances
 	TrustedBatch                                       // *zkevmtypes.Batch
