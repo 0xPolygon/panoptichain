@@ -1,4 +1,4 @@
-FROM golang:1.21-bullseye AS builder
+FROM golang:1.24-bullseye AS builder
 WORKDIR /app
 COPY . .
 ENV CGO_ENABLED=0 GOOS=linux
