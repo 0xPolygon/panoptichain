@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	zkevmtypes "github.com/0xPolygonHermez/zkevm-node/jsonrpc/types"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -65,7 +64,7 @@ type RPCProvider struct {
 
 	// zkEVM
 	batches        observer.ZkEVMBatches
-	trustedBatches []*zkevmtypes.Batch
+	trustedBatches []*util.Batch
 
 	globalExitRoot   *observer.ExitRoot
 	mainnetExitRoot  *observer.ExitRoot
@@ -649,7 +648,13 @@ func (r *RPCProvider) getBlockByNumber(ctx context.Context, n *big.Int, c *ethcl
 		txs[i] = tx.tx
 	}
 
-	return types.NewBlockWithHeader(head).WithBody(txs, uncles).WithWithdrawals(block.Withdrawals), nil
+	return types.NewBlockWithHeader(head).WithBody(
+		types.Body{
+			Transactions: txs,
+			Uncles:       uncles,
+			Withdrawals:  block.Withdrawals,
+		},
+	), nil
 }
 
 // fillRange pulls all of the blocks between the start and the current head.
@@ -949,7 +954,7 @@ func (r *RPCProvider) refreshBatches(ctx context.Context, c *ethclient.Client) {
 
 	r.refreshBatch(ctx, c, "zkevm_batchNumber", &r.batches.TrustedBatch)
 	for i := prev + 1; i <= r.batches.TrustedBatch.Number && prev != 0; i++ {
-		var batch zkevmtypes.Batch
+		var batch util.Batch
 
 		err := c.Client().CallContext(ctx, &batch, "zkevm_getBatchByNumber", i)
 		if err != nil {

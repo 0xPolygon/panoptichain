@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"cloud.google.com/go/datastore"
+	"github.com/0xPolygon/polygon-cli/p2p/database"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/maticnetwork/polygon-cli/p2p/database"
 	"github.com/rs/zerolog"
 	"google.golang.org/api/iterator"
 

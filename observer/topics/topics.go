@@ -35,7 +35,7 @@ const (
 	Span                                               // *observer.HeimdallSpan
 	TimeToMine                                         // float64
 	AccountBalances                                    // observer.AccountBalances
-	TrustedBatch                                       // *zkevmtypes.Batch
+	TrustedBatch                                       // *util.Batch
 	ExchangeRate                                       // observer.ExchangeRate
 	TimeToFinalized                                    // uint64
 	FinalizedHeight                                    // uint64

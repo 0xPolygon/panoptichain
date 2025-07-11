@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/datastore"
+	"github.com/0xPolygon/polygon-cli/p2p/database"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/maticnetwork/polygon-cli/p2p/database"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/0xPolygon/panoptichain/api"

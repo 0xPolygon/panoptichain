@@ -9,7 +9,6 @@ import (
 	"math/big"
 	"time"
 
-	zkevmtypes "github.com/0xPolygonHermez/zkevm-node/jsonrpc/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
@@ -19,6 +18,7 @@ import (
 	"github.com/0xPolygon/panoptichain/contracts"
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/util"
 )
 
 type EmptyBlockObserver struct {
@@ -1571,7 +1571,7 @@ type TrustedBatchObserver struct {
 }
 
 func (o *TrustedBatchObserver) Notify(ctx context.Context, m Message) {
-	batch := m.Data().(*zkevmtypes.Batch)
+	batch := m.Data().(*util.Batch)
 
 	length := float64(len(batch.Transactions))
 	o.length.WithLabelValues(m.Network().GetName(), m.Provider()).Observe(length)
