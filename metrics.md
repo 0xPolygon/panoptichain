@@ -452,19 +452,6 @@ Variable Labels:
 - provider
 - signer_address
 
-## HeimdallMissedMilestoneProposal
-
-
-### panoptichain_heimdall_missed_milestone_proposal
-Missed milestone proposals
-
-Metric Type: CounterVec
-
-Variable Labels:
-- network
-- provider
-- signer_address
-
 ## HeimdallSignatureCountObserver
 
 

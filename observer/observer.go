@@ -156,7 +156,6 @@ var observersMap = map[string]Observer{
 	"heimdall_checkpoint":                 new(HeimdallCheckpointObserver),
 	"heimdall_missed_block_proposal":      new(HeimdallMissedBlockProposalObserver),
 	"heimdall_missed_checkpoint_proposal": new(HeimdallMissedCheckpointProposalObserver),
-	"heimdall_missed_milestone_proposal":  new(HeimdallMissedMilestoneProposal),
 	"heimdall_signature_count":            new(HeimdallSignatureCountObserver),
 	"milestone":                           new(MilestoneObserver),
 	"missed_block_proposal":               new(MissedBlockProposalObserver),

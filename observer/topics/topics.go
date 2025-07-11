@@ -19,7 +19,6 @@ const (
 	HeimdallMissedBlockProposal                        // observer.HeimdallMissedBlockProposal
 	Checkpoint                                         // *observer.HeimdallCheckpoint
 	MissedCheckpointProposal                           // []string
-	MissedMilestoneProposal                            // []string
 	TransactionPool                                    // *observer.TransactionPool
 	StolenBlock                                        // *types.Block
 	HashDivergence                                     // *observer.HashDivergence
@@ -33,7 +32,7 @@ const (
 	BridgeEventTimes                                   // *observer.BridgeEventTimes
 	ClaimEventTimes                                    // *observer.ClaimEventTimes
 	RollupManager                                      // *observer.RollupManager
-	Span                                               // observer.HeimdallSpan
+	Span                                               // *observer.HeimdallSpan
 	TimeToMine                                         // float64
 	AccountBalances                                    // observer.AccountBalances
 	TrustedBatch                                       // *zkevmtypes.Batch
