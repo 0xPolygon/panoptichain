@@ -556,11 +556,7 @@ type rpcBlock struct {
 	Withdrawals  []*types.Withdrawal `json:"withdrawals,omitempty"`
 }
 
-// getBlockByNumber gets the block given a block number. This is lifted from
-// https://github.com/ethereum/go-ethereum/blob/master/ethclient/ethclient.go
-// with the change that unsupported transactions are treated as legacy
-// transactions. This allows observation of chains that use transaction types
-// that are not supported by Geth.
+// getBlockByNumber gets the block given a block number.
 func (r *RPCProvider) getBlockByNumber(ctx context.Context, n *big.Int, c *ethclient.Client) (*types.Block, error) {
 	var raw json.RawMessage
 	err := c.Client().Call(&raw, "eth_getBlockByNumber", hexutil.EncodeBig(n), true)
@@ -568,6 +564,26 @@ func (r *RPCProvider) getBlockByNumber(ctx context.Context, n *big.Int, c *ethcl
 		return nil, err
 	}
 
+	return r.getBlock(ctx, raw, c)
+}
+
+// getBlockByHash gets the block given a block hash.
+func (r *RPCProvider) getBlockByHash(ctx context.Context, hash common.Hash, c *ethclient.Client) (*types.Block, error) {
+	var raw json.RawMessage
+	err := c.Client().Call(&raw, "eth_getBlockByHash", hash, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return r.getBlock(ctx, raw, c)
+}
+
+// getBlock marshals a block given the json.RawMessage. This is lifted from
+// https://github.com/ethereum/go-ethereum/blob/master/ethclient/ethclient.go
+// with the change that unsupported transactions are treated as legacy
+// transactions. This allows observation of chains that use transaction types
+// that are not supported by Geth.
+func (r *RPCProvider) getBlock(ctx context.Context, raw json.RawMessage, c *ethclient.Client) (*types.Block, error) {
 	var head *types.Header
 	if err := json.Unmarshal(raw, &head); err != nil {
 		return nil, err
@@ -1133,7 +1149,7 @@ func (r *RPCProvider) refreshBridgeEvents(ctx context.Context, c *ethclient.Clie
 		event := iter.Event
 		r.bridgeEvents = append(r.bridgeEvents, event)
 
-		block, err := c.BlockByHash(ctx, event.Raw.BlockHash)
+		block, err := r.getBlockByHash(ctx, event.Raw.BlockHash, c)
 		if err != nil {
 			r.logger.Error().Err(err).Msg("Failed to get block by hash")
 			continue
@@ -1159,7 +1175,7 @@ func (r *RPCProvider) refreshClaimEvents(ctx context.Context, c *ethclient.Clien
 		event := iter.Event
 		r.claimEvents = append(r.claimEvents, event)
 
-		block, err := c.BlockByHash(ctx, event.Raw.BlockHash)
+		block, err := r.getBlockByHash(ctx, event.Raw.BlockHash, c)
 		if err != nil {
 			r.logger.Error().Err(err).Msg("Failed to get block by hash")
 			continue
