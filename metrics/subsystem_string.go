@@ -12,11 +12,12 @@ func _() {
 	_ = x[Sensor-1]
 	_ = x[Heimdall-2]
 	_ = x[System-3]
+	_ = x[SPN-4]
 }
 
-const _Subsystem_name = "RPCSensorHeimdallSystem"
+const _Subsystem_name = "RPCSensorHeimdallSystemSPN"
 
-var _Subsystem_index = [...]uint8{0, 3, 9, 17, 23}
+var _Subsystem_index = [...]uint8{0, 3, 9, 17, 23, 26}
 
 func (i Subsystem) String() string {
 	if i < 0 || i >= Subsystem(len(_Subsystem_index)-1) {

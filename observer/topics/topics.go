@@ -39,4 +39,5 @@ const (
 	ExchangeRate                                       // observer.ExchangeRate
 	TimeToFinalized                                    // uint64
 	FinalizedHeight                                    // uint64
+	UsageSummary                                       // *observer.UsageSummary
 )

@@ -24,12 +24,13 @@ type Runner struct {
 // Providers encloses the different providers configurations. Providers are
 // responsible for fetching data.
 type Providers struct {
-	RPCs              []RPC              `mapstructure:"rpc" validate:"dive"`
-	HeimdallEndpoints []HeimdallEndpoint `mapstructure:"heimdall" validate:"dive"`
-	SensorNetworks    []SensorNetwork    `mapstructure:"sensor_network" validate:"dive"`
-	HashDivergence    *HashDivergence    `mapstructure:"hash_divergence"`
-	System            *System            `mapstructure:"system"`
-	ExchangeRates     *ExchangeRates     `mapstructure:"exchange_rates"`
+	RPCs                   []RPC                   `mapstructure:"rpc" validate:"dive"`
+	HeimdallEndpoints      []HeimdallEndpoint      `mapstructure:"heimdall" validate:"dive"`
+	SensorNetworks         []SensorNetwork         `mapstructure:"sensor_network" validate:"dive"`
+	SuccinctProverNetworks []SuccinctProverNetwork `mapstructure:"succinct_prover_network" validate:"dive"`
+	HashDivergence         *HashDivergence         `mapstructure:"hash_divergence"`
+	System                 *System                 `mapstructure:"system"`
+	ExchangeRates          *ExchangeRates          `mapstructure:"exchange_rates"`
 }
 
 // RPC defines the various RPC providers that will be monitored.
@@ -127,6 +128,17 @@ type SensorNetwork struct {
 	Project  string         `mapstructure:"project" validate:"required"`
 	Database string         `mapstructure:"database"`
 	Interval *time.Duration `mapstructure:"interval"`
+}
+
+// SuccinctProverNetwork configures the succinct prover provider. This fetches data from
+// Succinct Prover Network.
+type SuccinctProverNetwork struct {
+	Name       string         `mapstructure:"name" validate:"required"`
+	URL        string         `mapstructure:"url" validate:"url,required"`
+	APIKey     string         `mapstructure:"api_key" validate:"required"`
+	Label      string         `mapstructure:"label" validate:"required"`
+	Interval   *time.Duration `mapstructure:"interval"`
+	Requesters []string       `mapsturcture:"requesters"`
 }
 
 // Observers defines which observers should be enabled or disabled. Observers

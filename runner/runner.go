@@ -90,6 +90,16 @@ func Init(ctx context.Context) error {
 		providers = append(providers, p)
 	}
 
+	for _, p := range config.Config().Providers.SuccinctProverNetworks {
+		n, err := network.GetNetworkByName(p.Name)
+		if err != nil {
+			return err
+		}
+
+		p := provider.NewProverNetworkProvider(n, eb, p)
+		providers = append(providers, p)
+	}
+
 	if system := config.Config().Providers.System; system != nil {
 		p := provider.NewSystemProvider(eb, provider.GetInterval(system.Interval))
 		providers = append(providers, p)
