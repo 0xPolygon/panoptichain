@@ -133,12 +133,13 @@ type SensorNetwork struct {
 // SuccinctProverNetwork configures the succinct prover provider. This fetches data from
 // Succinct Prover Network.
 type SuccinctProverNetwork struct {
-	Name       string         `mapstructure:"name" validate:"required"`
-	URL        string         `mapstructure:"url" validate:"url,required"`
-	APIKey     string         `mapstructure:"api_key" validate:"required"`
-	Label      string         `mapstructure:"label" validate:"required"`
-	Interval   *time.Duration `mapstructure:"interval"`
-	Requesters []string       `mapsturcture:"requesters"`
+	Name      string         `mapstructure:"name" validate:"required"`
+	URL       string         `mapstructure:"url" validate:"url,required"`
+	APIKey    string         `mapstructure:"api_key" validate:"required"`
+	Label     string         `mapstructure:"label" validate:"required"`
+	Interval  *time.Duration `mapstructure:"interval"`
+	Requester *string        `mapsturcture:"requester"`
+	Fulfiller *string        `mapstructure:"fulfiller"`
 }
 
 // Observers defines which observers should be enabled or disabled. Observers
