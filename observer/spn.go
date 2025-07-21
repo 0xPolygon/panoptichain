@@ -2,8 +2,8 @@ package observer
 
 import (
 	"context"
-	"strconv"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/0xPolygon/panoptichain/metrics"
@@ -16,64 +16,49 @@ type UsageSummary struct {
 	Requester string
 }
 
-type SPNUsageSummaryObserver struct {
-	total    *prometheus.GaugeVec
-	reserved *prometheus.GaugeVec
-	onDemand *prometheus.GaugeVec
+type ProofRequestObserver struct {
+	gas_limit   *prometheus.HistogramVec
+	gas_used    *prometheus.HistogramVec
+	cycle_limit *prometheus.HistogramVec
+	cycles      *prometheus.HistogramVec
 }
 
-func (o *SPNUsageSummaryObserver) Register(eb *EventBus) {
-	eb.Subscribe(topics.UsageSummary, o)
+func (o *ProofRequestObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.ProofRequest, o)
 
-	o.total = metrics.NewGauge(
+	o.gas_limit = metrics.NewHistogram(
 		metrics.SPN,
-		"total_gas",
-		"The total gas",
+		"gas_limit",
+		"The gas limit",
+		newExponentialBuckets(10, 9),
 		"requester",
+		"fulfiller",
 	)
-
-	o.reserved = metrics.NewGauge(
+	o.gas_used = metrics.NewHistogram(
 		metrics.SPN,
-		"reserved_gas",
-		"The reserved gas",
+		"gas_used",
+		"The gas used",
+		newExponentialBuckets(10, 9),
 		"requester",
-	)
-
-	o.onDemand = metrics.NewGauge(
-		metrics.SPN,
-		"on_demand_gas",
-		"The on-demand gas",
-		"requester",
+		"fulfiller",
 	)
 }
 
-func (o *SPNUsageSummaryObserver) Notify(ctx context.Context, msg Message) {
-	logger := NewLogger(o, msg)
+func (o *ProofRequestObserver) Notify(ctx context.Context, msg Message) {
+	// logger := NewLogger(o, msg)
 
-	usageSummary := msg.Data().(*UsageSummary)
-
-	total, err := strconv.ParseFloat(usageSummary.TotalGas, 64)
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to parse total gas")
-	} else {
-		o.total.WithLabelValues(msg.Network().GetName(), msg.Provider(), usageSummary.Requester).Set(total)
+	proofRequest := msg.Data().(*proto.ProofRequest)
+	labels := []string{
+		msg.Network().GetName(),
+		msg.Provider(),
+		common.BytesToAddress(proofRequest.Requester).Hex(),
+		common.BytesToAddress(proofRequest.Fulfiller).Hex(),
 	}
 
-	reserved, err := strconv.ParseFloat(usageSummary.ReservedGas, 64)
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to parse reserved gas")
-	} else {
-		o.reserved.WithLabelValues(msg.Network().GetName(), msg.Provider(), usageSummary.Requester).Set(reserved)
-	}
-
-	onDemand, err := strconv.ParseFloat(usageSummary.OnDemandGas, 64)
-	if err != nil {
-		logger.Error().Err(err).Msg("Failed to parse on-demand gas")
-	} else {
-		o.onDemand.WithLabelValues(msg.Network().GetName(), msg.Provider(), usageSummary.Requester).Set(onDemand)
-	}
+	gl := float64(proofRequest.GasLimit)
+	o.gas_limit.WithLabelValues(labels...).Observe(gl)
 }
 
-func (o *SPNUsageSummaryObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.total, o.reserved, o.onDemand}
+func (o *ProofRequestObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.gas_limit}
 }

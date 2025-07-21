@@ -169,7 +169,7 @@ var observersMap = map[string]Observer{
 	"span":                                new(HeimdallSpanObserver),
 	"state_sync":                          new(StateSyncObserver),
 	"stolen_block":                        new(StolenBlockObserver),
-	"spn_usage_summary":                   new(SPNUsageSummaryObserver),
+	"spn_proof_request":                   new(ProofRequestObserver),
 	"system":                              new(SystemObserver),
 	"time_to_finalized":                   new(TimeToFinalizedObserver),
 	"time_to_mine":                        new(TimeToMineObserver),
