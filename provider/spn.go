@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -25,9 +26,12 @@ type SuccinctProverNetworkProvider struct {
 	interval         time.Duration
 	logger           zerolog.Logger
 	refreshStateTime *time.Duration
+	start            time.Time
 	apiKey           string
-	requesters       []string
-	usageSummaries   []*observer.UsageSummary
+	requester        *string
+	fulfiller        *string
+	proofRequests    []*proto.ProofRequest
+	seen             map[string]time.Time
 }
 
 func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg config.SuccinctProverNetwork) *SuccinctProverNetworkProvider {
@@ -39,8 +43,11 @@ func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg conf
 		interval:         GetInterval(cfg.Interval),
 		logger:           NewLogger(n, cfg.Label),
 		refreshStateTime: new(time.Duration),
+		start:            time.Now(),
 		apiKey:           cfg.APIKey,
-		requesters:       cfg.Requesters,
+		requester:        cfg.Requester,
+		fulfiller:        cfg.Fulfiller,
+		seen:             make(map[string]time.Time),
 	}
 }
 
@@ -56,55 +63,54 @@ func (r *SuccinctProverNetworkProvider) RefreshState(ctx context.Context) error 
 
 	c := proto.NewProverNetworkClient(conn)
 
-	r.refreshUsageSummaries(ctx, c)
+	r.refreshExecutedProofs(ctx, c)
 
 	return nil
 }
 
-func (r *SuccinctProverNetworkProvider) refreshUsageSummaries(ctx context.Context, c proto.ProverNetworkClient) {
-	r.usageSummaries = nil
-	now := time.Now()
+func (r *SuccinctProverNetworkProvider) refreshExecutedProofs(ctx context.Context, c proto.ProverNetworkClient) {
+	r.proofRequests = nil
 
-	for _, requester := range r.requesters {
-		req := &proto.GetRequesterUsageRequest{
-			StartTime: now.Truncate(time.Hour).Format(time.RFC3339),
-			EndTime:   now.Format(time.RFC3339),
-			Requester: requester,
-		}
+	limit := uint32(100)
 
-		ctx := metadata.AppendToOutgoingContext(ctx, "api-key", r.apiKey)
-		res, err := c.GetRequesterUsage(ctx, req)
-		if err != nil {
-			r.logger.Error().Err(err).Msg("Failed to get requester usage")
-		}
-
-		if len(res.UsageSummary) == 0 {
-			r.logger.Warn().Msg("Failed to get UsageSummary")
-			continue
-		}
-
-		if len(res.UsageSummary) > 1 {
-			r.logger.Warn().Msg("Expected only one UsageSummary")
-		}
-
-		usageSummary := &observer.UsageSummary{
-			// The first UsageSummary will be the latest hour bucket.
-			UsageSummary: res.UsageSummary[0].UsageSummary,
-			Requester:    requester,
-		}
-
-		r.usageSummaries = append(r.usageSummaries, usageSummary)
-
-		r.logger.Info().Any("request", req).Any("response", res).Send()
+	req := &proto.GetFilteredProofRequestsRequest{
+		Limit:           &limit,
+		ExecutionStatus: proto.ExecutionStatus_EXECUTED.Enum(),
 	}
 
-	r.logger.Info().Any("usage_summaries", r.usageSummaries).Send()
+	if r.requester != nil {
+		req.Requester = common.HexToAddress(*r.requester).Bytes()
+	}
+
+	if r.fulfiller != nil {
+		req.Fulfiller = common.HexToAddress(*r.fulfiller).Bytes()
+	}
+
+	res, err := c.GetFilteredProofRequests(metadata.AppendToOutgoingContext(ctx, "api-key", r.apiKey), req)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to get requester usage")
+	}
+
+	r.proofRequests = res.Requests
 }
 
 func (r *SuccinctProverNetworkProvider) PublishEvents(ctx context.Context) error {
-	for _, usageSummary := range r.usageSummaries {
-		msg := observer.NewMessage(r.network, r.label, usageSummary)
-		r.bus.Publish(ctx, topics.UsageSummary, msg)
+	for _, proof := range r.proofRequests {
+		// if time.Unix(int64(proof.CreatedAt), 0).Compare(r.start) < 0 {
+		// 	continue
+		// }
+
+		id := string(proof.RequestId)
+		if seen, ok := r.seen[id]; ok {
+			if time.Now().Sub(seen) > time.Hour {
+				delete(r.seen, id)
+			}
+			continue
+		}
+
+		msg := observer.NewMessage(r.network, r.label, proof)
+		r.bus.Publish(ctx, topics.ProofRequest, msg)
+		r.seen[id] = time.Now()
 	}
 
 	return nil
