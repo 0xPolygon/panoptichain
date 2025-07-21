@@ -160,12 +160,14 @@ options.
   ```bash
   git clone https://github.com/succinctlabs/network.git
 
-  protoc ./proto/network.proto \
+  protoc ~/src/network/proto/network.proto ~/src/network/proto/types.proto \
+    --proto_path ~/src/network/proto \
     --go_out=. \
-    --go_opt=Mproto/network.proto=./proto \
+    --go_opt=Mnetwork.proto=./proto \
+    --go_opt=Mtypes.proto=./proto \
     --go-grpc_out=. \
-    --go-grpc_opt=paths=source_relative \
-    --go-grpc_opt=Mproto/network.proto=./proto
+    --go-grpc_opt=Mnetwork.proto=./proto \
+    --go-grpc_opt=Mtypes.proto=./proto
   ```
 
 ## Architecture
