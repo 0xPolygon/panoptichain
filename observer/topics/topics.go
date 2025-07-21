@@ -4,40 +4,40 @@ package topics
 type ObservableTopic int
 
 const (
-	NewEVMBlock                 ObservableTopic = iota // *types.Block
-	BorStateSync                                       // *observer.StateSync
+	AccountBalances             ObservableTopic = iota // observer.AccountBalances
 	BlockInterval                                      // uint64
-	CheckpointSignatures                               // *observer.CheckpointSignatures
-	ValidatorWallet                                    // observer.ValidatorWalletBalances
-	HeimdallBlockInterval                              // uint64
-	NewHeimdallBlock                                   // *observer.HeimdallBlock
-	Milestone                                          // *observer.HeimdallMilestone
-	Reorg                                              // *observer.DatastoreReorg
-	SensorBlocks                                       // *observer.SensorBlocks
-	SensorBlockEvents                                  // *observer.SensorBlockEvents
 	BorMissedBlockProposal                             // observer.MissedBlockProposal
-	HeimdallMissedBlockProposal                        // observer.HeimdallMissedBlockProposal
-	Checkpoint                                         // *observer.HeimdallCheckpoint
-	MissedCheckpointProposal                           // []string
-	TransactionPool                                    // *observer.TransactionPool
-	StolenBlock                                        // *types.Block
-	HashDivergence                                     // *observer.HashDivergence
-	System                                             // *observer.System
-	RefreshStateTime                                   // *time.Duration
-	ZkEVMBatches                                       // observer.ZkEVMBatches
-	ExitRoots                                          // *observer.ExitRoots
+	BorStateSync                                       // *observer.StateSync
 	BridgeEvent                                        // *contracts.PolygonZkEVMBridgeV2BridgeEvent
-	ClaimEvent                                         // *contracts.PolygonZkEVMBridgeV2ClaimEvent
-	DepositCounts                                      // *observer.DepositCounts
 	BridgeEventTimes                                   // *observer.BridgeEventTimes
+	Checkpoint                                         // *observer.HeimdallCheckpoint
+	CheckpointSignatures                               // *observer.CheckpointSignatures
+	ClaimEvent                                         // *contracts.PolygonZkEVMBridgeV2ClaimEvent
 	ClaimEventTimes                                    // *observer.ClaimEventTimes
-	RollupManager                                      // *observer.RollupManager
-	Span                                               // *observer.HeimdallSpan
-	TimeToMine                                         // float64
-	AccountBalances                                    // observer.AccountBalances
-	TrustedBatch                                       // *util.Batch
+	DepositCounts                                      // *observer.DepositCounts
 	ExchangeRate                                       // observer.ExchangeRate
-	TimeToFinalized                                    // uint64
+	ExitRoots                                          // *observer.ExitRoots
 	FinalizedHeight                                    // uint64
-	UsageSummary                                       // *observer.UsageSummary
+	HashDivergence                                     // *observer.HashDivergence
+	HeimdallBlockInterval                              // uint64
+	HeimdallMissedBlockProposal                        // observer.HeimdallMissedBlockProposal
+	Milestone                                          // *observer.HeimdallMilestone
+	MissedCheckpointProposal                           // []string
+	NewEVMBlock                                        // *types.Block
+	NewHeimdallBlock                                   // *observer.HeimdallBlock
+	ProofRequest                                       // *proto.ProofRequest
+	RefreshStateTime                                   // *time.Duration
+	Reorg                                              // *observer.DatastoreReorg
+	RollupManager                                      // *observer.RollupManager
+	SensorBlockEvents                                  // *observer.SensorBlockEvents
+	SensorBlocks                                       // *observer.SensorBlocks
+	Span                                               // *observer.HeimdallSpan
+	StolenBlock                                        // *types.Block
+	System                                             // *observer.System
+	TimeToFinalized                                    // uint64
+	TimeToMine                                         // float64
+	TransactionPool                                    // *observer.TransactionPool
+	TrustedBatch                                       // *util.Batch
+	ValidatorWallet                                    // observer.ValidatorWalletBalances
+	ZkEVMBatches                                       // observer.ZkEVMBatches
 )
