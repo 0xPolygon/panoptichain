@@ -97,9 +97,9 @@ func (r *SuccinctProverNetworkProvider) refreshExecutedProofs(ctx context.Contex
 
 func (r *SuccinctProverNetworkProvider) PublishEvents(ctx context.Context) error {
 	for _, proof := range r.proofRequests {
-		// if time.Unix(int64(proof.CreatedAt), 0).Compare(r.start) < 0 {
-		// 	continue
-		// }
+		if time.Unix(int64(*proof.FulfilledAt), 0).Compare(r.start) < 0 {
+			continue
+		}
 
 		id := string(proof.RequestId)
 		if seen, ok := r.seen[id]; ok {

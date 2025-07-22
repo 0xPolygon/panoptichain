@@ -76,8 +76,6 @@ func (o *ProofRequestObserver) Register(eb *EventBus) {
 }
 
 func (o *ProofRequestObserver) Notify(ctx context.Context, msg Message) {
-	// logger := NewLogger(o, msg)
-
 	proof := msg.Data().(*proto.ProofRequest)
 	labels := []string{
 		msg.Network().GetName(),
@@ -99,5 +97,11 @@ func (o *ProofRequestObserver) Notify(ctx context.Context, msg Message) {
 }
 
 func (o *ProofRequestObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.gas_limit}
+	return []prometheus.Collector{
+		o.gas_limit,
+		o.gas_used,
+		o.cycle_limit,
+		o.cycles,
+		o.time,
+	}
 }

@@ -77,7 +77,7 @@ Variable Labels:
 
 
 ### panoptichain_rpc_block_interval
-the number of seconds between blocks
+The number of seconds between blocks
 
 Metric Type: HistogramVec
 
@@ -930,6 +930,69 @@ Metric Type: GaugeVec
 Variable Labels:
 - network
 - provider
+
+## ProofRequestObserver
+
+
+### panoptichain_spn_gas_limit
+The gas limit
+
+Metric Type: HistogramVec
+
+Variable Labels:
+- network
+- provider
+- requester
+- fulfiller
+- program
+
+### panoptichain_spn_gas_used
+The gas used
+
+Metric Type: HistogramVec
+
+Variable Labels:
+- network
+- provider
+- requester
+- fulfiller
+- program
+
+### panoptichain_spn_cycle_limit
+The cycle limit
+
+Metric Type: HistogramVec
+
+Variable Labels:
+- network
+- provider
+- requester
+- fulfiller
+- program
+
+### panoptichain_spn_cycles
+The number of cycles
+
+Metric Type: HistogramVec
+
+Variable Labels:
+- network
+- provider
+- requester
+- fulfiller
+- program
+
+### panoptichain_spn_time_to_fulfilled
+The time the proof took to be fulfilled
+
+Metric Type: HistogramVec
+
+Variable Labels:
+- network
+- provider
+- requester
+- fulfiller
+- program
 
 ## StateSyncObserver
 
