@@ -242,7 +242,7 @@ func (o *BlockIntervalObserver) Register(eb *EventBus) {
 	o.blockInterval = metrics.NewHistogram(
 		metrics.RPC,
 		"block_interval",
-		"the number of seconds between blocks",
+		"The number of seconds between blocks",
 		newExponentialBuckets(2, 6),
 	)
 }
