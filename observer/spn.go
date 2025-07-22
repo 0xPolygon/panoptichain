@@ -2,6 +2,7 @@ package observer
 
 import (
 	"context"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/prometheus/client_golang/prometheus"
@@ -21,6 +22,7 @@ type ProofRequestObserver struct {
 	gas_used    *prometheus.HistogramVec
 	cycle_limit *prometheus.HistogramVec
 	cycles      *prometheus.HistogramVec
+	time        *prometheus.HistogramVec
 }
 
 func (o *ProofRequestObserver) Register(eb *EventBus) {
@@ -30,33 +32,70 @@ func (o *ProofRequestObserver) Register(eb *EventBus) {
 		metrics.SPN,
 		"gas_limit",
 		"The gas limit",
-		newExponentialBuckets(10, 9),
+		newExponentialBuckets(10, 12),
 		"requester",
 		"fulfiller",
+		"program",
 	)
 	o.gas_used = metrics.NewHistogram(
 		metrics.SPN,
 		"gas_used",
 		"The gas used",
-		newExponentialBuckets(10, 9),
+		newExponentialBuckets(10, 12),
 		"requester",
 		"fulfiller",
+		"program",
+	)
+	o.cycle_limit = metrics.NewHistogram(
+		metrics.SPN,
+		"cycle_limit",
+		"The cycle limit",
+		newExponentialBuckets(10, 12),
+		"requester",
+		"fulfiller",
+		"program",
+	)
+	o.cycles = metrics.NewHistogram(
+		metrics.SPN,
+		"cycles",
+		"The number of cycles",
+		newExponentialBuckets(10, 12),
+		"requester",
+		"fulfiller",
+		"program",
+	)
+	o.time = metrics.NewHistogram(
+		metrics.SPN,
+		"time_to_fulfilled",
+		"The time the proof took to be fulfilled",
+		newExponentialBuckets(2, 12),
+		"requester",
+		"fulfiller",
+		"program",
 	)
 }
 
 func (o *ProofRequestObserver) Notify(ctx context.Context, msg Message) {
 	// logger := NewLogger(o, msg)
 
-	proofRequest := msg.Data().(*proto.ProofRequest)
+	proof := msg.Data().(*proto.ProofRequest)
 	labels := []string{
 		msg.Network().GetName(),
 		msg.Provider(),
-		common.BytesToAddress(proofRequest.Requester).Hex(),
-		common.BytesToAddress(proofRequest.Fulfiller).Hex(),
+		common.BytesToAddress(proof.Requester).Hex(),
+		common.BytesToAddress(proof.Fulfiller).Hex(),
+		common.BytesToHash(proof.VkHash).Hex(),
 	}
 
-	gl := float64(proofRequest.GasLimit)
-	o.gas_limit.WithLabelValues(labels...).Observe(gl)
+	o.gas_limit.WithLabelValues(labels...).Observe(float64(proof.GasLimit))
+	o.gas_used.WithLabelValues(labels...).Observe(float64(*proof.GasUsed))
+	o.cycle_limit.WithLabelValues(labels...).Observe(float64(proof.CycleLimit))
+	o.cycles.WithLabelValues(labels...).Observe(float64(*proof.Cycles))
+
+	created := time.Unix(int64(proof.CreatedAt), 0)
+	fulfilled := time.Unix(int64(*proof.FulfilledAt), 0)
+	dt := fulfilled.Sub(created).Seconds()
+	o.time.WithLabelValues(labels...).Observe(float64(dt))
 }
 
 func (o *ProofRequestObserver) GetCollectors() []prometheus.Collector {

@@ -74,8 +74,9 @@ func (r *SuccinctProverNetworkProvider) refreshExecutedProofs(ctx context.Contex
 	limit := uint32(100)
 
 	req := &proto.GetFilteredProofRequestsRequest{
-		Limit:           &limit,
-		ExecutionStatus: proto.ExecutionStatus_EXECUTED.Enum(),
+		Limit:             &limit,
+		ExecutionStatus:   proto.ExecutionStatus_EXECUTED.Enum(),
+		FulfillmentStatus: proto.FulfillmentStatus_FULFILLED.Enum(),
 	}
 
 	if r.requester != nil {
