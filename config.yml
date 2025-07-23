@@ -423,7 +423,7 @@
     ##
     ## @param requester - string - optional
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_REQUESTER - string - optional
-    ## The requester to filer the proof requests by.
+    ## The requester to filter the proof requests by.
     ##
     ## @param fulfiller - string - optional
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_FULFILLER - string - optional
