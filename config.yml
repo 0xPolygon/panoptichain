@@ -422,11 +422,11 @@
     ## each other.
     ##
     ## @param requester - string - optional
-    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_REQUESTER - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_REQUESTER - string - optional
     ## The requester to filer the proof requests by.
     ##
     ## @param fulfiller - string - optional
-    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_FULFILLER - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_FULFILLER - string - optional
     ## The fulfiller to filter the proof requests by.
   #
   # succinct_prover_network:
