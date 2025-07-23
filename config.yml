@@ -400,6 +400,43 @@
   #     database: "amoy"
   #     label: "sensor-network"
 
+  ## @param succinct_prover_network - list of objects - optional
+  ## The `succinct_prover_network` provider fetches data from the Succinct
+  ## Prover Network.
+  ##
+    ## @param name - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_NAME - string - required
+    ## The network name. See `networks` for the list of predefined networks.
+    ##
+    ## @param url - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_URL - string - required
+    ## The network URL.
+    ##
+    ## @param api_key - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_API_KEY - string - required
+    ## The API key.
+    ##
+    ## @param label - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_LABEL - string - required
+    ## The label for this provider. This field helps distinguish providers from
+    ## each other.
+    ##
+    ## @param requester - string - optional
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_REQUESTER - string - required
+    ## The requester to filer the proof requests by.
+    ##
+    ## @param fulfiller - string - optional
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_FULFILLER - string - required
+    ## The fulfiller to filter the proof requests by.
+  #
+  # succinct_prover_network:
+  #   - name: "Succinct Prover Network"
+  #     label: "succinct.xyz"
+  #     url: "rpc.production.succinct.xyz:443"
+  #     api_key: "$SUCCINCT_PROVER_NETWORK_API_KEY"
+  #     requester: "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
+  #     fulfiller: "0xe9b7607e06ec0d4ee69bee3abedd954c069ad794"
+
   ## @param exchange_rates - object - optional
   ## The `exchange_rates` provider fetches data from the Coinbase API. This is
   ## helpful when performing conversion rate computations in an observability backend.
