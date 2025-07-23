@@ -130,8 +130,8 @@ type SensorNetwork struct {
 	Interval *time.Duration `mapstructure:"interval"`
 }
 
-// SuccinctProverNetwork configures the succinct prover provider. This fetches data from
-// Succinct Prover Network.
+// SuccinctProverNetwork configures the succinct prover provider. This fetches
+// data from the Succinct Prover Network.
 type SuccinctProverNetwork struct {
 	Name      string         `mapstructure:"name" validate:"required"`
 	URL       string         `mapstructure:"url" validate:"url,required"`

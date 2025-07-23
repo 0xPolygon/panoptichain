@@ -63,12 +63,12 @@ func (r *SuccinctProverNetworkProvider) RefreshState(ctx context.Context) error 
 
 	c := proto.NewProverNetworkClient(conn)
 
-	r.refreshExecutedProofs(ctx, c)
+	r.refreshProofRequests(ctx, c)
 
 	return nil
 }
 
-func (r *SuccinctProverNetworkProvider) refreshExecutedProofs(ctx context.Context, c proto.ProverNetworkClient) {
+func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context, c proto.ProverNetworkClient) {
 	r.proofRequests = nil
 
 	limit := uint32(100)
