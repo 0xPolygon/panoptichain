@@ -161,12 +161,15 @@ var observersMap = map[string]Observer{
 	"missed_block_proposal":               new(MissedBlockProposalObserver),
 	"refresh_state_time":                  new(RefreshStateTimeObserver),
 	"reorg":                               new(ReorgObserver),
+	"rollup_manager":                      new(RollupManagerObserver),
 	"sealed_out_of_turn":                  new(SealedOutOfTurnObserver),
 	"sensor_block_events":                 new(BlockEventsObserver),
 	"sensor_blocks":                       new(SensorBlocksObserver),
 	"sensor_bogon_block":                  new(SensorBogonBlockObserver),
+	"span":                                new(HeimdallSpanObserver),
 	"state_sync":                          new(StateSyncObserver),
 	"stolen_block":                        new(StolenBlockObserver),
+	"spn_proof_request":                   new(ProofRequestObserver),
 	"system":                              new(SystemObserver),
 	"time_to_finalized":                   new(TimeToFinalizedObserver),
 	"time_to_mine":                        new(TimeToMineObserver),
@@ -182,8 +185,6 @@ var observersMap = map[string]Observer{
 	"uncles":                              new(UnclesObserver),
 	"validator_wallet_balance":            new(ValidatorWalletBalanceObserver),
 	"zkevm_batches":                       new(ZkEVMBatchObserver),
-	"rollup_manager":                      new(RollupManagerObserver),
-	"span":                                new(HeimdallSpanObserver),
 }
 
 func GetEnabledObserverSet() ObserverSet {

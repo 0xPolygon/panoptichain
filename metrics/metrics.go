@@ -23,6 +23,7 @@ const (
 	Sensor
 	Heimdall
 	System
+	SPN
 )
 
 // NewCounter returns a Prometheus counter object with labels for network

@@ -155,6 +155,21 @@ options.
   abigen --abi PolygonRollupManager.abi.json --pkg contracts --type PolygonRollupManager > PolygonRollupManager.go
   ```
 
+- Clone `succinctlabs/network` and compile `protobuf`
+
+  ```bash
+  git clone https://github.com/succinctlabs/network.git
+
+  protoc ~/src/network/proto/network.proto ~/src/network/proto/types.proto \
+    --proto_path ~/src/network/proto \
+    --go_out=. \
+    --go_opt=Mnetwork.proto=./proto \
+    --go_opt=Mtypes.proto=./proto \
+    --go-grpc_out=. \
+    --go-grpc_opt=Mnetwork.proto=./proto \
+    --go-grpc_opt=Mtypes.proto=./proto
+  ```
+
 ## Architecture
 
 ### Data Flow
