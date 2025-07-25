@@ -28,11 +28,25 @@ type ProofRequestObserver struct {
 func (o *ProofRequestObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.ProofRequest, o)
 
+	buckets := []float64{
+		1_000_000,
+		10_000_000,
+		100_000_000,
+		1_000_000_000,
+		2_000_000_000,
+		4_000_000_000,
+		8_000_000_000,
+		16_000_000_000,
+		32_000_000_000,
+		64_000_000_000,
+		128_000_000_000,
+	}
+
 	o.gas_limit = metrics.NewHistogram(
 		metrics.SPN,
 		"gas_limit",
 		"The gas limit",
-		newExponentialBuckets(10, 12),
+		buckets,
 		"requester",
 		"fulfiller",
 		"program",
@@ -41,7 +55,7 @@ func (o *ProofRequestObserver) Register(eb *EventBus) {
 		metrics.SPN,
 		"gas_used",
 		"The gas used",
-		newExponentialBuckets(10, 12),
+		buckets,
 		"requester",
 		"fulfiller",
 		"program",
