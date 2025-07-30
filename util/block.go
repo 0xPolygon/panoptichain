@@ -101,7 +101,7 @@ func getBlock(ctx context.Context, raw json.RawMessage, c *ethclient.Client) (*t
 
 		// Remove the transaction type field which would allow the transaction to be
 		// treated as legacy.
-		if decimal > 3 {
+		if decimal > 4 {
 			delete(tx, "type")
 		}
 	}
