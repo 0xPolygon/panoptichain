@@ -9,7 +9,7 @@ func _() {
 	// Re-run the stringer command to generate them again.
 	var x [1]struct{}
 	_ = x[AccountBalances-0]
-	_ = x[AggchainLatency-1]
+	_ = x[AggchainEvent-1]
 	_ = x[BlockInterval-2]
 	_ = x[BorMissedBlockProposal-3]
 	_ = x[BorStateSync-4]
@@ -47,9 +47,9 @@ func _() {
 	_ = x[ZkEVMBatches-36]
 }
 
-const _ObservableTopic_name = "AccountBalancesAggchainLatencyBlockIntervalBorMissedBlockProposalBorStateSyncBridgeEventBridgeEventTimesCheckpointCheckpointSignaturesClaimEventClaimEventTimesDepositCountsExchangeRateExitRootsFinalizedHeightHashDivergenceHeimdallBlockIntervalHeimdallMissedBlockProposalMilestoneMissedCheckpointProposalNewEVMBlockNewHeimdallBlockProofRequestRefreshStateTimeReorgRollupManagerSensorBlockEventsSensorBlocksSpanStolenBlockSystemTimeToFinalizedTimeToMineTransactionPoolTrustedBatchValidatorWalletZkEVMBatches"
+const _ObservableTopic_name = "AccountBalancesAggchainEventBlockIntervalBorMissedBlockProposalBorStateSyncBridgeEventBridgeEventTimesCheckpointCheckpointSignaturesClaimEventClaimEventTimesDepositCountsExchangeRateExitRootsFinalizedHeightHashDivergenceHeimdallBlockIntervalHeimdallMissedBlockProposalMilestoneMissedCheckpointProposalNewEVMBlockNewHeimdallBlockProofRequestRefreshStateTimeReorgRollupManagerSensorBlockEventsSensorBlocksSpanStolenBlockSystemTimeToFinalizedTimeToMineTransactionPoolTrustedBatchValidatorWalletZkEVMBatches"
 
-var _ObservableTopic_index = [...]uint16{0, 15, 30, 43, 65, 77, 88, 104, 114, 134, 144, 159, 172, 184, 193, 208, 222, 243, 270, 279, 303, 314, 330, 342, 358, 363, 376, 393, 405, 409, 420, 426, 441, 451, 466, 478, 493, 505}
+var _ObservableTopic_index = [...]uint16{0, 15, 28, 41, 63, 75, 86, 102, 112, 132, 142, 157, 170, 182, 191, 206, 220, 241, 268, 277, 301, 312, 328, 340, 356, 361, 374, 391, 403, 407, 418, 424, 439, 449, 464, 476, 491, 503}
 
 func (i ObservableTopic) String() string {
 	if i < 0 || i >= ObservableTopic(len(_ObservableTopic_index)-1) {

@@ -28,7 +28,7 @@ type AggchainProvider struct {
 	logger           zerolog.Logger
 	blockNumber      uint64
 	prevBlockNumber  uint64
-	latencies        []uint64
+	events           []*observer.AggchainEvent
 }
 
 func NewAggchainProvider(n network.Network, eb *observer.EventBus, cfg config.Aggchain) *AggchainProvider {
@@ -88,29 +88,32 @@ func (a *AggchainProvider) RefreshState(ctx context.Context) error {
 		return err
 	}
 
-	a.latencies = nil
+	a.events = nil
 
-	var event *contracts.AggchainFEPOutputProposed
 	for iter.Next() && iter.Event != nil {
-		event = iter.Event
+		event := &observer.AggchainEvent{
+			OutputProposed: iter.Event,
+		}
+		a.events = append(a.events, event)
 
-		block, err := util.BlockByNumber(ctx, event.L2BlockNumber, l2)
+		event.L1Block, err = util.BlockByHash(ctx, iter.Event.Raw.BlockHash, l1)
 		if err != nil {
-			a.logger.Error().Err(err).Msg("Failed to get block by number")
-			continue
+			a.logger.Error().Err(err).Msg("Failed to get block by hash")
 		}
 
-		dt := event.L1Timestamp.Uint64() - block.Time()
-		a.latencies = append(a.latencies, dt)
+		event.L2Block, err = util.BlockByNumber(ctx, iter.Event.L2BlockNumber, l2)
+		if err != nil {
+			a.logger.Error().Err(err).Msg("Failed to get block by number")
+		}
 	}
 
 	return nil
 }
 
 func (a *AggchainProvider) PublishEvents(ctx context.Context) error {
-	for _, latency := range a.latencies {
-		msg := observer.NewMessage(a.network, a.label, latency)
-		a.bus.Publish(ctx, topics.AggchainLatency, msg)
+	for _, event := range a.events {
+		msg := observer.NewMessage(a.network, a.label, event)
+		a.bus.Publish(ctx, topics.AggchainEvent, msg)
 	}
 
 	return nil
