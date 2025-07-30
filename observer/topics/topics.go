@@ -5,6 +5,7 @@ type ObservableTopic int
 
 const (
 	AccountBalances             ObservableTopic = iota // observer.AccountBalances
+	AggchainLatency                                    // uint64
 	BlockInterval                                      // uint64
 	BorMissedBlockProposal                             // observer.MissedBlockProposal
 	BorStateSync                                       // *observer.StateSync
