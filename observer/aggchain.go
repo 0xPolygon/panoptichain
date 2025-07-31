@@ -26,7 +26,7 @@ type AggchainObserver struct {
 func (o *AggchainObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.AggchainEvent, o)
 
-	buckets := newExponentialBuckets(2, 4)
+	buckets := newExponentialBuckets(2, 5)
 	for i := range buckets {
 		buckets[i] *= time.Hour.Seconds()
 	}
