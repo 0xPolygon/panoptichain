@@ -25,6 +25,24 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_rpc_aggchain_output_proposed_block_number
+The block number in the OutputProposed event
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_rpc_aggchain_output_index
+The output index in the OutputProposed event
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## BaseFeePerGasObserver
 
 

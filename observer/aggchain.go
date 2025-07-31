@@ -14,13 +14,11 @@ import (
 
 type AggchainEvent struct {
 	OutputProposed *contracts.AggchainFEPOutputProposed
-	L1Block        *types.Block
 	L2Block        *types.Block
 }
 
 type AggchainObserver struct {
 	latency *prometheus.HistogramVec
-	time    *prometheus.GaugeVec
 	bn      *prometheus.GaugeVec
 	index   *prometheus.GaugeVec
 }
@@ -38,11 +36,6 @@ func (o *AggchainObserver) Register(eb *EventBus) {
 		"aggchain_latency",
 		"The difference between the L1 timestamp and the L2 block timestamp (in seconds)",
 		buckets,
-	)
-	o.time = metrics.NewGauge(
-		metrics.RPC,
-		"aggchain_time_since_last_output_proposed",
-		"The time since the last OutputProposed event (in seconds)",
 	)
 	o.bn = metrics.NewGauge(
 		metrics.RPC,
@@ -65,11 +58,6 @@ func (o *AggchainObserver) Notify(ctx context.Context, msg Message) {
 	index, _ := event.OutputProposed.L2OutputIndex.Float64()
 	o.index.WithLabelValues(msg.Network().GetName(), msg.Provider()).Set(index)
 
-	if event.L1Block != nil {
-		seconds := time.Since(time.Unix(int64(event.L1Block.Time()), 0)).Seconds()
-		o.time.WithLabelValues(msg.Network().GetName(), msg.Provider()).Set(seconds)
-	}
-
 	if event.L2Block != nil {
 		latency := float64(event.OutputProposed.L1Timestamp.Uint64() - event.L2Block.Time())
 		o.latency.WithLabelValues(msg.Network().GetName(), msg.Provider()).Observe(latency)
@@ -77,5 +65,5 @@ func (o *AggchainObserver) Notify(ctx context.Context, msg Message) {
 }
 
 func (o *AggchainObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.latency}
+	return []prometheus.Collector{o.latency, o.bn, o.index}
 }

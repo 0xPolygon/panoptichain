@@ -96,11 +96,6 @@ func (a *AggchainProvider) RefreshState(ctx context.Context) error {
 		}
 		a.events = append(a.events, event)
 
-		event.L1Block, err = util.BlockByHash(ctx, iter.Event.Raw.BlockHash, l1)
-		if err != nil {
-			a.logger.Error().Err(err).Msg("Failed to get block by hash")
-		}
-
 		event.L2Block, err = util.BlockByNumber(ctx, iter.Event.L2BlockNumber, l2)
 		if err != nil {
 			a.logger.Error().Err(err).Msg("Failed to get block by number")
