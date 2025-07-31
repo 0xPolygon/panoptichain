@@ -28,6 +28,7 @@ type Providers struct {
 	HeimdallEndpoints      []HeimdallEndpoint      `mapstructure:"heimdall" validate:"dive"`
 	SensorNetworks         []SensorNetwork         `mapstructure:"sensor_network" validate:"dive"`
 	SuccinctProverNetworks []SuccinctProverNetwork `mapstructure:"succinct_prover_network" validate:"dive"`
+	Aggchains              []Aggchain              `mapstructure:"aggchain" validate:"dive"`
 	HashDivergence         *HashDivergence         `mapstructure:"hash_divergence"`
 	System                 *System                 `mapstructure:"system"`
 	ExchangeRates          *ExchangeRates          `mapstructure:"exchange_rates"`
@@ -140,6 +141,15 @@ type SuccinctProverNetwork struct {
 	Interval  *time.Duration `mapstructure:"interval"`
 	Requester *string        `mapsturcture:"requester"`
 	Fulfiller *string        `mapstructure:"fulfiller"`
+}
+
+type Aggchain struct {
+	Name          string         `mapstructure:"name" validate:"required"`
+	L1URL         string         `mapstructure:"l1_url" validate:"url,required"`
+	L2URL         string         `mapstructure:"l2_url" validate:"url,required"`
+	Label         string         `mapstructure:"label" validate:"required"`
+	Interval      *time.Duration `mapstructure:"interval"`
+	RollupAddress string         `mapstructure:"rollup_address" validate:"required"`
 }
 
 // Observers defines which observers should be enabled or disabled. Observers

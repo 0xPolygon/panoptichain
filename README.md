@@ -153,6 +153,7 @@ options.
   abigen --abi PolygonZkEVMUpgraded.abi.json --pkg contracts --type PolygonZkEVMUpgraded > PolygonZkEVMUpgraded.go
   abigen --abi PolygonZkEVMEtrog.abi.json --pkg contracts --type PolygonZkEVMEtrog > PolygonZkEVMEtrog.go
   abigen --abi PolygonRollupManager.abi.json --pkg contracts --type PolygonRollupManager > PolygonRollupManager.go
+  abigen --abi AggchainFEP.abi.json --pkg contracts --type AggchainFEP > AggchainFEP.go
   ```
 
 - Clone `succinctlabs/network` and compile `protobuf`
@@ -402,6 +403,8 @@ These are the available types of providers:
 - [`system`](./provider/system.go)
 - [`hash_divergence`](./provider/exchange_rates.go)
 - [`exchange_rates`](./provider/exchange_rates.go)
+- [`spn`](./provider/spn.go)
+- [`aggchain`](./provider/aggchain.go)
 
 All providers implement the `Provider` interface, and creating a provider is a
 little more involved than an observer. Before creating one, make sure that the

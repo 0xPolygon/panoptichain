@@ -388,6 +388,10 @@
     ## @env PANOPTICHAIN_PROVIDERS_SENSOR_NETWORK_0_LABEL - string - required
     ## The label for this provider. This field helps distinguish providers from
     ## each other.
+    ##
+    ## @param interval - string - optional - default: runner.interval
+    ## @env PANOPTICHAIN_PROVIDERS_SENSOR_NETWORK_0_INTERVAL - string - optional - default: runner.interval
+    ## The polling interval for the `sensor_network` provider.
   #
   # sensor_network:
   #   - name: "Polygon Mainnet"
@@ -428,6 +432,10 @@
     ## @param fulfiller - string - optional
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_FULFILLER - string - optional
     ## The fulfiller to filter the proof requests by.
+    ##
+    ## @param interval - string - optional - default: runner.interval
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_INTERVAL - string - optional - default: runner.interval
+    ## The polling interval for the `succinct_prover_network` provider.
   #
   # succinct_prover_network:
   #   - name: "Succinct Prover Network"
@@ -436,6 +444,42 @@
   #     api_key: "$SUCCINCT_PROVER_NETWORK_API_KEY"
   #     requester: "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
   #     fulfiller: "0xe9b7607e06ec0d4ee69bee3abedd954c069ad794"
+
+  ## @param aggchain - list of objects - optional
+  ## The `aggchain` provider fetches data from L1 and L2 RPCs. This should be 
+  ## used for agglayer attached chains with optimistic rollups.
+  ##
+    ## @param name - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_AGGCHAIN_0_NAME - string - required
+    ## The network name. See `networks` for the list of predefined networks.
+    ##
+    ## @param l1_url - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_AGGCHAIN_0_L1_URL - string - required
+    ## The L1 network URL.
+    ##
+    ## @param l2_url - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_AGGCHAIN_0_L2_URL - string - required
+    ## The L2 network URL.
+    ##
+    ## @param label - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_AGGCHAIN_0_LABEL - string - required
+    ## The label for this provider. This field helps distinguish providers from
+    ## each other.
+    ##
+    ## @param rollup_address - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_AGGCHAIN_0_ROLLUP_ADDRESS - string - required
+    ## The L1 rollup contract address.
+    ##
+    ## @param interval - string - optional - default: runner.interval
+    ## @env PANOPTICHAIN_PROVIDERS_AGGCHAIN_0_INTERVAL - string - optional - default: runner.interval
+    ## The polling interval for the `aggchain` provider.
+  #
+  # aggchain:
+  #   - name: "Katana Mainnet"
+  #     label: "succinct.xyz"
+  #     l1_url: "$ETHEREUM_TENDERLY_URL"
+  #     l2_url: "$KATANA_MAINNET_CONDUIT_URL"
+  #     rollup_address: "0x100d3ca4f97776A40A7D93dB4AbF0FEA34230666"
 
   ## @param exchange_rates - object - optional
   ## The `exchange_rates` provider fetches data from the Coinbase API. This is

@@ -1,0 +1,1827 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "contract IPolygonZkEVMGlobalExitRootV2",
+        "name": "_globalExitRootManager",
+        "type": "address"
+      },
+      {
+        "internalType": "contract IERC20Upgradeable",
+        "name": "_pol",
+        "type": "address"
+      },
+      {
+        "internalType": "contract IPolygonZkEVMBridgeV2",
+        "name": "_bridgeAddress",
+        "type": "address"
+      },
+      {
+        "internalType": "contract PolygonRollupManager",
+        "name": "_rollupManager",
+        "type": "address"
+      },
+      {
+        "internalType": "contract IAggLayerGateway",
+        "name": "_aggLayerGateway",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "AggchainManagerCannotBeZero",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "AggchainVKeyNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "AggregationVkeyMustBeDifferentThanZero",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "BatchAlreadyVerified",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "BatchNotSequencedOrNotSequenceEnd",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "CannotProposeFutureL2Output",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ExceedMaxVerifyBatches",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "FinalAccInputHashDoesNotMatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "FinalNumBatchBelowLastVerifiedBatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "FinalNumBatchDoesNotMatchPendingState",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "FinalPendingStateNumInvalid",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ForceBatchNotAllowed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ForceBatchTimeoutNotExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ForceBatchesAlreadyActive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ForceBatchesDecentralized",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ForceBatchesNotAllowedOnEmergencyState",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ForceBatchesOverflow",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ForcedDataDoesNotMatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "GasTokenNetworkMustBeZeroOnEther",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "GlobalExitRootNotExist",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "HaltTimeoutNotExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "HaltTimeoutNotExpiredAfterEmergencyState",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "HugeTokenMetadataNotSupported",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InitNumBatchAboveLastVerifiedBatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InitNumBatchDoesNotMatchPendingState",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InitSequencedBatchDoesNotMatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidAggLayerGatewayAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidAggchainDataLength",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidAggchainType",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidInitializeFunction",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidInitializeTransaction",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidInitializer",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidProof",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidRangeBatchTimeTarget",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidRangeForceBatchTimeout",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidRangeMultiplierBatchFee",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidZeroAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "L1InfoTreeLeafCountInvalid",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "L2BlockNumberLessThanNextBlockNumber",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "L2BlockTimeMustBeGreaterThanZero",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "L2OutputRootCannotBeZero",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "MaxTimestampSequenceInvalid",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NewAccInputHashDoesNotExist",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NewPendingStateTimeoutMustBeLower",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NewStateRootNotInsidePrime",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NewTrustedAggregatorTimeoutMustBeLower",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotEnoughMaticAmount",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotEnoughPOLAmount",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OldAccInputHashDoesNotExist",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OldStateRootDoesNotExist",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyAdmin",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyAggchainManager",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyOptimisticModeManager",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyPendingAdmin",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyPendingAggchainManager",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyPendingOptimisticModeManager",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyPendingVKeyManager",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyRollupManager",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyTrustedAggregator",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyTrustedSequencer",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyVKeyManager",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OptimisticModeEnabled",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OptimisticModeNotEnabled",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OwnedAggchainVKeyAlreadyAdded",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OwnedAggchainVKeyNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PendingStateDoesNotExist",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PendingStateInvalid",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PendingStateNotConsolidable",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PendingStateTimeoutExceedHaltAggregationTimeout",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RangeVkeyCommitmentMustBeDifferentThanZero",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RollupConfigHashMustBeDifferentThanZero",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SequenceZeroBatches",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SequencedTimestampBelowForcedTimestamp",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SequencedTimestampInvalid",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "StartL2TimestampMustBeLessThanCurrentTime",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "StoredRootMustBeDifferentThanNewRoot",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SubmissionIntervalMustBeGreaterThanZero",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TransactionsLengthAboveMax",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TrustedAggregatorTimeoutExceedHaltAggregationTimeout",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TrustedAggregatorTimeoutNotExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "UseDefaultGatewayAlreadyDisabled",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "UseDefaultGatewayAlreadyEnabled",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroValueAggchainVKey",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newAdmin",
+        "type": "address"
+      }
+    ],
+    "name": "AcceptAdminRole",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "oldAggchainManager",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newAggchainManager",
+        "type": "address"
+      }
+    ],
+    "name": "AcceptAggchainManagerRole",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "oldOptimisticModeManager",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newOptimisticModeManager",
+        "type": "address"
+      }
+    ],
+    "name": "AcceptOptimisticModeManagerRole",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "oldVKeyManager",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newVKeyManager",
+        "type": "address"
+      }
+    ],
+    "name": "AcceptVKeyManagerRole",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "bytes4",
+        "name": "selector",
+        "type": "bytes4"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "newAggchainVKey",
+        "type": "bytes32"
+      }
+    ],
+    "name": "AddAggchainVKey",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "oldAggregationVkey",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "newAggregationVkey",
+        "type": "bytes32"
+      }
+    ],
+    "name": "AggregationVkeyUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [],
+    "name": "DisableOptimisticMode",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [],
+    "name": "DisableUseDefaultGatewayFlag",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [],
+    "name": "EnableOptimisticMode",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [],
+    "name": "EnableUseDefaultGatewayFlag",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint8",
+        "name": "version",
+        "type": "uint8"
+      }
+    ],
+    "name": "Initialized",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "outputRoot",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "l2OutputIndex",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "l2BlockNumber",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "l1Timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "OutputProposed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "oldRangeVkeyCommitment",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "newRangeVkeyCommitment",
+        "type": "bytes32"
+      }
+    ],
+    "name": "RangeVkeyCommitmentUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "oldRollupConfigHash",
+        "type": "bytes32"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "newRollupConfigHash",
+        "type": "bytes32"
+      }
+    ],
+    "name": "RollupConfigHashUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newTrustedSequencer",
+        "type": "address"
+      }
+    ],
+    "name": "SetTrustedSequencer",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "newTrustedSequencerURL",
+        "type": "string"
+      }
+    ],
+    "name": "SetTrustedSequencerURL",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "oldSubmissionInterval",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newSubmissionInterval",
+        "type": "uint256"
+      }
+    ],
+    "name": "SubmissionIntervalUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newPendingAdmin",
+        "type": "address"
+      }
+    ],
+    "name": "TransferAdminRole",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "currentAggchainManager",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newPendingAggchainManager",
+        "type": "address"
+      }
+    ],
+    "name": "TransferAggchainManagerRole",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "currentOptimisticModeManager",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newPendingOptimisticModeManager",
+        "type": "address"
+      }
+    ],
+    "name": "TransferOptimisticModeManagerRole",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "currentVKeyManager",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newPendingVKeyManager",
+        "type": "address"
+      }
+    ],
+    "name": "TransferVKeyManagerRole",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "bytes4",
+        "name": "selector",
+        "type": "bytes4"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "previousAggchainVKey",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "newAggchainVKey",
+        "type": "bytes32"
+      }
+    ],
+    "name": "UpdateAggchainVKey",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "AGGCHAIN_TYPE",
+    "outputs": [
+      {
+        "internalType": "bytes2",
+        "name": "",
+        "type": "bytes2"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "CONSENSUS_TYPE",
+    "outputs": [
+      {
+        "internalType": "uint32",
+        "name": "",
+        "type": "uint32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "L2_BLOCK_TIME",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "SUBMISSION_INTERVAL",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "acceptAdminRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "acceptAggchainManagerRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "acceptOptimisticModeManagerRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "acceptVKeyManagerRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes4",
+        "name": "aggchainVKeySelector",
+        "type": "bytes4"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "newAggchainVKey",
+        "type": "bytes32"
+      }
+    ],
+    "name": "addOwnedAggchainVKey",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "admin",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "aggLayerGateway",
+    "outputs": [
+      {
+        "internalType": "contract IAggLayerGateway",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "aggchainManager",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "aggregationVkey",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "bridgeAddress",
+    "outputs": [
+      {
+        "internalType": "contract IPolygonZkEVMBridgeV2",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_l2BlockNumber",
+        "type": "uint256"
+      }
+    ],
+    "name": "computeL2Timestamp",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "disableOptimisticMode",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "disableUseDefaultGatewayFlag",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "enableOptimisticMode",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "enableUseDefaultGatewayFlag",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "forceBatchAddress",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "forceBatchTimeout",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "name": "forcedBatches",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "gasTokenAddress",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "gasTokenNetwork",
+    "outputs": [
+      {
+        "internalType": "uint32",
+        "name": "",
+        "type": "uint32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes",
+        "name": "aggchainData",
+        "type": "bytes"
+      }
+    ],
+    "name": "getAggchainHash",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes4",
+        "name": "aggchainVKeySelector",
+        "type": "bytes4"
+      }
+    ],
+    "name": "getAggchainTypeFromSelector",
+    "outputs": [
+      {
+        "internalType": "bytes2",
+        "name": "",
+        "type": "bytes2"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes4",
+        "name": "aggchainVKeySelector",
+        "type": "bytes4"
+      }
+    ],
+    "name": "getAggchainVKey",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "aggchainVKey",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes2",
+        "name": "aggchainVKeyVersion",
+        "type": "bytes2"
+      },
+      {
+        "internalType": "bytes2",
+        "name": "aggchainType",
+        "type": "bytes2"
+      }
+    ],
+    "name": "getAggchainVKeySelector",
+    "outputs": [
+      {
+        "internalType": "bytes4",
+        "name": "",
+        "type": "bytes4"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes4",
+        "name": "aggchainVKeySelector",
+        "type": "bytes4"
+      }
+    ],
+    "name": "getAggchainVKeyVersionFromSelector",
+    "outputs": [
+      {
+        "internalType": "bytes2",
+        "name": "",
+        "type": "bytes2"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_l2OutputIndex",
+        "type": "uint256"
+      }
+    ],
+    "name": "getL2Output",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "outputRoot",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "uint128",
+            "name": "timestamp",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "l2BlockNumber",
+            "type": "uint128"
+          }
+        ],
+        "internalType": "struct AggchainFEP.OutputProposal",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "globalExitRootManager",
+    "outputs": [
+      {
+        "internalType": "contract IPolygonZkEVMGlobalExitRootV2",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newAggchainManager",
+        "type": "address"
+      }
+    ],
+    "name": "initAggchainManager",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes",
+        "name": "initializeBytesAggchain",
+        "type": "bytes"
+      }
+    ],
+    "name": "initialize",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "uint32",
+        "name": "",
+        "type": "uint32"
+      },
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "name": "initialize",
+    "outputs": [],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "l2BlockTime",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "lastAccInputHash",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "lastForceBatch",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "lastForceBatchSequenced",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "latestBlockNumber",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "latestOutputIndex",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "networkName",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nextBlockNumber",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nextOutputIndex",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes",
+        "name": "aggchainData",
+        "type": "bytes"
+      }
+    ],
+    "name": "onVerifyPessimistic",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "optimisticMode",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "optimisticModeManager",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes4",
+        "name": "aggchainVKeySelector",
+        "type": "bytes4"
+      }
+    ],
+    "name": "ownedAggchainVKeys",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "ownedAggchainVKey",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pendingAdmin",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pendingAggchainManager",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pendingOptimisticModeManager",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pendingVKeyManager",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pol",
+    "outputs": [
+      {
+        "internalType": "contract IERC20Upgradeable",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "rangeVkeyCommitment",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "rollupConfigHash",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "rollupManager",
+    "outputs": [
+      {
+        "internalType": "contract PolygonRollupManager",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newTrustedSequencer",
+        "type": "address"
+      }
+    ],
+    "name": "setTrustedSequencer",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "newTrustedSequencerURL",
+        "type": "string"
+      }
+    ],
+    "name": "setTrustedSequencerURL",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "startingBlockNumber",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "startingTimestamp",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "submissionInterval",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newPendingAdmin",
+        "type": "address"
+      }
+    ],
+    "name": "transferAdminRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newAggchainManager",
+        "type": "address"
+      }
+    ],
+    "name": "transferAggchainManagerRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newOptimisticModeManager",
+        "type": "address"
+      }
+    ],
+    "name": "transferOptimisticModeManagerRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newVKeyManager",
+        "type": "address"
+      }
+    ],
+    "name": "transferVKeyManagerRole",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "trustedSequencer",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "trustedSequencerURL",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_aggregationVkey",
+        "type": "bytes32"
+      }
+    ],
+    "name": "updateAggregationVkey",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes4",
+        "name": "aggchainVKeySelector",
+        "type": "bytes4"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "updatedAggchainVKey",
+        "type": "bytes32"
+      }
+    ],
+    "name": "updateOwnedAggchainVKey",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_rangeVkeyCommitment",
+        "type": "bytes32"
+      }
+    ],
+    "name": "updateRangeVkeyCommitment",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_rollupConfigHash",
+        "type": "bytes32"
+      }
+    ],
+    "name": "updateRollupConfigHash",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_submissionInterval",
+        "type": "uint256"
+      }
+    ],
+    "name": "updateSubmissionInterval",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "useDefaultGateway",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "vKeyManager",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "version",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

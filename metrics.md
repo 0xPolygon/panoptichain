@@ -13,6 +13,36 @@ Variable Labels:
 - address
 - token
 
+## AggchainObserver
+
+
+### panoptichain_rpc_aggchain_latency
+The difference between the L1 timestamp and the L2 block timestamp (in seconds)
+
+Metric Type: HistogramVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_rpc_aggchain_output_proposed_block_number
+The block number in the OutputProposed event
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_rpc_aggchain_output_index
+The output index in the OutputProposed event
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## BaseFeePerGasObserver
 
 
