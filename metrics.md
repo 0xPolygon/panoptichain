@@ -988,6 +988,16 @@ Variable Labels:
 - fulfiller
 - program
 
+### panoptichain_spn_gas_used_by_fulfiller
+The gas used by fulfiller
+
+Metric Type: HistogramVec
+
+Variable Labels:
+- network
+- provider
+- fulfiller
+
 ### panoptichain_spn_cycle_limit
 The cycle limit
 
