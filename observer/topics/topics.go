@@ -19,6 +19,7 @@ const (
 	ExchangeRate                                       // observer.ExchangeRate
 	ExitRoots                                          // *observer.ExitRoots
 	FinalizedHeight                                    // uint64
+	Grafana                                            // *observer.GrafanaResponse
 	HashDivergence                                     // *observer.HashDivergence
 	HeimdallBlockInterval                              // uint64
 	HeimdallMissedBlockProposal                        // observer.HeimdallMissedBlockProposal
