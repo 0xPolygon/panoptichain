@@ -15,28 +15,29 @@ import (
 )
 
 type GrafanaProvider struct {
-	network  network.Network
-	label    string
-	bus      *observer.EventBus
-	interval time.Duration
-	url      string
-	response *observer.GrafanaResponse
-
-	start time.Time
+	network          network.Network
+	label            string
+	bus              *observer.EventBus
+	interval         time.Duration
+	url              string
+	response         *observer.GrafanaResponse
+	refreshStateTime *time.Duration
 }
 
 func NewGrafanaProvider(n network.Network, eb *observer.EventBus, cfg config.Grafana) *GrafanaProvider {
 	return &GrafanaProvider{
-		network:  n,
-		label:    cfg.Label,
-		bus:      eb,
-		interval: GetInterval(cfg.Interval),
-		start:    time.Now(),
-		url:      cfg.URL,
+		network:          n,
+		label:            cfg.Label,
+		bus:              eb,
+		interval:         GetInterval(cfg.Interval),
+		url:              cfg.URL,
+		refreshStateTime: new(time.Duration),
 	}
 }
 
 func (g *GrafanaProvider) RefreshState(context.Context) error {
+	defer timer(g.refreshStateTime)()
+
 	payload := []byte(`{"intervalMs":10000}`)
 	req, err := http.NewRequest("POST", g.url, bytes.NewBuffer(payload))
 	if err != nil {
