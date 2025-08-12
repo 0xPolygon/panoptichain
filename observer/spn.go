@@ -18,11 +18,12 @@ type UsageSummary struct {
 }
 
 type ProofRequestObserver struct {
-	gas_limit   *prometheus.HistogramVec
-	gas_used    *prometheus.HistogramVec
-	cycle_limit *prometheus.HistogramVec
-	cycles      *prometheus.HistogramVec
-	time        *prometheus.HistogramVec
+	gas_limit             *prometheus.HistogramVec
+	gas_used              *prometheus.HistogramVec
+	gas_used_by_fulfiller *prometheus.HistogramVec
+	cycle_limit           *prometheus.HistogramVec
+	cycles                *prometheus.HistogramVec
+	time                  *prometheus.HistogramVec
 }
 
 func (o *ProofRequestObserver) Register(eb *EventBus) {
@@ -59,6 +60,13 @@ func (o *ProofRequestObserver) Register(eb *EventBus) {
 		"requester",
 		"fulfiller",
 		"program",
+	)
+	o.gas_used_by_fulfiller = metrics.NewHistogram(
+		metrics.SPN,
+		"gas_used_by_fulfiller",
+		"The gas used by fulfiller",
+		buckets,
+		"fulfiller",
 	)
 	o.cycle_limit = metrics.NewHistogram(
 		metrics.SPN,
@@ -101,6 +109,11 @@ func (o *ProofRequestObserver) Notify(ctx context.Context, msg Message) {
 
 	o.gas_limit.WithLabelValues(labels...).Observe(float64(proof.GasLimit))
 	o.gas_used.WithLabelValues(labels...).Observe(float64(*proof.GasUsed))
+	o.gas_used_by_fulfiller.WithLabelValues(
+		msg.Network().GetName(),
+		msg.Provider(),
+		common.BytesToAddress(proof.Fulfiller).Hex(),
+	).Observe(float64(*proof.GasUsed))
 	o.cycle_limit.WithLabelValues(labels...).Observe(float64(proof.CycleLimit))
 	o.cycles.WithLabelValues(labels...).Observe(float64(*proof.Cycles))
 
@@ -114,6 +127,7 @@ func (o *ProofRequestObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		o.gas_limit,
 		o.gas_used,
+		o.gas_used_by_fulfiller,
 		o.cycle_limit,
 		o.cycles,
 		o.time,
