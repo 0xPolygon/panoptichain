@@ -2,6 +2,7 @@ package observer
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -71,15 +72,16 @@ func (o *GrafanaObserver) Notify(ctx context.Context, m Message) {
 		}
 
 		value := frame.Data.Values[1][len(frame.Data.Values[1])-1]
+		hex := fmt.Sprintf("0x%s", *fulfiller)
 
 		log.Trace().
 			Any("timestamp", timestamp).
-			Any("fulfiller", fulfiller).
+			Any("fulfiller", hex).
 			Any("ts", ms).
 			Any("value", value).
 			Send()
 
-		o.gauge.WithLabelValues(m.Network().GetName(), m.Provider(), *fulfiller).Set(value)
+		o.gauge.WithLabelValues(m.Network().GetName(), m.Provider(), hex).Set(value)
 	}
 }
 
