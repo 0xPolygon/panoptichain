@@ -363,6 +363,19 @@ Variable Labels:
 - network
 - provider
 
+## GrafanaObserver
+
+
+### panoptichain_spn_mpgu_per_second
+The gas used (million prover gas units per second)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- fulfiller
+
 ## HashDivergenceObserver
 
 

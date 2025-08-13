@@ -29,6 +29,7 @@ type Providers struct {
 	SensorNetworks         []SensorNetwork         `mapstructure:"sensor_network" validate:"dive"`
 	SuccinctProverNetworks []SuccinctProverNetwork `mapstructure:"succinct_prover_network" validate:"dive"`
 	Aggchains              []Aggchain              `mapstructure:"aggchain" validate:"dive"`
+	Grafana                []Grafana               `mapstructure:"grafana" validate:"dive"`
 	HashDivergence         *HashDivergence         `mapstructure:"hash_divergence"`
 	System                 *System                 `mapstructure:"system"`
 	ExchangeRates          *ExchangeRates          `mapstructure:"exchange_rates"`
@@ -150,6 +151,13 @@ type Aggchain struct {
 	Label         string         `mapstructure:"label" validate:"required"`
 	Interval      *time.Duration `mapstructure:"interval"`
 	RollupAddress string         `mapstructure:"rollup_address" validate:"required"`
+}
+
+type Grafana struct {
+	Name     string         `mapstructure:"name" validate:"required"`
+	URL      string         `mapstructure:"url" validate:"url,required"`
+	Label    string         `mapstructure:"label" validate:"required"`
+	Interval *time.Duration `mapstructure:"interval"`
 }
 
 // Observers defines which observers should be enabled or disabled. Observers

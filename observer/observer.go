@@ -151,6 +151,7 @@ var observersMap = map[string]Observer{
 	"finalized_height":                    new(FinalizedHeightObserver),
 	"gas_limit":                           new(GasLimitObserver),
 	"gas_used":                            new(GasUsedObserver),
+	"grafana":                             new(GrafanaObserver),
 	"hash_divergence":                     new(HashDivergenceObserver),
 	"heimdall_block":                      new(HeimdallBlockObserver),
 	"heimdall_block_interval":             new(HeimdallBlockIntervalObserver),
