@@ -151,6 +151,7 @@ Variable Labels:
 - provider
 - origin_network
 - destination_network
+- origin_address
 
 ### panoptichain_rpc_bridge_event_amount
 The amount in bridged (gwei)
@@ -162,6 +163,7 @@ Variable Labels:
 - provider
 - origin_network
 - destination_network
+- origin_address
 
 ## CheckpointObserver
 
@@ -228,6 +230,7 @@ Variable Labels:
 - network
 - provider
 - origin_network
+- origin_address
 
 ### panoptichain_rpc_observed_claim_events
 The number of claim events observed
@@ -238,6 +241,7 @@ Variable Labels:
 - network
 - provider
 - origin_network
+- origin_address
 
 ## DepositCountObserver
 
