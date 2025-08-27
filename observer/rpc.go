@@ -982,12 +982,13 @@ func (o *BridgeEventObserver) Notify(ctx context.Context, m Message) {
 	case *contracts.PolygonZkEVMBridgeV2BridgeEvent:
 		origin := fmt.Sprint(v.OriginNetwork)
 		destination := fmt.Sprint(v.DestinationNetwork)
+		address := v.OriginAddress.Hex()
 
 		dc := float64(v.DepositCount)
-		o.depositCount.WithLabelValues(m.Network().GetName(), m.Provider(), origin, destination).Set(dc)
+		o.depositCount.WithLabelValues(m.Network().GetName(), m.Provider(), origin, destination, address).Set(dc)
 
 		gwei, _ := weiToGwei(v.Amount).Float64()
-		o.amount.WithLabelValues(m.Network().GetName(), m.Provider(), origin, destination).Observe(gwei)
+		o.amount.WithLabelValues(m.Network().GetName(), m.Provider(), origin, destination, address).Observe(gwei)
 
 	case BridgeEventTimes:
 		for k, t := range v {
@@ -1019,6 +1020,7 @@ func (o *BridgeEventObserver) Register(eb *EventBus) {
 		"The deposit count of the latest bridge event",
 		"origin_network",
 		"destination_network",
+		"origin_address",
 	)
 	o.amount = metrics.NewHistogram(
 		metrics.RPC,
@@ -1027,6 +1029,7 @@ func (o *BridgeEventObserver) Register(eb *EventBus) {
 		newExponentialBuckets(10, 9),
 		"origin_network",
 		"destination_network",
+		"origin_address",
 	)
 }
 
@@ -1048,9 +1051,10 @@ func (o *ClaimEventObserver) Notify(ctx context.Context, m Message) {
 	switch v := m.Data().(type) {
 	case *contracts.PolygonZkEVMBridgeV2ClaimEvent:
 		origin := fmt.Sprint(v.OriginNetwork)
+		address := v.OriginAddress.Hex()
 		gwei, _ := weiToGwei(v.Amount).Float64()
-		o.amount.WithLabelValues(m.Network().GetName(), m.Provider(), origin).Observe(gwei)
-		o.observedClaimEvents.WithLabelValues(m.Network().GetName(), m.Provider(), origin).Inc()
+		o.amount.WithLabelValues(m.Network().GetName(), m.Provider(), origin, address).Observe(gwei)
+		o.observedClaimEvents.WithLabelValues(m.Network().GetName(), m.Provider(), origin, address).Inc()
 
 	case ClaimEventTimes:
 		for k, t := range v {
@@ -1080,12 +1084,14 @@ func (o *ClaimEventObserver) Register(eb *EventBus) {
 		"The amount in claimed (gwei)",
 		newExponentialBuckets(10, 9),
 		"origin_network",
+		"origin_address",
 	)
 	o.observedClaimEvents = metrics.NewCounter(
 		metrics.RPC,
 		"observed_claim_events",
 		"The number of claim events observed",
 		"origin_network",
+		"origin_address",
 	)
 }
 
