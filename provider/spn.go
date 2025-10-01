@@ -92,7 +92,9 @@ func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context
 		r.logger.Error().Err(err).Msg("Failed to get requester usage")
 	}
 
-	r.proofRequests = res.Requests
+	if res != nil {
+		r.proofRequests = res.Requests
+	}
 }
 
 func (r *SuccinctProverNetworkProvider) PublishEvents(ctx context.Context) error {
@@ -103,7 +105,7 @@ func (r *SuccinctProverNetworkProvider) PublishEvents(ctx context.Context) error
 
 		id := string(proof.RequestId)
 		if seen, ok := r.seen[id]; ok {
-			if time.Now().Sub(seen) > time.Hour {
+			if time.Since(seen) > time.Hour {
 				delete(r.seen, id)
 			}
 			continue
