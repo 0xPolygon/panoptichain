@@ -424,9 +424,6 @@ type HeimdallSpanObserver struct {
 	startBlock       *prometheus.GaugeVec
 	endBlock         *prometheus.GaugeVec
 	producer         *prometheus.GaugeVec
-	prevSpanID       *prometheus.GaugeVec
-	prevStartBlock   *prometheus.GaugeVec
-	prevEndBlock     *prometheus.GaugeVec
 	overlaps         *prometheus.CounterVec
 	overlappedBlocks *prometheus.CounterVec
 }
@@ -438,9 +435,6 @@ func (o *HeimdallSpanObserver) Register(eb *EventBus) {
 	o.startBlock = metrics.NewGauge(metrics.Heimdall, "span_start_block", "The span start block")
 	o.endBlock = metrics.NewGauge(metrics.Heimdall, "span_end_block", "The span end block")
 	o.producer = metrics.NewGauge(metrics.Heimdall, "span_producer", "The span selected producer")
-	o.prevSpanID = metrics.NewGauge(metrics.Heimdall, "prev_span_id", "The previous span id")
-	o.prevStartBlock = metrics.NewGauge(metrics.Heimdall, "prev_span_start_block", "The previous span start block")
-	o.prevEndBlock = metrics.NewGauge(metrics.Heimdall, "prev_span_end_block", "The previous span end block")
 	o.overlaps = metrics.NewCounter(metrics.Heimdall, "span_overlaps", "The number of overlapping spans")
 	o.overlappedBlocks = metrics.NewCounter(metrics.Heimdall, "span_overlapped_blocks", "The number of overlapped blocks between spans")
 }
@@ -471,15 +465,7 @@ func (o *HeimdallSpanObserver) Notify(ctx context.Context, m Message) {
 	}
 
 	prev := data.Prev
-	if prev == nil {
-		return
-	}
-
-	o.prevSpanID.WithLabelValues(network, provider).Set(float64(prev.ID))
-	o.prevStartBlock.WithLabelValues(network, provider).Set(float64(prev.StartBlock))
-	o.prevEndBlock.WithLabelValues(network, provider).Set(float64(prev.EndBlock))
-
-	if curr.ID == prev.ID {
+	if prev == nil || curr.ID <= prev.ID {
 		return
 	}
 
@@ -496,9 +482,6 @@ func (o *HeimdallSpanObserver) GetCollectors() []prometheus.Collector {
 		o.startBlock,
 		o.endBlock,
 		o.producer,
-		o.prevSpanID,
-		o.prevStartBlock,
-		o.prevEndBlock,
 		o.overlaps,
 		o.overlappedBlocks,
 	}
