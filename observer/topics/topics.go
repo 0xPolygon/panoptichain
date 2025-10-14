@@ -33,7 +33,7 @@ const (
 	RollupManager                                      // *observer.RollupManager
 	SensorBlockEvents                                  // *observer.SensorBlockEvents
 	SensorBlocks                                       // *observer.SensorBlocks
-	Span                                               // *observer.HeimdallSpan
+	Span                                               // *observer.HeimdallSpans
 	StolenBlock                                        // *types.Block
 	System                                             // *observer.System
 	TimeToFinalized                                    // uint64
