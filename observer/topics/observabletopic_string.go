@@ -53,8 +53,9 @@ const _ObservableTopic_name = "AccountBalancesAggchainEventBlockIntervalBorMisse
 var _ObservableTopic_index = [...]uint16{0, 15, 28, 41, 63, 75, 86, 102, 112, 132, 142, 157, 170, 182, 191, 206, 213, 227, 248, 275, 284, 308, 319, 335, 347, 363, 368, 381, 398, 410, 414, 425, 431, 446, 456, 471, 483, 498, 510}
 
 func (i ObservableTopic) String() string {
-	if i < 0 || i >= ObservableTopic(len(_ObservableTopic_index)-1) {
+	idx := int(i) - 0
+	if i < 0 || idx >= len(_ObservableTopic_index)-1 {
 		return "ObservableTopic(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
-	return _ObservableTopic_name[_ObservableTopic_index[i]:_ObservableTopic_index[i+1]]
+	return _ObservableTopic_name[_ObservableTopic_index[idx]:_ObservableTopic_index[idx+1]]
 }

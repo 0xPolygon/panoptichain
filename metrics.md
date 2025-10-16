@@ -978,6 +978,33 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_heimdall_span_producer
+The span selected producer
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_span_overlaps
+The number of overlapping spans
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_span_overlapped_blocks
+The number of overlapped blocks between spans
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+
 ## ProofRequestObserver
 
 

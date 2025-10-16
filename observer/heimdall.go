@@ -243,7 +243,7 @@ type MilestoneObserver struct {
 func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 	milestone := m.Data().(*HeimdallMilestone)
 
-	seconds := time.Now().Sub(time.Unix(milestone.Timestamp, 0)).Seconds()
+	seconds := time.Since(time.Unix(milestone.Timestamp, 0)).Seconds()
 	startBlock := milestone.StartBlock
 	endBlock := milestone.EndBlock
 
@@ -404,19 +404,28 @@ func (o *HeimdallMissedCheckpointProposalObserver) GetCollectors() []prometheus.
 }
 
 type HeimdallSpan struct {
-	ID         uint64 `json:"id,string"`
-	StartBlock uint64 `json:"start_block,string"`
-	EndBlock   uint64 `json:"end_block,string"`
+	ID                uint64          `json:"id,string"`
+	StartBlock        uint64          `json:"start_block,string"`
+	EndBlock          uint64          `json:"end_block,string"`
+	SelectedProducers []api.Validator `json:"selected_producers"`
 }
 
 type HeimdallSpanV2 struct {
 	Span HeimdallSpan `json:"span"`
 }
 
+type HeimdallSpans struct {
+	Curr *HeimdallSpan
+	Prev *HeimdallSpan
+}
+
 type HeimdallSpanObserver struct {
 	spanID     *prometheus.GaugeVec
 	startBlock *prometheus.GaugeVec
 	endBlock   *prometheus.GaugeVec
+	producer   *prometheus.GaugeVec
+	overlaps   *prometheus.CounterVec
+	overlapped *prometheus.CounterVec
 }
 
 func (o *HeimdallSpanObserver) Register(eb *EventBus) {
@@ -425,16 +434,55 @@ func (o *HeimdallSpanObserver) Register(eb *EventBus) {
 	o.spanID = metrics.NewGauge(metrics.Heimdall, "span_id", "The span id")
 	o.startBlock = metrics.NewGauge(metrics.Heimdall, "span_start_block", "The span start block")
 	o.endBlock = metrics.NewGauge(metrics.Heimdall, "span_end_block", "The span end block")
+	o.producer = metrics.NewGauge(metrics.Heimdall, "span_producer", "The span selected producer")
+	o.overlaps = metrics.NewCounter(metrics.Heimdall, "span_overlaps", "The number of overlapping spans")
+	o.overlapped = metrics.NewCounter(metrics.Heimdall, "span_overlapped_blocks", "The number of overlapped blocks between spans")
 }
 
 func (o *HeimdallSpanObserver) Notify(ctx context.Context, m Message) {
-	span := m.Data().(*HeimdallSpan)
+	logger := NewLogger(o, m)
+	data := m.Data().(*HeimdallSpans)
 
-	o.spanID.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.ID))
-	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.StartBlock))
-	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(span.EndBlock))
+	network := m.Network().GetName()
+	provider := m.Provider()
+
+	curr := data.Curr
+	if curr == nil {
+		return
+	}
+
+	o.spanID.WithLabelValues(network, provider).Set(float64(curr.ID))
+	o.startBlock.WithLabelValues(network, provider).Set(float64(curr.StartBlock))
+	o.endBlock.WithLabelValues(network, provider).Set(float64(curr.EndBlock))
+
+	if len(curr.SelectedProducers) != 1 {
+		logger.Warn().
+			Int("selected_producers", len(curr.SelectedProducers)).
+			Msg("Unexpected number of selected producers")
+	} else {
+		producer := float64(curr.SelectedProducers[0].ID)
+		o.producer.WithLabelValues(network, provider).Set(producer)
+	}
+
+	prev := data.Prev
+	if prev == nil || curr.ID <= prev.ID {
+		return
+	}
+
+	if curr.StartBlock <= prev.EndBlock {
+		o.overlaps.WithLabelValues(network, provider).Add(1)
+		blocks := prev.EndBlock - curr.StartBlock + 1
+		o.overlapped.WithLabelValues(network, provider).Add(float64(blocks))
+	}
 }
 
 func (o *HeimdallSpanObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.spanID, o.startBlock, o.endBlock}
+	return []prometheus.Collector{
+		o.spanID,
+		o.startBlock,
+		o.endBlock,
+		o.producer,
+		o.overlaps,
+		o.overlapped,
+	}
 }

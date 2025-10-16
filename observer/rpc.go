@@ -188,7 +188,7 @@ func (o *StateSyncObserver) Notify(ctx context.Context, m Message) {
 	logger := NewLogger(o, m)
 
 	stateSync := m.Data().(*StateSync)
-	seconds := time.Now().Sub(stateSync.Time).Seconds()
+	seconds := time.Since(stateSync.Time).Seconds()
 	finalized := fmt.Sprint(stateSync.Finalized)
 
 	logger.Debug().

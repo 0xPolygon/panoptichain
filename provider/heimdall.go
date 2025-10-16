@@ -41,7 +41,7 @@ type HeimdallProvider struct {
 	milestone          *observer.HeimdallMilestone
 	prevMilestoneCount int64
 
-	span *observer.HeimdallSpan
+	spans *observer.HeimdallSpans
 
 	refreshStateTime *time.Duration
 }
@@ -58,6 +58,7 @@ func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.He
 		logger:              NewLogger(n, cfg.Label),
 		checkpointProposers: orderedmap.New[string, struct{}](),
 		refreshStateTime:    new(time.Duration),
+		spans:               &observer.HeimdallSpans{},
 	}
 }
 
@@ -142,8 +143,8 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.Milestone, m)
 	}
 
-	if h.span != nil {
-		m := observer.NewMessage(h.network, h.label, h.span)
+	if h.spans != nil {
+		m := observer.NewMessage(h.network, h.label, h.spans)
 		h.bus.Publish(ctx, topics.Span, m)
 	}
 
@@ -407,7 +408,10 @@ func (h *HeimdallProvider) refreshSpan() error {
 		return err
 	}
 
-	h.span = &v2.Span
+	if h.spans.Curr != nil {
+		h.spans.Prev = h.spans.Curr
+	}
+	h.spans.Curr = &v2.Span
 
 	return nil
 }

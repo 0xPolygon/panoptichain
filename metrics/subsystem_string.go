@@ -20,8 +20,9 @@ const _Subsystem_name = "RPCSensorHeimdallSystemSPN"
 var _Subsystem_index = [...]uint8{0, 3, 9, 17, 23, 26}
 
 func (i Subsystem) String() string {
-	if i < 0 || i >= Subsystem(len(_Subsystem_index)-1) {
+	idx := int(i) - 0
+	if i < 0 || idx >= len(_Subsystem_index)-1 {
 		return "Subsystem(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
-	return _Subsystem_name[_Subsystem_index[i]:_Subsystem_index[i+1]]
+	return _Subsystem_name[_Subsystem_index[idx]:_Subsystem_index[idx+1]]
 }
