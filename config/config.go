@@ -3,7 +3,9 @@
 package config
 
 import (
+	"bytes"
 	"flag"
+	"log"
 	"os"
 	"reflect"
 	"strings"
@@ -260,8 +262,23 @@ func Init() error {
 	viper.SetDefault("logs.pretty", false)
 	viper.SetDefault("logs.verbosity", "info")
 
+	// Use Viper to find the config file, then read it manually for env expansion
 	if err := viper.ReadInConfig(); err != nil {
-		return err
+		log.Panicf("Failed to find config file: %v", err)
+	}
+
+	configPath := viper.ConfigFileUsed()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Panicf("Failed to read config file: %v", err)
+	}
+
+	// Expand environment variables in the config content
+	expanded := os.ExpandEnv(string(data))
+
+	// Read the expanded config into Viper
+	if err := viper.ReadConfig(bytes.NewBufferString(expanded)); err != nil {
+		log.Panicf("Failed to read config: %v", err)
 	}
 
 	opts := viper.DecodeHook(
