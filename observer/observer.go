@@ -187,6 +187,7 @@ var observersMap = map[string]Observer{
 	"uncles":                              new(UnclesObserver),
 	"validator_wallet_balance":            new(ValidatorWalletBalanceObserver),
 	"zkevm_batches":                       new(ZkEVMBatchObserver),
+	"stake_manager":                        new(StakeManagerObserver),
 }
 
 func GetEnabledObserverSet() ObserverSet {

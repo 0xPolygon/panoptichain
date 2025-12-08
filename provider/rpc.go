@@ -61,6 +61,7 @@ type RPCProvider struct {
 	checkpointSignatures map[bool]*observer.CheckpointSignatures
 	validatorBalances    observer.ValidatorWalletBalances
 	missedBlockProposal  observer.MissedBlockProposal
+	stakeManager         *observer.StakeManager
 
 	// zkEVM
 	batches        observer.ZkEVMBatches
@@ -148,6 +149,8 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 		r.refreshValidatorBalances(ctx, c)
 		r.refreshMissedBlockProposal(ctx, c)
 	}
+
+	r.refreshStakeManager(ctx, c)
 
 	if r.hasTxPool {
 		r.refreshTxPoolStatus(ctx, c)
@@ -290,6 +293,11 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 		r.bus.Publish(ctx, topics.FinalizedHeight, m)
 	}
 
+	if r.stakeManager != nil {
+		m := observer.NewMessage(r.network, r.label, r.stakeManager)
+		r.bus.Publish(ctx, topics.StakeManager, m)
+	}
+
 	r.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(r.network, r.label, r.refreshStateTime))
 
 	return nil
@@ -402,6 +410,32 @@ func (r *RPCProvider) refreshStateSync(ctx context.Context, c *ethclient.Client,
 
 	if r.stateSync[finalized] == nil || r.stateSync[finalized].ID != stateSync.ID {
 		r.stateSync[finalized] = stateSync
+	}
+
+	return nil
+}
+
+func (r *RPCProvider) refreshStakeManager(ctx context.Context, c *ethclient.Client) error {
+	if r.contracts.StakingManagerAddress == nil {
+		return nil
+	}
+
+	address := common.HexToAddress(*r.contracts.StakingManagerAddress)
+	contract, err := contracts.NewStakeManager(address, c)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to bind stake manager contract")
+		return err
+	}
+
+	co := bind.CallOpts{Context: ctx}
+	totalStaked, err := contract.CurrentValidatorSetTotalStake(&co)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to get current validator set total stake")
+		return err
+	}
+
+	r.stakeManager = &observer.StakeManager{
+		TotalStaked: totalStaked,
 	}
 
 	return nil

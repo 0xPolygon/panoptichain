@@ -42,4 +42,5 @@ const (
 	TrustedBatch                                       // *util.Batch
 	ValidatorWallet                                    // observer.ValidatorWalletBalances
 	ZkEVMBatches                                       // observer.ZkEVMBatches
+	StakeManager                                       // *observer.StakeManager
 )

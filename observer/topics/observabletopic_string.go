@@ -46,11 +46,12 @@ func _() {
 	_ = x[TrustedBatch-35]
 	_ = x[ValidatorWallet-36]
 	_ = x[ZkEVMBatches-37]
+	_ = x[StakeManager-38]
 }
 
-const _ObservableTopic_name = "AccountBalancesAggchainEventBlockIntervalBorMissedBlockProposalBorStateSyncBridgeEventBridgeEventTimesCheckpointCheckpointSignaturesClaimEventClaimEventTimesDepositCountsExchangeRateExitRootsFinalizedHeightGrafanaHashDivergenceHeimdallBlockIntervalHeimdallMissedBlockProposalMilestoneMissedCheckpointProposalNewEVMBlockNewHeimdallBlockProofRequestRefreshStateTimeReorgRollupManagerSensorBlockEventsSensorBlocksSpanStolenBlockSystemTimeToFinalizedTimeToMineTransactionPoolTrustedBatchValidatorWalletZkEVMBatches"
+const _ObservableTopic_name = "AccountBalancesAggchainEventBlockIntervalBorMissedBlockProposalBorStateSyncBridgeEventBridgeEventTimesCheckpointCheckpointSignaturesClaimEventClaimEventTimesDepositCountsExchangeRateExitRootsFinalizedHeightGrafanaHashDivergenceHeimdallBlockIntervalHeimdallMissedBlockProposalMilestoneMissedCheckpointProposalNewEVMBlockNewHeimdallBlockProofRequestRefreshStateTimeReorgRollupManagerSensorBlockEventsSensorBlocksSpanStolenBlockSystemTimeToFinalizedTimeToMineTransactionPoolTrustedBatchValidatorWalletZkEVMBatchesStakeManager"
 
-var _ObservableTopic_index = [...]uint16{0, 15, 28, 41, 63, 75, 86, 102, 112, 132, 142, 157, 170, 182, 191, 206, 213, 227, 248, 275, 284, 308, 319, 335, 347, 363, 368, 381, 398, 410, 414, 425, 431, 446, 456, 471, 483, 498, 510}
+var _ObservableTopic_index = [...]uint16{0, 15, 28, 41, 63, 75, 86, 102, 112, 132, 142, 157, 170, 182, 191, 206, 213, 227, 248, 275, 284, 308, 319, 335, 347, 363, 368, 381, 398, 410, 414, 425, 431, 446, 456, 471, 483, 498, 510, 522}
 
 func (i ObservableTopic) String() string {
 	idx := int(i) - 0

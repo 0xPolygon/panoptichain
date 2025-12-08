@@ -1622,3 +1622,34 @@ func (o *TimeToFinalizedObserver) Register(eb *EventBus) {
 func (o *TimeToFinalizedObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.gauge}
 }
+
+type StakeManager struct {
+	TotalStaked *big.Int
+}
+
+type StakeManagerObserver struct {
+	totalStaked *prometheus.GaugeVec
+}
+
+func (o *StakeManagerObserver) Notify(ctx context.Context, m Message) {
+	data := m.Data().(*StakeManager)
+
+	if data.TotalStaked != nil {
+		totalStaked, _ := weiToEther(data.TotalStaked).Float64()
+		o.totalStaked.WithLabelValues(m.Network().GetName(), m.Provider()).Set(totalStaked)
+	}
+}
+
+func (o *StakeManagerObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.StakeManager, o)
+
+	o.totalStaked = metrics.NewGauge(
+		metrics.RPC,
+		"total_staked",
+		"Total amount staked in the stake manager contract (in ether)",
+	)
+}
+
+func (o *StakeManagerObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.totalStaked}
+}
