@@ -416,11 +416,11 @@ func (r *RPCProvider) refreshStateSync(ctx context.Context, c *ethclient.Client,
 }
 
 func (r *RPCProvider) refreshStakeManager(ctx context.Context, c *ethclient.Client) error {
-	if r.contracts.StakingManagerAddress == nil {
+	if r.contracts.StakeManagerAddress == nil {
 		return nil
 	}
 
-	address := common.HexToAddress(*r.contracts.StakingManagerAddress)
+	address := common.HexToAddress(*r.contracts.StakeManagerAddress)
 	contract, err := contracts.NewStakeManager(address, c)
 	if err != nil {
 		r.logger.Error().Err(err).Msg("Failed to bind stake manager contract")
