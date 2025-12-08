@@ -169,6 +169,7 @@ var observersMap = map[string]Observer{
 	"sensor_blocks":                       new(SensorBlocksObserver),
 	"sensor_bogon_block":                  new(SensorBogonBlockObserver),
 	"span":                                new(HeimdallSpanObserver),
+	"stake_manager":                       new(StakeManagerObserver),
 	"state_sync":                          new(StateSyncObserver),
 	"stolen_block":                        new(StolenBlockObserver),
 	"spn_proof_request":                   new(ProofRequestObserver),
@@ -187,7 +188,6 @@ var observersMap = map[string]Observer{
 	"uncles":                              new(UnclesObserver),
 	"validator_wallet_balance":            new(ValidatorWalletBalanceObserver),
 	"zkevm_batches":                       new(ZkEVMBatchObserver),
-	"stake_manager":                        new(StakeManagerObserver),
 }
 
 func GetEnabledObserverSet() ObserverSet {
