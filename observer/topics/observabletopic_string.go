@@ -38,19 +38,20 @@ func _() {
 	_ = x[SensorBlockEvents-27]
 	_ = x[SensorBlocks-28]
 	_ = x[Span-29]
-	_ = x[StolenBlock-30]
-	_ = x[System-31]
-	_ = x[TimeToFinalized-32]
-	_ = x[TimeToMine-33]
-	_ = x[TransactionPool-34]
-	_ = x[TrustedBatch-35]
-	_ = x[ValidatorWallet-36]
-	_ = x[ZkEVMBatches-37]
+	_ = x[StakeManager-30]
+	_ = x[StolenBlock-31]
+	_ = x[System-32]
+	_ = x[TimeToFinalized-33]
+	_ = x[TimeToMine-34]
+	_ = x[TransactionPool-35]
+	_ = x[TrustedBatch-36]
+	_ = x[ValidatorWallet-37]
+	_ = x[ZkEVMBatches-38]
 }
 
-const _ObservableTopic_name = "AccountBalancesAggchainEventBlockIntervalBorMissedBlockProposalBorStateSyncBridgeEventBridgeEventTimesCheckpointCheckpointSignaturesClaimEventClaimEventTimesDepositCountsExchangeRateExitRootsFinalizedHeightGrafanaHashDivergenceHeimdallBlockIntervalHeimdallMissedBlockProposalMilestoneMissedCheckpointProposalNewEVMBlockNewHeimdallBlockProofRequestRefreshStateTimeReorgRollupManagerSensorBlockEventsSensorBlocksSpanStolenBlockSystemTimeToFinalizedTimeToMineTransactionPoolTrustedBatchValidatorWalletZkEVMBatches"
+const _ObservableTopic_name = "AccountBalancesAggchainEventBlockIntervalBorMissedBlockProposalBorStateSyncBridgeEventBridgeEventTimesCheckpointCheckpointSignaturesClaimEventClaimEventTimesDepositCountsExchangeRateExitRootsFinalizedHeightGrafanaHashDivergenceHeimdallBlockIntervalHeimdallMissedBlockProposalMilestoneMissedCheckpointProposalNewEVMBlockNewHeimdallBlockProofRequestRefreshStateTimeReorgRollupManagerSensorBlockEventsSensorBlocksSpanStakeManagerStolenBlockSystemTimeToFinalizedTimeToMineTransactionPoolTrustedBatchValidatorWalletZkEVMBatches"
 
-var _ObservableTopic_index = [...]uint16{0, 15, 28, 41, 63, 75, 86, 102, 112, 132, 142, 157, 170, 182, 191, 206, 213, 227, 248, 275, 284, 308, 319, 335, 347, 363, 368, 381, 398, 410, 414, 425, 431, 446, 456, 471, 483, 498, 510}
+var _ObservableTopic_index = [...]uint16{0, 15, 28, 41, 63, 75, 86, 102, 112, 132, 142, 157, 170, 182, 191, 206, 213, 227, 248, 275, 284, 308, 319, 335, 347, 363, 368, 381, 398, 410, 414, 426, 437, 443, 458, 468, 483, 495, 510, 522}
 
 func (i ObservableTopic) String() string {
 	idx := int(i) - 0

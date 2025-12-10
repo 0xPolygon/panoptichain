@@ -1078,6 +1078,18 @@ Variable Labels:
 - fulfiller
 - program
 
+## StakeManagerObserver
+
+
+### panoptichain_rpc_total_staked
+Total amount staked in the stake manager contract (in ether)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## StateSyncObserver
 
 

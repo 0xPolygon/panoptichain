@@ -34,6 +34,7 @@ const (
 	SensorBlockEvents                                  // *observer.SensorBlockEvents
 	SensorBlocks                                       // *observer.SensorBlocks
 	Span                                               // *observer.HeimdallSpans
+	StakeManager                                       // *observer.StakeManager
 	StolenBlock                                        // *types.Block
 	System                                             // *observer.System
 	TimeToFinalized                                    // uint64

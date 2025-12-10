@@ -154,6 +154,7 @@ options.
   abigen --abi PolygonZkEVMEtrog.abi.json --pkg contracts --type PolygonZkEVMEtrog > PolygonZkEVMEtrog.go
   abigen --abi PolygonRollupManager.abi.json --pkg contracts --type PolygonRollupManager > PolygonRollupManager.go
   abigen --abi AggchainFEP.abi.json --pkg contracts --type AggchainFEP > AggchainFEP.go
+  abigen --abi StakeManager.abi.json --pkg contracts --type StakeManager > StakeManager.go
   ```
 
 - Clone `succinctlabs/network` and compile `protobuf`
