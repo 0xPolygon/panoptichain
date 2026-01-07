@@ -469,7 +469,7 @@ func (o *HeimdallSpanObserver) Notify(ctx context.Context, m Message) {
 		return
 	}
 
-	if curr.StartBlock <= prev.EndBlock {
+	if curr.StartBlock <= prev.EndBlock || curr.StartBlock == prev.StartBlock {
 		o.overlaps.WithLabelValues(network, provider).Add(1)
 		blocks := prev.EndBlock - curr.StartBlock + 1
 		o.overlapped.WithLabelValues(network, provider).Add(float64(blocks))
