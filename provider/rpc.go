@@ -50,7 +50,7 @@ type RPCProvider struct {
 	refreshStateTime *time.Duration
 	contracts        config.Contracts
 	timeToMine       *config.TimeToMine
-	accounts         []string
+	accounts         []config.Account
 	accountBalances  observer.AccountBalances
 	timeToFinalized  *uint64
 	blockLookBack    uint64
@@ -112,7 +112,7 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		contracts:            cfg.Contracts,
 		timeToMine:           cfg.TimeToMine,
 		accounts:             cfg.Accounts,
-		accountBalances:      make(observer.AccountBalances),
+		accountBalances:      make(observer.AccountBalances, 0),
 		stateSync:            make(map[bool]*observer.StateSync),
 		checkpointSignatures: make(map[bool]*observer.CheckpointSignatures),
 		validatorBalances:    make(observer.ValidatorWalletBalances),
@@ -138,6 +138,9 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 		r.logger.Error().Err(err).Msg("Failed to create the client")
 		return err
 	}
+
+	// Reset accountBalances for this refresh cycle
+	r.accountBalances = make(observer.AccountBalances, 0)
 
 	r.refreshBlockBuffer(ctx, c)
 
@@ -649,6 +652,13 @@ func (r *RPCProvider) refreshValidatorBalances(ctx context.Context, c *ethclient
 
 		address := addresses[i]
 		r.validatorBalances[address] = balance
+
+		// Also add to accountBalances with tag="validator"
+		r.accountBalances = append(r.accountBalances, &observer.AccountBalance{
+			Address: common.HexToAddress(address),
+			Tag:     "validator",
+			ETH:     balance,
+		})
 	}
 
 	return nil
@@ -835,11 +845,11 @@ func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.C
 	co := &bind.CallOpts{Context: ctx}
 
 	for _, account := range r.accounts {
-		address := common.HexToAddress(account)
-		balances, ok := r.accountBalances[address]
-		if !ok {
-			balances = &observer.TokenBalances{}
-			r.accountBalances[address] = balances
+		address := common.HexToAddress(account.Address)
+
+		ab := &observer.AccountBalance{
+			Address: address,
+			Tag:     account.Tag,
 		}
 
 		eth, err := c.BalanceAt(ctx, address, nil)
@@ -849,10 +859,12 @@ func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.C
 				Str("token", observer.ETH).
 				Msg("Failed to get balance")
 		} else {
-			balances.ETH = eth
+			ab.ETH = eth
 		}
 
-		balances.POL = r.getPOL(c, address, co, balances.POL)
+		ab.POL = r.getPOL(c, address, co, nil)
+
+		r.accountBalances = append(r.accountBalances, ab)
 	}
 }
 

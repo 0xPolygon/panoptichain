@@ -35,6 +35,12 @@ type Providers struct {
 	ExchangeRates          *ExchangeRates          `mapstructure:"exchange_rates"`
 }
 
+// Account defines an account to monitor with an optional tag.
+type Account struct {
+	Address string `mapstructure:"address" validate:"required"`
+	Tag     string `mapstructure:"tag"`
+}
+
 // RPC defines the various RPC providers that will be monitored.
 type RPC struct {
 	Name          string         `mapstructure:"name" validate:"required"`
@@ -43,7 +49,7 @@ type RPC struct {
 	Interval      *time.Duration `mapstructure:"interval"`
 	Contracts     Contracts      `mapstructure:"contracts"`
 	TimeToMine    *TimeToMine    `mapstructure:"time_to_mine"`
-	Accounts      []string       `mapstructure:"accounts"`
+	Accounts      []Account      `mapstructure:"accounts"`
 	BlockLookBack *uint64        `mapstructure:"block_look_back"`
 	TxPool        bool           `mapstructure:"txpool"`
 }
