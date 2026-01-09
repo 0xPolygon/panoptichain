@@ -12,6 +12,7 @@ Variable Labels:
 - provider
 - address
 - token
+- tag
 
 ## AggchainObserver
 
