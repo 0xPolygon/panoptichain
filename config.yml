@@ -202,9 +202,18 @@
     ## Whether the underlying RPC node is supports `txpool_*` API requests. This
     ## is usually only available for Geth based clients.
     ##
-    ## @param accounts - list of strings - optional
-    ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS - list of strings - optional
-    ## Query the balance of specific accounts.
+    ## @param accounts - list of objects - optional
+    ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS - list of objects - optional
+    ## Query the balance of specific accounts. Each account has an address and
+    ## an optional tag for labeling.
+    ##
+      ## @param address - string - required
+      ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS_0_ADDRESS - string - required
+      ## The account address to monitor.
+      ##
+      ## @param tag - string - optional
+      ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS_0_TAG - string - optional
+      ## A tag to label this account in metrics (e.g., "sequencer", "proposer").
     ##
     ## @param time_to_mine - object - optional
     ## The `time_to_mine` configuration. This will periodically send

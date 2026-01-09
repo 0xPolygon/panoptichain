@@ -1531,7 +1531,15 @@ func (o *TimeToMineObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.timeToMine, o.gasPrice}
 }
 
-type AccountBalances map[common.Address]*TokenBalances
+// AccountBalance represents a single account's balances with a tag.
+type AccountBalance struct {
+	Address common.Address
+	Tag     string
+	ETH     *big.Int
+	POL     *big.Int
+}
+
+type AccountBalances []*AccountBalance
 
 type AccountBalancesObserver struct {
 	balance *prometheus.GaugeVec
@@ -1540,17 +1548,18 @@ type AccountBalancesObserver struct {
 func (o *AccountBalancesObserver) Notify(ctx context.Context, m Message) {
 	data := m.Data().(AccountBalances)
 
-	for account, balances := range data {
-		address := account.Hex()
+	for _, ab := range data {
+		address := ab.Address.Hex()
+		tag := ab.Tag
 
-		if balances.ETH != nil {
-			eth, _ := balances.ETH.Float64()
-			o.balance.WithLabelValues(m.Network().GetName(), m.Provider(), address, ETH).Set(eth)
+		if ab.ETH != nil {
+			eth, _ := ab.ETH.Float64()
+			o.balance.WithLabelValues(m.Network().GetName(), m.Provider(), address, ETH, tag).Set(eth)
 		}
 
-		if balances.POL != nil {
-			pol, _ := balances.POL.Float64()
-			o.balance.WithLabelValues(m.Network().GetName(), m.Provider(), address, POL).Set(pol)
+		if ab.POL != nil {
+			pol, _ := ab.POL.Float64()
+			o.balance.WithLabelValues(m.Network().GetName(), m.Provider(), address, POL, tag).Set(pol)
 		}
 	}
 
@@ -1565,6 +1574,7 @@ func (o *AccountBalancesObserver) Register(eb *EventBus) {
 		"The account balance (wei)",
 		"address",
 		"token",
+		"tag",
 	)
 }
 
