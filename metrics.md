@@ -14,6 +14,21 @@ Variable Labels:
 - token
 - tag
 
+## AccountTxsObserver
+
+
+### panoptichain_rpc_account_txs
+Number of transactions from/to tracked accounts
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- address
+- tag
+- direction
+
 ## AggchainObserver
 
 
