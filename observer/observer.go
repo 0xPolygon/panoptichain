@@ -135,6 +135,7 @@ func NewEventBus() *EventBus {
 
 var observersMap = map[string]Observer{
 	"account_balances":                    new(AccountBalancesObserver),
+	"account_txs":                         new(AccountTxsObserver),
 	"aggchain":                            new(AggchainObserver),
 	"base_fee_per_gas":                    new(BaseFeePerGasObserver),
 	"block":                               new(BlockObserver),

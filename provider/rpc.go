@@ -52,6 +52,7 @@ type RPCProvider struct {
 	timeToMine       *config.TimeToMine
 	accounts         []config.Account
 	accountBalances  observer.AccountBalances
+	accountTxs       observer.AccountTxs
 	timeToFinalized  *uint64
 	blockLookBack    uint64
 	hasTxPool        bool
@@ -113,6 +114,7 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		timeToMine:           cfg.TimeToMine,
 		accounts:             cfg.Accounts,
 		accountBalances:      make(observer.AccountBalances, 0),
+		accountTxs:           make(observer.AccountTxs, 0),
 		stateSync:            make(map[bool]*observer.StateSync),
 		checkpointSignatures: make(map[bool]*observer.CheckpointSignatures),
 		validatorBalances:    make(observer.ValidatorWalletBalances),
@@ -139,8 +141,9 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 		return err
 	}
 
-	// Reset accountBalances for this refresh cycle
+	// Reset accountBalances and accountTxs for this refresh cycle
 	r.accountBalances = make(observer.AccountBalances, 0)
+	r.accountTxs = make(observer.AccountTxs, 0)
 
 	r.refreshBlockBuffer(ctx, c)
 
@@ -161,6 +164,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 
 	r.refreshTimeToMine(ctx, c)
 	r.refreshAccountBalances(ctx, c)
+	r.refreshAccountTxs(ctx, c)
 
 	if r.network.IsPolygonZkEVM() {
 		r.refreshBatches(ctx, c)
@@ -279,6 +283,11 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 	if len(r.accountBalances) > 0 {
 		m := observer.NewMessage(r.network, r.label, r.accountBalances)
 		r.bus.Publish(ctx, topics.AccountBalances, m)
+	}
+
+	if len(r.accountTxs) > 0 {
+		m := observer.NewMessage(r.network, r.label, r.accountTxs)
+		r.bus.Publish(ctx, topics.AccountTxs, m)
 	}
 
 	for _, batch := range r.trustedBatches {
@@ -652,13 +661,6 @@ func (r *RPCProvider) refreshValidatorBalances(ctx context.Context, c *ethclient
 
 		address := addresses[i]
 		r.validatorBalances[address] = balance
-
-		// Also add to accountBalances with tag="validator"
-		r.accountBalances = append(r.accountBalances, &observer.AccountBalance{
-			Address: common.HexToAddress(address),
-			Tag:     "validator",
-			ETH:     balance,
-		})
 	}
 
 	return nil
@@ -865,6 +867,63 @@ func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.C
 		ab.POL = r.getPOL(c, address, co, nil)
 
 		r.accountBalances = append(r.accountBalances, ab)
+	}
+}
+
+func (r *RPCProvider) refreshAccountTxs(ctx context.Context, c *ethclient.Client) {
+	if len(r.accounts) == 0 {
+		return
+	}
+
+	// Build lookup map from accounts
+	accountMap := make(map[common.Address]string)
+	for _, acc := range r.accounts {
+		accountMap[common.HexToAddress(acc.Address)] = acc.Tag
+	}
+
+	// Get chain ID for signer
+	chainID, err := c.ChainID(ctx)
+	if err != nil {
+		r.logger.Warn().Err(err).Msg("Failed to get chain ID for account tx tracking")
+		return
+	}
+	signer := types.LatestSignerForChainID(chainID)
+
+	// Iterate through new blocks
+	for i := r.prevBlockNumber + 1; i <= r.blockNumber && r.prevBlockNumber != 0; i++ {
+		b, err := r.blockBuffer.GetBlock(i)
+		if err != nil {
+			continue
+		}
+		block, ok := b.(*types.Block)
+		if !ok {
+			continue
+		}
+
+		for _, tx := range block.Transactions() {
+			// Check sender (from)
+			sender, err := types.Sender(signer, tx)
+			if err == nil {
+				if tag, exists := accountMap[sender]; exists {
+					r.accountTxs = append(r.accountTxs, &observer.AccountTx{
+						Address:   sender,
+						Tag:       tag,
+						Direction: "from",
+					})
+				}
+			}
+
+			// Check receiver (to)
+			if to := tx.To(); to != nil {
+				if tag, exists := accountMap[*to]; exists {
+					r.accountTxs = append(r.accountTxs, &observer.AccountTx{
+						Address:   *to,
+						Tag:       tag,
+						Direction: "to",
+					})
+				}
+			}
+		}
 	}
 }
 
