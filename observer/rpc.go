@@ -1582,6 +1582,50 @@ func (o *AccountBalancesObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.balance}
 }
 
+// AccountTx represents a transaction involving a tracked account.
+type AccountTx struct {
+	Address   common.Address
+	Tag       string
+	Direction string // "from" or "to"
+}
+
+type AccountTxs []*AccountTx
+
+type AccountTxsObserver struct {
+	counter *prometheus.CounterVec
+}
+
+func (o *AccountTxsObserver) Notify(ctx context.Context, m Message) {
+	data := m.Data().(AccountTxs)
+
+	for _, tx := range data {
+		o.counter.WithLabelValues(
+			m.Network().GetName(),
+			m.Provider(),
+			tx.Address.Hex(),
+			tx.Tag,
+			tx.Direction,
+		).Inc()
+	}
+}
+
+func (o *AccountTxsObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.AccountTxs, o)
+
+	o.counter = metrics.NewCounter(
+		metrics.RPC,
+		"account_txs",
+		"Number of transactions from/to tracked accounts",
+		"address",
+		"tag",
+		"direction",
+	)
+}
+
+func (o *AccountTxsObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.counter}
+}
+
 type TrustedBatchObserver struct {
 	length *prometheus.HistogramVec
 }
