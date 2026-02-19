@@ -1106,6 +1106,7 @@ Variable Labels:
 - network
 - provider
 - validator_id
+- validator_address
 
 ### panoptichain_rpc_spol_validator_deposit_share
 sPOLController validator target deposit share percentage
@@ -1116,6 +1117,7 @@ Variable Labels:
 - network
 - provider
 - validator_id
+- validator_address
 
 ### panoptichain_rpc_spol_validator_total_staked
 sPOLController validator total staked amount (in ether)
@@ -1126,6 +1128,7 @@ Variable Labels:
 - network
 - provider
 - validator_id
+- validator_address
 
 ### panoptichain_rpc_spol_validator_count
 Total number of validators in sPOLController

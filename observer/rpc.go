@@ -1744,13 +1744,14 @@ func (o *SPOLControllerObserver) Notify(ctx context.Context, m Message) {
 
 	for _, v := range data.Validators {
 		validatorID := strconv.FormatUint(uint64(v.ID), 10)
+		validatorAddress := v.Address.Hex()
 
-		o.validatorStatus.WithLabelValues(networkName, provider, validatorID).Set(float64(v.Status))
-		o.validatorDepositShare.WithLabelValues(networkName, provider, validatorID).Set(float64(v.DepositShare))
+		o.validatorStatus.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(float64(v.Status))
+		o.validatorDepositShare.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(float64(v.DepositShare))
 
 		if v.TotalStaked != nil {
 			staked, _ := weiToEther(v.TotalStaked).Float64()
-			o.validatorTotalStaked.WithLabelValues(networkName, provider, validatorID).Set(staked)
+			o.validatorTotalStaked.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(staked)
 		}
 	}
 
@@ -1776,6 +1777,7 @@ func (o *SPOLControllerObserver) Register(eb *EventBus) {
 		"spol_validator_status",
 		"sPOLController validator status (0=inactive, 1=active)",
 		"validator_id",
+		"validator_address",
 	)
 
 	o.validatorDepositShare = metrics.NewGauge(
@@ -1783,6 +1785,7 @@ func (o *SPOLControllerObserver) Register(eb *EventBus) {
 		"spol_validator_deposit_share",
 		"sPOLController validator target deposit share percentage",
 		"validator_id",
+		"validator_address",
 	)
 
 	o.validatorTotalStaked = metrics.NewGauge(
@@ -1790,6 +1793,7 @@ func (o *SPOLControllerObserver) Register(eb *EventBus) {
 		"spol_validator_total_staked",
 		"sPOLController validator total staked amount (in ether)",
 		"validator_id",
+		"validator_address",
 	)
 
 	o.validatorCount = metrics.NewGauge(
