@@ -1094,6 +1094,78 @@ Variable Labels:
 - fulfiller
 - program
 
+## SPOLControllerObserver
+
+
+### panoptichain_rpc_spol_validator_status
+sPOLController validator status (0=inactive, 1=active)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- validator_address
+
+### panoptichain_rpc_spol_validator_deposit_share
+sPOLController validator target deposit share percentage
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- validator_address
+
+### panoptichain_rpc_spol_validator_total_staked
+sPOLController validator total staked amount (in ether)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- validator_address
+
+### panoptichain_rpc_spol_validator_count
+Total number of validators in sPOLController
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_rpc_spol_active_validator_count
+Number of active validators in sPOLController
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_rpc_spol_dpol_balance
+Total dPOL balance in sPOLController (in ether)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_rpc_spol_spol_balance
+Total sPOL token balance in sPOLController (in ether)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## StakeManagerObserver
 
 

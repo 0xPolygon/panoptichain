@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -1714,4 +1715,128 @@ func (o *StakeManagerObserver) Register(eb *EventBus) {
 
 func (o *StakeManagerObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.totalStaked}
+}
+
+// SPOLValidator represents a single validator from the sPOLController contract.
+type SPOLValidator struct {
+	ID           uint16
+	Status       uint8
+	DepositShare uint8
+	Address      common.Address
+	TotalStaked  *big.Int
+}
+
+// SPOLController represents the sPOLController contract state.
+type SPOLController struct {
+	Validators       []SPOLValidator
+	TotalValidators  int
+	ActiveValidators int
+	DPOL             *big.Int
+	SPOL             *big.Int
+}
+
+type SPOLControllerObserver struct {
+	validatorStatus       *prometheus.GaugeVec
+	validatorDepositShare *prometheus.GaugeVec
+	validatorTotalStaked  *prometheus.GaugeVec
+	validatorCount        *prometheus.GaugeVec
+	activeValidatorCount  *prometheus.GaugeVec
+	dPOLBalance           *prometheus.GaugeVec
+	sPOLBalance           *prometheus.GaugeVec
+}
+
+func (o *SPOLControllerObserver) Notify(ctx context.Context, m Message) {
+	data := m.Data().(*SPOLController)
+	networkName := m.Network().GetName()
+	provider := m.Provider()
+
+	for _, v := range data.Validators {
+		validatorID := strconv.FormatUint(uint64(v.ID), 10)
+		validatorAddress := v.Address.Hex()
+
+		o.validatorStatus.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(float64(v.Status))
+		o.validatorDepositShare.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(float64(v.DepositShare))
+
+		if v.TotalStaked != nil {
+			staked, _ := weiToEther(v.TotalStaked).Float64()
+			o.validatorTotalStaked.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(staked)
+		}
+	}
+
+	o.validatorCount.WithLabelValues(networkName, provider).Set(float64(data.TotalValidators))
+	o.activeValidatorCount.WithLabelValues(networkName, provider).Set(float64(data.ActiveValidators))
+
+	if data.DPOL != nil {
+		dPOL, _ := weiToEther(data.DPOL).Float64()
+		o.dPOLBalance.WithLabelValues(networkName, provider).Set(dPOL)
+	}
+
+	if data.SPOL != nil {
+		sPOL, _ := weiToEther(data.SPOL).Float64()
+		o.sPOLBalance.WithLabelValues(networkName, provider).Set(sPOL)
+	}
+}
+
+func (o *SPOLControllerObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.SPOLController, o)
+
+	o.validatorStatus = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_status",
+		"sPOLController validator status (0=inactive, 1=active)",
+		"validator_id",
+		"validator_address",
+	)
+
+	o.validatorDepositShare = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_deposit_share",
+		"sPOLController validator target deposit share percentage",
+		"validator_id",
+		"validator_address",
+	)
+
+	o.validatorTotalStaked = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_total_staked",
+		"sPOLController validator total staked amount (in ether)",
+		"validator_id",
+		"validator_address",
+	)
+
+	o.validatorCount = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_count",
+		"Total number of validators in sPOLController",
+	)
+
+	o.activeValidatorCount = metrics.NewGauge(
+		metrics.RPC,
+		"spol_active_validator_count",
+		"Number of active validators in sPOLController",
+	)
+
+	o.dPOLBalance = metrics.NewGauge(
+		metrics.RPC,
+		"spol_dpol_balance",
+		"Total dPOL balance in sPOLController (in ether)",
+	)
+
+	o.sPOLBalance = metrics.NewGauge(
+		metrics.RPC,
+		"spol_spol_balance",
+		"Total sPOL token balance in sPOLController (in ether)",
+	)
+}
+
+func (o *SPOLControllerObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
+		o.validatorStatus,
+		o.validatorDepositShare,
+		o.validatorTotalStaked,
+		o.validatorCount,
+		o.activeValidatorCount,
+		o.dPOLBalance,
+		o.sPOLBalance,
+	}
 }
