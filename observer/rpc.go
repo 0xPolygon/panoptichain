@@ -422,9 +422,17 @@ func (o *TransactionGasPriceObserver) Register(eb *EventBus) {
 
 func (o *TransactionGasPriceObserver) Notify(ctx context.Context, m Message) {
 	block := m.Data().(*types.Block)
+	baseFee := block.BaseFee()
 
 	for _, tx := range block.Transactions() {
-		gwei, _ := weiToGwei(tx.GasPrice()).Float64()
+		var gasPrice *big.Int
+		if baseFee != nil {
+			tip, _ := tx.EffectiveGasTip(baseFee)
+			gasPrice = new(big.Int).Add(baseFee, tip)
+		} else {
+			gasPrice = tx.GasPrice()
+		}
+		gwei, _ := weiToGwei(gasPrice).Float64()
 		o.histogram.WithLabelValues(m.Network().GetName(), m.Provider()).Observe(gwei)
 	}
 }
