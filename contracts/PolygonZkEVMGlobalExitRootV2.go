@@ -694,4 +694,3 @@ func (_PolygonZkEVMGlobalExitRootV2 *PolygonZkEVMGlobalExitRootV2Filterer) Parse
 	event.Raw = log
 	return event, nil
 }
-
