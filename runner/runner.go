@@ -21,12 +21,9 @@ func Start(ctx context.Context) {
 	log.Info().Msg("Starting main loop")
 
 	var wg sync.WaitGroup
-	wg.Add(len(providers))
 
 	for _, p := range providers {
-		go func(p provider.Provider) {
-			defer wg.Done()
-
+		wg.Go(func() {
 			for {
 				if err := p.RefreshState(ctx); err != nil {
 					log.Error().Err(err).Send()
@@ -38,7 +35,7 @@ func Start(ctx context.Context) {
 
 				util.BlockFor(ctx, p.PollingInterval())
 			}
-		}(p)
+		})
 	}
 
 	wg.Wait()

@@ -1911,4 +1911,3 @@ func (_PolygonZkEVMBridgeV2 *PolygonZkEVMBridgeV2Filterer) ParseNewWrappedToken(
 	event.Raw = log
 	return event, nil
 }
-

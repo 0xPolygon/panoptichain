@@ -1157,4 +1157,3 @@ func (_RootChain *RootChainFilterer) ParseResetHeaderBlock(log types.Log) (*Root
 	event.Raw = log
 	return event, nil
 }
-

@@ -425,4 +425,3 @@ func (_StateSender *StateSenderFilterer) ParseStateSynced(log types.Log) (*State
 	event.Raw = log
 	return event, nil
 }
-

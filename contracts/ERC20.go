@@ -1100,4 +1100,3 @@ func (_ERC20 *ERC20Filterer) ParseTransfer(log types.Log) (*ERC20Transfer, error
 	event.Raw = log
 	return event, nil
 }
-
