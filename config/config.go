@@ -62,6 +62,7 @@ type Contracts struct {
 	StateSyncReceiverAddress *string `mapstructure:"state_sync_receiver_address"`
 	CheckpointAddress        *string `mapstructure:"checkpoint_address"`
 	StakeManagerAddress      *string `mapstructure:"stake_manager_address"`
+	SPOLControllerAddress    *string `mapstructure:"spol_controller_address"`
 
 	// zkEVM
 	GlobalExitRootL2Address *string       `mapstructure:"global_exit_root_l2_address"`
