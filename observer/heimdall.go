@@ -502,7 +502,7 @@ type HeimdallValidatorSetChangeObserver struct {
 }
 
 func (o *HeimdallValidatorSetChangeObserver) Register(eb *EventBus) {
-	eb.Subscribe(topics.ValidatorSetChange, o)
+	eb.Subscribe(topics.ValidatorSet, o)
 	o.counter = metrics.NewCounter(
 		metrics.Heimdall,
 		"validator_set_change",

@@ -154,7 +154,7 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 
 	if h.validatorSets != nil {
 		m := observer.NewMessage(h.network, h.label, h.validatorSets)
-		h.bus.Publish(ctx, topics.ValidatorSetChange, m)
+		h.bus.Publish(ctx, topics.ValidatorSet, m)
 	}
 
 	h.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(h.network, h.label, h.refreshStateTime))

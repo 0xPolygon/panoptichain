@@ -43,6 +43,6 @@ const (
 	TransactionPool                                    // *observer.TransactionPool
 	TrustedBatch                                       // *util.Batch
 	ValidatorWallet                                    // observer.ValidatorWalletBalances
-	ValidatorSetChange                                 // *observer.HeimdallValidatorSets
+	ValidatorSet                                       // *observer.HeimdallValidatorSets
 	ZkEVMBatches                                       // observer.ZkEVMBatches
 )
