@@ -43,6 +43,8 @@ type HeimdallProvider struct {
 
 	spans *observer.HeimdallSpans
 
+	validatorSets *observer.HeimdallValidatorSets
+
 	refreshStateTime *time.Duration
 }
 
@@ -59,6 +61,7 @@ func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.He
 		checkpointProposers: orderedmap.New[string, struct{}](),
 		refreshStateTime:    new(time.Duration),
 		spans:               &observer.HeimdallSpans{},
+		validatorSets:       &observer.HeimdallValidatorSets{},
 	}
 }
 
@@ -73,6 +76,7 @@ func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	h.refreshMissedCheckpointProposal()
 	h.refreshMissedBlockProposal()
 	h.refreshSpan()
+	h.refreshValidatorSet()
 
 	return nil
 }
@@ -146,6 +150,11 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 	if h.spans != nil {
 		m := observer.NewMessage(h.network, h.label, h.spans)
 		h.bus.Publish(ctx, topics.Span, m)
+	}
+
+	if h.validatorSets != nil {
+		m := observer.NewMessage(h.network, h.label, h.validatorSets)
+		h.bus.Publish(ctx, topics.ValidatorSetChange, m)
 	}
 
 	h.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(h.network, h.label, h.refreshStateTime))
@@ -412,6 +421,26 @@ func (h *HeimdallProvider) refreshSpan() error {
 		h.spans.Prev = h.spans.Curr
 	}
 	h.spans.Curr = &v2.Span
+
+	return nil
+}
+
+func (h *HeimdallProvider) refreshValidatorSet() error {
+	validators, err := api.GetValidators(h.heimdallURL)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get validator set")
+		return err
+	}
+
+	curr := make(observer.ValidatorMap, len(validators))
+	for _, v := range validators {
+		curr[v.ID] = v
+	}
+
+	if h.validatorSets.Curr != nil {
+		h.validatorSets.Prev = h.validatorSets.Curr
+	}
+	h.validatorSets.Curr = curr
 
 	return nil
 }

@@ -527,6 +527,19 @@ Variable Labels:
 - network
 - provider
 
+## HeimdallValidatorSetChangeObserver
+
+
+### panoptichain_heimdall_validator_set_change
+The number of validator set changes (onboarded or unbonded)
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- change_type
+
 ## MilestoneObserver
 
 
