@@ -85,7 +85,7 @@ func Validators(n network.Network) ([]Validator, error) {
 		return nil, errors.New("no validators for this network")
 	}
 
-	validators, err := getValidators(*path)
+	validators, err := GetValidators(*path)
 	if err != nil {
 		return nil, err
 	}
@@ -98,15 +98,14 @@ func Validators(n network.Network) ([]Validator, error) {
 	return validators, nil
 }
 
-func getValidators(path string) ([]Validator, error) {
-	path, err := url.JoinPath(path, "stake", "validators-set")
+func GetValidators(basePath string) ([]Validator, error) {
+	path, err := url.JoinPath(basePath, "stake", "validators-set")
 	if err != nil {
 		return nil, err
 	}
 
 	var body ValidatorSet
-	err = GetJSON(path, &body)
-	if err != nil {
+	if err := GetJSON(path, &body); err != nil {
 		return nil, err
 	}
 
@@ -115,9 +114,7 @@ func getValidators(path string) ([]Validator, error) {
 	}
 
 	validators := make([]Validator, len(body.ValidatorSet.Validators))
-	for i, v := range body.ValidatorSet.Validators {
-		validators[i] = v
-	}
+	copy(validators, body.ValidatorSet.Validators)
 
 	return validators, nil
 }

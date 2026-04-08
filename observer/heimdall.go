@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/rs/zerolog"
 
 	"github.com/0xPolygon/panoptichain/api"
 	"github.com/0xPolygon/panoptichain/metrics"
@@ -419,6 +420,15 @@ type HeimdallSpans struct {
 	Prev *HeimdallSpan
 }
 
+// ValidatorMap maps validator IDs to validators.
+type ValidatorMap = map[uint64]api.Validator
+
+// HeimdallValidatorSets contains the current and previous validator sets.
+type HeimdallValidatorSets struct {
+	Curr ValidatorMap
+	Prev ValidatorMap
+}
+
 type HeimdallSpanObserver struct {
 	spanID     *prometheus.GaugeVec
 	startBlock *prometheus.GaugeVec
@@ -485,4 +495,52 @@ func (o *HeimdallSpanObserver) GetCollectors() []prometheus.Collector {
 		o.overlaps,
 		o.overlapped,
 	}
+}
+
+type HeimdallValidatorSetChangeObserver struct {
+	counter *prometheus.CounterVec
+}
+
+func (o *HeimdallValidatorSetChangeObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.ValidatorSet, o)
+	o.counter = metrics.NewCounter(
+		metrics.Heimdall,
+		"validator_set_change",
+		"The number of validator set changes (onboarded or unbonded)",
+		"change_type",
+	)
+}
+
+func (o *HeimdallValidatorSetChangeObserver) Notify(ctx context.Context, m Message) {
+	logger := NewLogger(o, m)
+	data := m.Data().(*HeimdallValidatorSets)
+
+	if data.Prev == nil {
+		return
+	}
+
+	o.detectChanges(logger, m, data.Curr, data.Prev, "onboarded")
+	o.detectChanges(logger, m, data.Prev, data.Curr, "unbonded")
+}
+
+// detectChanges finds validators in set A that are not in set B and records
+// them as the specified change type.
+func (o *HeimdallValidatorSetChangeObserver) detectChanges(logger zerolog.Logger, m Message, a, b ValidatorMap, changeType string) {
+	for id, v := range a {
+		if _, exists := b[id]; exists {
+			continue
+		}
+
+		logger.Info().
+			Uint64("validator_id", v.ID).
+			Str("signer", v.Signer).
+			Str("change_type", changeType).
+			Msg("Validator set change detected")
+
+		o.counter.WithLabelValues(m.Network().GetName(), m.Provider(), changeType).Inc()
+	}
+}
+
+func (o *HeimdallValidatorSetChangeObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.counter}
 }
