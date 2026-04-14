@@ -52,6 +52,7 @@ type RPC struct {
 	Accounts      []Account      `mapstructure:"accounts"`
 	BlockLookBack *uint64        `mapstructure:"block_look_back"`
 	TxPool        bool           `mapstructure:"txpool"`
+	Observers     *Observers     `mapstructure:"observers"`
 }
 
 // Contracts maps specific contracts to their addresses. This is used to
@@ -174,6 +175,15 @@ type Observers struct {
 	Disabled []string `mapstructure:"disabled"`
 }
 
+// GlobalObservers separates observer configuration by scope. RPC is the
+// fallback set for RPC providers without a custom observers group. System is
+// the set for non-RPC providers (exchange_rates, system, hash_divergence).
+// Both default to all known observers when not configured.
+type GlobalObservers struct {
+	RPC    Observers `mapstructure:"rpc"`
+	System Observers `mapstructure:"system"`
+}
+
 // HTTP defines the properties that used for exposing metrics.
 type HTTP struct {
 	PromPort  int    `mapstructure:"port" validate:"required"`
@@ -221,7 +231,7 @@ type config struct {
 	Runner    Runner    `mapstructure:"runner"`
 	HTTP      HTTP      `mapstructure:"http"`
 	Providers Providers `mapstructure:"providers"`
-	Observers Observers `mapstructure:"observers"`
+	Observers GlobalObservers `mapstructure:"observers"`
 	Networks  []Network `mapstructure:"networks"`
 	Logs      Logs      `mapstructure:"logs"`
 }
