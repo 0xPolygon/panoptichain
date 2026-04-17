@@ -215,6 +215,53 @@
       ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS_0_TAG - string - optional
       ## A tag to label this account in metrics (e.g., "sequencer", "proposer").
     ##
+    ## @param observers - object - optional - default: observers.rpc
+    ## Override the observer set for this specific provider. If omitted, the
+    ## observers.rpc config is used as the fallback (all observers enabled by
+    ## default). Only observers listed here will emit metrics for this provider.
+    ## YAML anchors (&) and references (*) can be used to share observer groups
+    ## across providers without repeating the list.
+    ##
+    ## Tip: define observers.rpc with an anchor (&full) so the full group is
+    ## available to reference on per-provider overrides:
+    ##
+    ##   observers:
+    ##     rpc: &full
+    ##       enabled:
+    ##         - block
+    ##         - finalized_height
+    ##         - block_interval
+    ##         # ... all desired RPC observers
+    ##     system:
+    ##       enabled:
+    ##         - exchange_rates
+    ##         - hash_divergence
+    ##         - system
+    ##
+    ##   x-observer-groups:
+    ##     light: &light
+    ##       enabled:
+    ##         - block
+    ##         - finalized_height
+    ##
+    ##   providers:
+    ##     rpc:
+    ##       - name: "Polygon Mainnet"
+    ##         url: "https://internal-rpc"
+    ##         label: "internal"
+    ##         observers: *full
+    ##       - name: "Polygon Mainnet"
+    ##         url: "https://external-rpc"
+    ##         label: "external"
+    ##         observers: *light
+    ##
+      ## @param enabled - list of strings - optional
+      ## Enable only specific observers for this provider.
+      ##
+      ## @param disabled - list of strings - optional
+      ## Disable specific observers for this provider (only applies when
+      ## `enabled` is not set, i.e. all-minus-disabled semantics).
+    ##
     ## @param time_to_mine - object - optional
     ## The `time_to_mine` configuration. This will periodically send
     ## transactions and record the time it took to be included in a block. If
@@ -513,71 +560,89 @@
     #     - eur
 
 ## @param observers - object - optional
-## Observers control which metrics will be emitted. By default, all observers are
-## enabled unless explicitly disabled.
+## Controls which observers are active, split by scope.
+##
+## observers.rpc  — fallback set for RPC providers without a custom observers
+##                  group. Defaults to all observers when not configured.
+##                  Define with a YAML anchor (&full) to reuse on providers.
+##
+## observers.system — set for non-RPC providers: exchange_rates, system,
+##                    hash_divergence, heimdall, sensor_network, etc. These
+##                    run on a separate event bus from the RPC providers.
+##                    Defaults to all observers when not configured.
+##
+## Each sub-key supports:
+##   enabled  - enable only the listed observers (all others disabled)
+##   disabled - disable the listed observers (only applies when enabled is unset)
 #
 # observers:
 #
-  ## @param disabled - list of strings - optional
-  ## @env PANOPTICHAIN_OBSERVERS_DISABLED - list of strings - optional
-  ## Disable specific observers from the observer list.
+  ## @param rpc - object - optional
+  ## @param rpc.enabled - list of strings - optional
+  ## @env PANOPTICHAIN_OBSERVERS_RPC_ENABLED - list of strings - optional
+  ## @param rpc.disabled - list of strings - optional
+  ## @env PANOPTICHAIN_OBSERVERS_RPC_DISABLED - list of strings - optional
   #
-  # disabled:
+  # rpc:
+  #   enabled:
+  #     - "account_balances"
+  #     - "base_fee_per_gas"
+  #     - "block"
+  #     - "block_interval"
+  #     - "bogon_block"
+  #     - "bridge_event"
+  #     - "checkpoint"
+  #     - "claim_event"
+  #     - "deposit_counts"
+  #     - "double_sign"
+  #     - "empty_block"
+  #     - "exit_roots"
+  #     - "finalized_height"
+  #     - "gas_limit"
+  #     - "gas_used"
+  #     - "heimdall_block"
+  #     - "heimdall_block_interval"
+  #     - "heimdall_checkpoint"
+  #     - "heimdall_height"
+  #     - "heimdall_missed_block_proposal"
+  #     - "heimdall_missed_checkpoint_proposal"
+  #     - "heimdall_missed_milestone_proposal"
+  #     - "heimdall_signature_count"
+  #     - "milestone"
+  #     - "missed_block_proposal"
+  #     - "refresh_state_time"
+  #     - "reorg"
+  #     - "sealed_out_of_turn"
+  #     - "sensor_block_events"
+  #     - "sensor_blocks"
+  #     - "sensor_bogon_block"
+  #     - "state_sync"
+  #     - "stolen_block"
+  #     - "time_to_finalized"
+  #     - "time_to_mine"
+  #     - "transaction_cost"
+  #     - "transaction_count"
+  #     - "transaction_gas_fee_cap"
+  #     - "transaction_gas_limit"
+  #     - "transaction_gas_price"
+  #     - "transaction_gas_tip_cap"
+  #     - "transaction_pool"
+  #     - "transaction_value"
+  #     - "trusted_batch"
+  #     - "uncles"
+  #     - "validator_wallet_balance"
+  #     - "zkevm_batches"
+  #     - "rollup_manager"
+  #     - "span"
   #
-  ## @param enabled - list of strings - optional
-  ## @env PANOPTICHAIN_OBSERVERS_ENABLED - list of strings - optional - default enables all observers
-  ## Enable only specific observers. Below are all available observers:
+  ## @param system - object - optional
+  ## @param system.enabled - list of strings - optional
+  ## @env PANOPTICHAIN_OBSERVERS_SYSTEM_ENABLED - list of strings - optional
+  ## @param system.disabled - list of strings - optional
+  ## @env PANOPTICHAIN_OBSERVERS_SYSTEM_DISABLED - list of strings - optional
   #
-  # enabled:
-  #   - "account_balances"
-  #   - "base_fee_per_gas"
-  #   - "block"
-  #   - "block_interval"
-  #   - "bogon_block"
-  #   - "bridge_event"
-  #   - "checkpoint"
-  #   - "claim_event"
-  #   - "deposit_counts"
-  #   - "double_sign"
-  #   - "empty_block"
-  #   - "exchange_rates"
-  #   - "exit_roots"
-  #   - "finalized_height"
-  #   - "gas_limit"
-  #   - "gas_used"
-  #   - "hash_divergence"
-  #   - "heimdall_block"
-  #   - "heimdall_block_interval"
-  #   - "heimdall_checkpoint"
-  #   - "heimdall_height"
-  #   - "heimdall_missed_block_proposal"
-  #   - "heimdall_missed_checkpoint_proposal"
-  #   - "heimdall_missed_milestone_proposal"
-  #   - "heimdall_signature_count"
-  #   - "milestone"
-  #   - "missed_block_proposal"
-  #   - "refresh_state_time"
-  #   - "reorg"
-  #   - "sealed_out_of_turn"
-  #   - "sensor_block_events"
-  #   - "sensor_blocks"
-  #   - "sensor_bogon_block"
-  #   - "state_sync"
-  #   - "stolen_block"
-  #   - "system"
-  #   - "time_to_finalized"
-  #   - "time_to_mine"
-  #   - "transaction_cost"
-  #   - "transaction_count"
-  #   - "transaction_gas_fee_cap"
-  #   - "transaction_gas_limit"
-  #   - "transaction_gas_price"
-  #   - "transaction_gas_tip_cap"
-  #   - "transaction_pool"
-  #   - "transaction_value"
-  #   - "trusted_batch"
-  #   - "uncles"
-  #   - "validator_wallet_balance"
-  #   - "zkevm_batches"
-  #   - "rollup_manager"
-  #   - "span"
+  # system:
+  #   enabled:
+  #     - "exchange_rates"
+  #     - "hash_divergence"
+  #     - "system"

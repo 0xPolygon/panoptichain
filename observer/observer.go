@@ -108,11 +108,12 @@ func (eb *EventBus) Subscribe(topic Topic, o Observer) {
 // Publish is called by the providers when they want to send a message to all
 // subscribers.
 func (eb *EventBus) Publish(ctx context.Context, topic Topic, m Message) {
-	if len(eb.observers[topic.String()]) == 0 {
+	subs, subscribed := eb.observers[topic.String()]
+	if subscribed && len(subs) == 0 {
 		log.Warn().Str("topic", topic.String()).Msg("Topic published to empty subscriber set")
 	}
 
-	for _, s := range eb.observers[topic.String()] {
+	for _, s := range subs {
 		eb.jobs <- struct{}{}
 		go func(o Observer) {
 			o.Notify(ctx, m)
@@ -192,8 +193,9 @@ var observersMap = map[string]Observer{
 	"zkevm_batches":                       new(ZkEVMBatchObserver),
 }
 
-func GetEnabledObserverSet() ObserverSet {
-	cfg := config.Config().Observers
+// GetObserverSetFrom builds an ObserverSet from the given Observers config.
+// If cfg.Enabled is empty, all known observers are enabled by default.
+func GetObserverSetFrom(cfg config.Observers) ObserverSet {
 	set := make(map[string]struct{})
 
 	for _, name := range cfg.Enabled {
@@ -217,7 +219,7 @@ func GetEnabledObserverSet() ObserverSet {
 		delete(set, name)
 	}
 
-	observers := make(ObserverSet, 0, len(observersMap))
+	observers := make(ObserverSet, 0, len(set))
 	for name := range set {
 		observers = append(observers, observersMap[name])
 	}

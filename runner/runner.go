@@ -14,7 +14,6 @@ import (
 )
 
 var providers []provider.Provider
-var observers observer.ObserverSet
 
 // Start starts the main infinite loop of this program.
 func Start(ctx context.Context) {
@@ -43,14 +42,32 @@ func Start(ctx context.Context) {
 
 // Init configures all the providers and observers of the system.
 func Init(ctx context.Context) error {
-	eb := observer.NewEventBus()
 	providers = []provider.Provider{}
 	rpcProviders := []*provider.RPCProvider{}
+
+	// systemEB is used by non-RPC providers (exchange_rates, system,
+	// hash_divergence, heimdall, sensor, etc.).
+	systemEB := observer.NewEventBus()
+	systemObs := observer.GetObserverSetFrom(config.Config().Observers.System)
+	systemObs.Register(systemEB)
+
+	// rpcFallbackEB is used by RPC providers that don't specify a custom
+	// observers group.
+	rpcFallbackEB := observer.NewEventBus()
+	rpcFallbackObs := observer.GetObserverSetFrom(config.Config().Observers.RPC)
+	rpcFallbackObs.Register(rpcFallbackEB)
 
 	for _, r := range config.Config().Providers.RPCs {
 		n, err := network.GetNetworkByName(r.Name)
 		if err != nil {
 			return err
+		}
+
+		eb := rpcFallbackEB
+		if r.Observers != nil {
+			eb = observer.NewEventBus()
+			obs := observer.GetObserverSetFrom(*r.Observers)
+			obs.Register(eb)
 		}
 
 		p := provider.NewRPCProvider(n, eb, r)
@@ -61,7 +78,7 @@ func Init(ctx context.Context) error {
 	if hd := config.Config().Providers.HashDivergence; hd != nil {
 		p := provider.NewHashDivergenceProvider(
 			rpcProviders,
-			eb,
+			systemEB,
 			provider.GetInterval(hd.Interval),
 		)
 		providers = append(providers, p)
@@ -73,7 +90,7 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		p := provider.NewHeimdallProvider(n, eb, h)
+		p := provider.NewHeimdallProvider(n, systemEB, h)
 		providers = append(providers, p)
 	}
 
@@ -83,7 +100,7 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		p := provider.NewSensorNetworkProvider(ctx, n, eb, s)
+		p := provider.NewSensorNetworkProvider(ctx, n, systemEB, s)
 		providers = append(providers, p)
 	}
 
@@ -93,7 +110,7 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		p := provider.NewProverNetworkProvider(n, eb, p)
+		p := provider.NewProverNetworkProvider(n, systemEB, p)
 		providers = append(providers, p)
 	}
 
@@ -103,7 +120,7 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		p := provider.NewAggchainProvider(n, eb, p)
+		p := provider.NewAggchainProvider(n, systemEB, p)
 		providers = append(providers, p)
 	}
 
@@ -113,22 +130,19 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		p := provider.NewGrafanaProvider(n, eb, p)
+		p := provider.NewGrafanaProvider(n, systemEB, p)
 		providers = append(providers, p)
 	}
 
 	if system := config.Config().Providers.System; system != nil {
-		p := provider.NewSystemProvider(eb, provider.GetInterval(system.Interval))
+		p := provider.NewSystemProvider(systemEB, provider.GetInterval(system.Interval))
 		providers = append(providers, p)
 	}
 
 	if er := config.Config().Providers.ExchangeRates; er != nil {
-		p := provider.NewExchangeRatesProvider(eb, *er)
+		p := provider.NewExchangeRatesProvider(systemEB, *er)
 		providers = append(providers, p)
 	}
-
-	observers = observer.GetEnabledObserverSet()
-	observers.Register(eb)
 
 	return nil
 }
