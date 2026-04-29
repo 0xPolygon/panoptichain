@@ -193,6 +193,11 @@ var observersMap = map[string]Observer{
 	"zkevm_batches":                       new(ZkEVMBatchObserver),
 }
 
+// GetEnabledObserverSet builds an ObserverSet from the global Observers config.
+func GetEnabledObserverSet() ObserverSet {
+	return GetObserverSetFrom(config.Config().Observers)
+}
+
 // GetObserverSetFrom builds an ObserverSet from the given Observers config.
 // If cfg.Enabled is empty, all known observers are enabled by default.
 func GetObserverSetFrom(cfg config.Observers) ObserverSet {
