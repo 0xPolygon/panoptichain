@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/0xPolygon/panoptichain/api"
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/contracts"
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
@@ -58,6 +59,10 @@ func (o *EmptyBlockObserver) Register(eb *EventBus) {
 		"empty_block",
 		"The total number of empty blocks observed",
 	)
+
+	for _, rpc := range config.Config().Providers.RPCs {
+		o.counter.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+	}
 }
 
 func (o *EmptyBlockObserver) GetCollectors() []prometheus.Collector {
@@ -90,6 +95,10 @@ func (o *BlockObserver) Register(eb *EventBus) {
 	o.difficulty = metrics.NewGauge(metrics.RPC, "difficulty", "The difficulty of the block")
 	o.blockSize = metrics.NewHistogram(metrics.RPC, "block_size", "The block size per block (bytes)", newExponentialBuckets(2, 14))
 	o.extraSize = metrics.NewHistogram(metrics.RPC, "extra_size", "The size of the extra data (bytes)", newExponentialBuckets(2, 14))
+
+	for _, rpc := range config.Config().Providers.RPCs {
+		o.blockCounter.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+	}
 }
 
 func (o *BlockObserver) GetCollectors() []prometheus.Collector {
@@ -167,6 +176,10 @@ func (o *BogonBlockObserver) Register(eb *EventBus) {
 		"bogon_block",
 		"The total number of bogon blocks observed",
 	)
+
+	for _, rpc := range config.Config().Providers.RPCs {
+		o.counter.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+	}
 }
 
 func (o *BogonBlockObserver) GetCollectors() []prometheus.Collector {
@@ -534,6 +547,10 @@ func (o *UnclesObserver) Register(eb *EventBus) {
 		"uncles",
 		"The number of uncles for the block",
 	)
+
+	for _, rpc := range config.Config().Providers.RPCs {
+		o.counter.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+	}
 }
 
 func (o *UnclesObserver) Notify(ctx context.Context, m Message) {
@@ -917,6 +934,12 @@ func (o *ExitRootsObserver) Register(eb *EventBus) {
 		"rollup_exit_roots",
 		"The number of unique rollup exit roots that have been observed",
 	)
+
+	for _, rpc := range config.Config().Providers.RPCs {
+		o.globalExitRoots.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+		o.mainnetExitRoots.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+		o.rollupExitRoots.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+	}
 }
 
 func (o *ExitRootsObserver) GetCollectors() []prometheus.Collector {

@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/0xPolygon/panoptichain/api"
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
@@ -165,6 +166,10 @@ func (o *HeimdallBlockObserver) Register(eb *EventBus) {
 		"total_transaction_count",
 		"The number of total transactions observed for Heimdall",
 	)
+
+	for _, h := range config.Config().Providers.HeimdallEndpoints {
+		o.totalTxs.WithLabelValues(h.Name, h.Label).Add(0)
+	}
 }
 
 func (o *HeimdallBlockObserver) Notify(ctx context.Context, m Message) {
@@ -273,6 +278,10 @@ func (o *MilestoneObserver) Register(eb *EventBus) {
 		"The number of blocks in the milestone",
 		newExponentialBuckets(2, 10),
 	)
+
+	for _, h := range config.Config().Providers.HeimdallEndpoints {
+		o.observed.WithLabelValues(h.Name, h.Label).Add(0)
+	}
 }
 
 func (o *MilestoneObserver) GetCollectors() []prometheus.Collector {
@@ -447,6 +456,11 @@ func (o *HeimdallSpanObserver) Register(eb *EventBus) {
 	o.producer = metrics.NewGauge(metrics.Heimdall, "span_producer", "The span selected producer")
 	o.overlaps = metrics.NewCounter(metrics.Heimdall, "span_overlaps", "The number of overlapping spans")
 	o.overlapped = metrics.NewCounter(metrics.Heimdall, "span_overlapped_blocks", "The number of overlapped blocks between spans")
+
+	for _, h := range config.Config().Providers.HeimdallEndpoints {
+		o.overlaps.WithLabelValues(h.Name, h.Label).Add(0)
+		o.overlapped.WithLabelValues(h.Name, h.Label).Add(0)
+	}
 }
 
 func (o *HeimdallSpanObserver) Notify(ctx context.Context, m Message) {

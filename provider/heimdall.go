@@ -405,24 +405,58 @@ func (h *HeimdallProvider) refreshMissedBlockProposal() error {
 }
 
 func (h *HeimdallProvider) refreshSpan() error {
-	url, err := url.JoinPath(h.heimdallURL, "bor", "spans", "latest")
+	// Always fetch the latest span
+	latest, err := h.getLatestSpan()
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to get Heimdall latest span path")
 		return err
+	}
+
+	// Set current span on startup
+	if h.spans.Curr == nil {
+		h.spans.Curr = latest
+		return nil
+	}
+
+	// No new span available
+	if latest.ID == h.spans.Curr.ID {
+		return nil
+	}
+
+	// Fetch next span sequentially to ensure overlap detection works
+	next := h.spans.Curr.ID + 1
+	span, err := h.getSpan(next)
+	if err != nil {
+		h.logger.Warn().Uint64("span_id", next).Err(err).Msg("Failed to fetch span")
+		return err
+	}
+
+	h.spans.Prev = h.spans.Curr
+	h.spans.Curr = span
+	return nil
+}
+
+func (h *HeimdallProvider) getLatestSpan() (*observer.HeimdallSpan, error) {
+	return h.fetchSpan("latest")
+}
+
+func (h *HeimdallProvider) getSpan(id uint64) (*observer.HeimdallSpan, error) {
+	return h.fetchSpan(strconv.FormatUint(id, 10))
+}
+
+func (h *HeimdallProvider) fetchSpan(spanID string) (*observer.HeimdallSpan, error) {
+	path, err := url.JoinPath(h.heimdallURL, "bor", "spans", spanID)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall span path")
+		return nil, err
 	}
 
 	var v2 observer.HeimdallSpanV2
-	if err = api.GetJSON(url, &v2); err != nil {
-		h.logger.Error().Err(err).Msg("Failed to get Heimdall latest span")
-		return err
+	if err = api.GetJSON(path, &v2); err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall span")
+		return nil, err
 	}
 
-	if h.spans.Curr != nil {
-		h.spans.Prev = h.spans.Curr
-	}
-	h.spans.Curr = &v2.Span
-
-	return nil
+	return &v2.Span, nil
 }
 
 func (h *HeimdallProvider) refreshValidatorSet() error {

@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/0xPolygon/panoptichain/api"
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
@@ -76,6 +77,10 @@ func (o *SensorBlocksObserver) Register(eb *EventBus) {
 		"total_blocks",
 		"The total number of blocks observed by sensors including bogons",
 	)
+
+	for _, s := range config.Config().Providers.SensorNetworks {
+		o.totalBlocks.WithLabelValues(s.Name, s.Label).Add(0)
+	}
 }
 
 func (o *SensorBlocksObserver) Notify(ctx context.Context, msg Message) {
