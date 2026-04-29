@@ -810,10 +810,25 @@ func (r *RPCProvider) refreshTimeToMine(ctx context.Context, c *ethclient.Client
 		return err
 	}
 
-	err = c.SendTransaction(ctx, signedTx)
-	if err != nil {
-		r.logger.Error().Err(err).Msg("Failed to send transaction")
-		return err
+	if r.timeToMine.SendMethod != "" {
+		// Use custom RPC method
+		rawTx, err := signedTx.MarshalBinary()
+		if err != nil {
+			r.logger.Error().Err(err).Msg("Failed to marshal transaction")
+			return err
+		}
+		var txHash common.Hash
+		err = c.Client().CallContext(ctx, &txHash, r.timeToMine.SendMethod, hexutil.Encode(rawTx))
+		if err != nil {
+			r.logger.Error().Err(err).Str("method", r.timeToMine.SendMethod).Msg("Failed to send transaction with custom method")
+			return err
+		}
+	} else {
+		err = c.SendTransaction(ctx, signedTx)
+		if err != nil {
+			r.logger.Error().Err(err).Msg("Failed to send transaction")
+			return err
+		}
 	}
 
 	start := time.Now()
