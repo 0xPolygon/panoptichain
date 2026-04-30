@@ -844,7 +844,7 @@ func (r *RPCProvider) refreshTimeToMine(ctx context.Context, c *ethclient.Client
 // sendTransaction sends a signed transaction using either a custom RPC method
 // (if configured) or the standard eth_sendRawTransaction method.
 func (r *RPCProvider) sendTransaction(ctx context.Context, c *ethclient.Client, signedTx *types.Transaction) error {
-	if r.timeToMine.SendMethod == "" {
+	if r.timeToMine.SendMethod == nil {
 		if err := c.SendTransaction(ctx, signedTx); err != nil {
 			r.logger.Error().Err(err).Msg("Failed to send transaction")
 			return err
@@ -859,8 +859,8 @@ func (r *RPCProvider) sendTransaction(ctx context.Context, c *ethclient.Client, 
 	}
 
 	var result common.Hash
-	if err := c.Client().CallContext(ctx, &result, r.timeToMine.SendMethod, hexutil.Encode(rawTx)); err != nil {
-		r.logger.Error().Err(err).Str("method", r.timeToMine.SendMethod).Msg("Failed to send transaction with custom method")
+	if err := c.Client().CallContext(ctx, &result, *r.timeToMine.SendMethod, hexutil.Encode(rawTx)); err != nil {
+		r.logger.Error().Err(err).Str("method", *r.timeToMine.SendMethod).Msg("Failed to send transaction with custom method")
 		return err
 	}
 

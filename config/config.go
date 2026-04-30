@@ -97,7 +97,7 @@ type TimeToMine struct {
 	Data             string `mapstructure:"data"`
 	GasPriceFactor   int64  `mapstructure:"gas_price_factor"`
 	GasLimit         uint64 `mapstructure:"gas_limit" validate:"required"`
-	SendMethod       string `mapstructure:"send_method"`
+	SendMethod       *string `mapstructure:"send_method"`
 }
 
 // HashDivergence configures the hash divergence provider. This tracks whether
