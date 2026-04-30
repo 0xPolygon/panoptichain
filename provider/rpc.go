@@ -784,7 +784,7 @@ func (r *RPCProvider) refreshTimeToMine(ctx context.Context, c *ethclient.Client
 		r.logger.Error().Err(err).Msg("Failed to get suggested gas price")
 		return err
 	}
-	gasPrice.Mul(gasPrice, big.NewInt(r.timeToMine.GasPriceFactor))
+	gasPrice.Mul(gasPrice, big.NewInt(gasPriceFactor))
 
 	nonce, err := c.PendingNonceAt(ctx, sender)
 	if err != nil {
