@@ -784,7 +784,7 @@ func (r *RPCProvider) refreshTimeToMine(ctx context.Context, c *ethclient.Client
 		r.logger.Error().Err(err).Msg("Failed to get suggested gas price")
 		return err
 	}
-	gasPrice.Mul(gasPrice, big.NewInt(r.timeToMine.GasPriceFactor))
+	gasPrice.Mul(gasPrice, big.NewInt(gasPriceFactor))
 
 	nonce, err := c.PendingNonceAt(ctx, sender)
 	if err != nil {
@@ -810,9 +810,7 @@ func (r *RPCProvider) refreshTimeToMine(ctx context.Context, c *ethclient.Client
 		return err
 	}
 
-	err = c.SendTransaction(ctx, signedTx)
-	if err != nil {
-		r.logger.Error().Err(err).Msg("Failed to send transaction")
+	if err := r.sendTransaction(ctx, c, signedTx); err != nil {
 		return err
 	}
 
@@ -839,6 +837,32 @@ func (r *RPCProvider) refreshTimeToMine(ctx context.Context, c *ethclient.Client
 		m := observer.NewMessage(r.network, r.label, ttm)
 		r.bus.Publish(ctx, topics.TimeToMine, m)
 	}()
+
+	return nil
+}
+
+// sendTransaction sends a signed transaction using either a custom RPC method
+// (if configured) or the standard eth_sendRawTransaction method.
+func (r *RPCProvider) sendTransaction(ctx context.Context, c *ethclient.Client, signedTx *types.Transaction) error {
+	if r.timeToMine.SendMethod == nil {
+		if err := c.SendTransaction(ctx, signedTx); err != nil {
+			r.logger.Error().Err(err).Msg("Failed to send transaction")
+			return err
+		}
+		return nil
+	}
+
+	rawTx, err := signedTx.MarshalBinary()
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to marshal transaction")
+		return err
+	}
+
+	var result common.Hash
+	if err := c.Client().CallContext(ctx, &result, *r.timeToMine.SendMethod, hexutil.Encode(rawTx)); err != nil {
+		r.logger.Error().Err(err).Str("method", *r.timeToMine.SendMethod).Msg("Failed to send transaction with custom method")
+		return err
+	}
 
 	return nil
 }

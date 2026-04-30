@@ -263,6 +263,12 @@
       ## @param data - string - optional - default ""
       ## @env PANOPTICHAIN_PROVIDERS_RPC_0_TIME_TO_MINE_DATA
       ## The transaction ABI-encoded data.
+      ##
+      ## @param send_method - string - optional
+      ## @env PANOPTICHAIN_PROVIDERS_RPC_0_TIME_TO_MINE_SEND_METHOD
+      ## Custom RPC method to use for sending transactions. If not set, the
+      ## standard `eth_sendRawTransaction` method is used. This can be set to
+      ## methods like `eth_sendRawTransactionPrivate` for private mempools.
   #
   # rpc:
   #   - name: "Polygon Mainnet"
