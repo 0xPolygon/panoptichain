@@ -22,8 +22,6 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("HTTP %d %s", e.StatusCode, e.Status)
 }
 
-const maxBodyPreview = 256
-
 // GetJSON fetches JSON data from the specified URL and decodes it into the
 // target variable.
 func GetJSON(url string, target any) error {
@@ -35,7 +33,7 @@ func GetJSON(url string, target any) error {
 	defer r.Body.Close()
 
 	if r.StatusCode < 200 || r.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(r.Body, maxBodyPreview))
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 256))
 		return &HTTPError{
 			StatusCode: r.StatusCode,
 			Status:     r.Status,
