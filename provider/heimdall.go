@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/url"
@@ -20,6 +21,10 @@ import (
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
+// ErrInvalidSpan is returned when a span has zero ID with zero blocks,
+// indicating a malformed API response.
+var ErrInvalidSpan = errors.New("invalid span: zero ID with zero blocks")
+
 type HeimdallProvider struct {
 	tendermintURL string
 	heimdallURL   string
@@ -28,6 +33,7 @@ type HeimdallProvider struct {
 	bus           *observer.EventBus
 	interval      time.Duration
 	logger        zerolog.Logger
+	maxSpanLag    uint64
 
 	blockNumber         uint64
 	prevBlockNumber     uint64
@@ -49,6 +55,11 @@ type HeimdallProvider struct {
 }
 
 func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.HeimdallEndpoint) *HeimdallProvider {
+	maxSpanLag := config.DefaultMaxSpanLag
+	if cfg.MaxSpanLag != nil {
+		maxSpanLag = *cfg.MaxSpanLag
+	}
+
 	return &HeimdallProvider{
 		tendermintURL:       cfg.TendermintURL,
 		heimdallURL:         cfg.HeimdallURL,
@@ -58,6 +69,7 @@ func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.He
 		blockBuffer:         blockbuffer.NewBlockBuffer(128),
 		interval:            GetInterval(cfg.Interval),
 		logger:              NewLogger(n, cfg.Label),
+		maxSpanLag:          maxSpanLag,
 		checkpointProposers: orderedmap.New[string, struct{}](),
 		refreshStateTime:    new(time.Duration),
 		spans:               &observer.HeimdallSpans{},
@@ -422,6 +434,21 @@ func (h *HeimdallProvider) refreshSpan() error {
 		return nil
 	}
 
+	// Check if lag exceeds maximum threshold
+	lag := latest.ID - h.spans.Curr.ID
+	if lag > h.maxSpanLag {
+		h.logger.Warn().
+			Uint64("current_span_id", h.spans.Curr.ID).
+			Uint64("latest_span_id", latest.ID).
+			Uint64("lag", lag).
+			Uint64("max_span_lag", h.maxSpanLag).
+			Msg("Span lag exceeds maximum, jumping to latest")
+
+		h.spans.Prev = h.spans.Curr
+		h.spans.Curr = latest
+		return nil
+	}
+
 	// Fetch next span sequentially to ensure overlap detection works
 	next := h.spans.Curr.ID + 1
 	span, err := h.getSpan(next)
@@ -456,7 +483,15 @@ func (h *HeimdallProvider) fetchSpan(spanID string) (*observer.HeimdallSpan, err
 		return nil, err
 	}
 
-	return &v2.Span, nil
+	span := &v2.Span
+	if span.ID == 0 && span.StartBlock == 0 && span.EndBlock == 0 {
+		h.logger.Error().
+			Str("requested_span", spanID).
+			Msg("Received invalid zero-value span from API")
+		return nil, ErrInvalidSpan
+	}
+
+	return span, nil
 }
 
 func (h *HeimdallProvider) refreshValidatorSet() error {
