@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -46,17 +47,20 @@ func (g *GrafanaProvider) RefreshState(context.Context) error {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
+	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return fmt.Errorf("HTTP %d %s: %s", resp.StatusCode, resp.Status, string(body))
+	}
 
 	var gr observer.GrafanaResponse
-	if err := json.Unmarshal(body, &gr); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
 		return err
 	}
 	g.response = &gr

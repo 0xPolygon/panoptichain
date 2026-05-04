@@ -15,6 +15,7 @@ import (
 )
 
 const DefaultBlockLookBack uint64 = 1000
+const DefaultMaxSpanLag uint64 = 10
 
 // Runner configures the execution interval of the job system.
 type Runner struct {
@@ -129,6 +130,7 @@ type HeimdallEndpoint struct {
 	HeimdallURL   string         `mapstructure:"heimdall_url" validate:"url,required"`
 	Label         string         `mapstructure:"label" validate:"required"`
 	Interval      *time.Duration `mapstructure:"interval"`
+	MaxSpanLag    *uint64        `mapstructure:"max_span_lag"`
 }
 
 // SensorNetwork configures the sensor network provider. This fetches data from
