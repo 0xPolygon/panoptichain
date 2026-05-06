@@ -523,6 +523,11 @@ func (o *HeimdallValidatorSetChangeObserver) Register(eb *EventBus) {
 		"The number of validator set changes (onboarded or unbonded)",
 		"change_type",
 	)
+
+	for _, h := range config.Config().Providers.HeimdallEndpoints {
+		o.counter.WithLabelValues(h.Name, h.Label, "onboarded").Add(0)
+		o.counter.WithLabelValues(h.Name, h.Label, "unbonded").Add(0)
+	}
 }
 
 func (o *HeimdallValidatorSetChangeObserver) Notify(ctx context.Context, m Message) {
