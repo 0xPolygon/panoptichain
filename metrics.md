@@ -489,6 +489,40 @@ Variable Labels:
 - network
 - provider
 
+## HeimdallMilestoneVoteObserver
+
+
+### panoptichain_heimdall_milestone_vote_proposed
+Validators who proposed milestone in vote extension
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_heimdall_milestone_vote_missed
+Validators who signed but didn't propose milestone
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_heimdall_milestone_voting_power_pct
+Percentage of voting power that proposed milestone
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## HeimdallMissedBlockProposalObserver
 
 

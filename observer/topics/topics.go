@@ -45,5 +45,6 @@ const (
 	ValidatorWallet                                    // observer.ValidatorWalletBalances
 	ValidatorSet                                       // *observer.HeimdallValidatorSets
 	MissedVote                                         // *observer.HeimdallMissedVotes
+	MilestoneVote                                      // *observer.HeimdallMilestoneVotes
 	ZkEVMBatches                                       // observer.ZkEVMBatches
 )

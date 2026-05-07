@@ -4,7 +4,7 @@
 // - protoc             v5.29.3
 // source: network.proto
 
-package proto
+package network
 
 import (
 	context "context"

@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
@@ -20,6 +22,7 @@ import (
 	"github.com/0xPolygon/panoptichain/network"
 	"github.com/0xPolygon/panoptichain/observer"
 	"github.com/0xPolygon/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/proto/heimdall"
 )
 
 // ErrInvalidSpan is returned when a span has zero ID with zero blocks,
@@ -53,6 +56,7 @@ type HeimdallProvider struct {
 	validatorSets *observer.HeimdallValidatorSets
 
 	missedVotes    []*observer.HeimdallMissedVotes
+	milestoneVotes []*observer.HeimdallMilestoneVotes
 	validatorIDMap map[string]uint64 // normalized signer_address -> val_id
 
 	refreshStateTime *time.Duration
@@ -94,6 +98,7 @@ func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	h.refreshSpan()
 	h.refreshValidatorSet()
 	h.refreshMissedVotes()
+	h.refreshMilestoneVotes()
 
 	return nil
 }
@@ -179,6 +184,11 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 			m := observer.NewMessage(h.network, h.label, mv)
 			h.bus.Publish(ctx, topics.MissedVote, m)
 		}
+	}
+
+	for _, mv := range h.milestoneVotes {
+		m := observer.NewMessage(h.network, h.label, mv)
+		h.bus.Publish(ctx, topics.MilestoneVote, m)
 	}
 
 	h.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(h.network, h.label, h.refreshStateTime))
@@ -544,14 +554,17 @@ func (h *HeimdallProvider) refreshValidatorSet() error {
 	}
 
 	curr := make(observer.ValidatorMap, len(validators))
+	idMap := make(map[string]uint64, len(validators))
 	for _, v := range validators {
 		curr[v.ID] = v
+		idMap[normalizeAddress(v.Signer)] = v.ID
 	}
 
 	if h.validatorSets.Curr != nil {
 		h.validatorSets.Prev = h.validatorSets.Curr
 	}
 	h.validatorSets.Curr = curr
+	h.validatorIDMap = idMap
 
 	return nil
 }
@@ -568,22 +581,6 @@ func (h *HeimdallProvider) getCommit(height uint64) (*observer.HeimdallCommit, e
 	}
 
 	return &commit, nil
-}
-
-// buildValidatorIDMap creates a mapping from normalized signer addresses to validator IDs
-// for cross-referencing Tendermint commit signatures with Heimdall validators.
-func (h *HeimdallProvider) buildValidatorIDMap() error {
-	validators, err := api.GetValidators(h.heimdallURL)
-	if err != nil {
-		return fmt.Errorf("failed to get validators: %w", err)
-	}
-
-	h.validatorIDMap = make(map[string]uint64, len(validators))
-	for _, v := range validators {
-		h.validatorIDMap[normalizeAddress(v.Signer)] = v.ID
-	}
-
-	return nil
 }
 
 func normalizeAddress(addr string) string {
@@ -641,13 +638,12 @@ func (h *HeimdallProvider) detectMissedVotes(height uint64) (*observer.HeimdallM
 
 func (h *HeimdallProvider) refreshMissedVotes() {
 	if h.validatorIDMap == nil {
-		if err := h.buildValidatorIDMap(); err != nil {
-			h.logger.Error().Err(err).Msg("Failed to build validator ID map")
-			return
-		}
+		return
 	}
 
 	h.missedVotes = nil
+
+	h.logger.Debug().Msg("Refreshing missed consensus votes")
 
 	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
 		mv, err := h.detectMissedVotes(height)
@@ -658,5 +654,125 @@ func (h *HeimdallProvider) refreshMissedVotes() {
 		if mv != nil {
 			h.missedVotes = append(h.missedVotes, mv)
 		}
+	}
+}
+
+// getExtendedCommitInfo fetches and decodes the ExtendedCommitInfo from txs[0]
+// of a Heimdall block. Vote extensions from block H-1 are stored in block H's txs[0].
+func (h *HeimdallProvider) getExtendedCommitInfo(height uint64) (*heimdall.ExtendedCommitInfo, error) {
+	block := h.getBlock(height)
+	if block == nil {
+		return nil, fmt.Errorf("failed to get block at height %d", height)
+	}
+
+	txs := block.Result.Block.Data.Txs
+	if len(txs) == 0 {
+		return nil, fmt.Errorf("no transactions in block at height %d", height)
+	}
+
+	// txs[0] contains the base64-encoded ExtendedCommitInfo
+	veBytes, err := base64.StdEncoding.DecodeString(txs[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to base64 decode txs[0]: %w", err)
+	}
+
+	extCommit, err := heimdall.UnmarshalExtendedCommitInfo(veBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal ExtendedCommitInfo: %w", err)
+	}
+
+	return extCommit, nil
+}
+
+// detectMilestoneVotes processes vote extensions from a block and returns milestone vote data.
+func (h *HeimdallProvider) detectMilestoneVotes(height uint64) (*observer.HeimdallMilestoneVotes, error) {
+	extCommit, err := h.getExtendedCommitInfo(height)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		votes           []observer.HeimdallMilestoneVote
+		totalVP         int64
+		milestoneVP     int64
+		milestoneVoters int
+	)
+
+	for _, v := range extCommit.Votes {
+		if v.Validator == nil {
+			continue
+		}
+		validatorAddr := hex.EncodeToString(v.Validator.Address)
+		votingPower := v.Validator.Power
+		totalVP += votingPower
+
+		vote := observer.HeimdallMilestoneVote{
+			ValidatorAddress: validatorAddr,
+			ValidatorID:      h.validatorIDMap[normalizeAddress(validatorAddr)],
+			VotingPower:      votingPower,
+			BlockIDFlag:      int(v.BlockIdFlag),
+		}
+
+		if len(v.VoteExtension) > 0 {
+			h.extractMilestoneFromVoteExtension(&vote, v.VoteExtension)
+			if vote.HasMilestone {
+				milestoneVP += votingPower
+				milestoneVoters++
+			}
+		}
+
+		votes = append(votes, vote)
+	}
+
+	return &observer.HeimdallMilestoneVotes{
+		Height:               height,
+		TotalValidators:      len(votes),
+		TotalVotingPower:     totalVP,
+		MilestoneVoters:      milestoneVoters,
+		MilestoneVotingPower: milestoneVP,
+		Votes:                votes,
+	}, nil
+}
+
+// extractMilestoneFromVoteExtension decodes the vote extension and populates milestone data if present.
+func (h *HeimdallProvider) extractMilestoneFromVoteExtension(vote *observer.HeimdallMilestoneVote, data []byte) {
+	ve, err := heimdall.UnmarshalVoteExtension(data)
+	if err != nil {
+		h.logger.Warn().
+			Err(err).
+			Str("validator", vote.ValidatorAddress).
+			Msg("Failed to decode vote extension")
+		return
+	}
+
+	if ve.MilestoneProposition == nil {
+		return
+	}
+
+	mp := ve.MilestoneProposition
+	if len(mp.BlockHashes) == 0 {
+		return
+	}
+	vote.HasMilestone = true
+	vote.MilestoneStart = mp.StartBlockNumber
+	vote.MilestoneEnd = mp.StartBlockNumber + uint64(len(mp.BlockHashes)) - 1
+}
+
+func (h *HeimdallProvider) refreshMilestoneVotes() {
+	if h.validatorIDMap == nil {
+		return
+	}
+
+	h.milestoneVotes = nil
+
+	h.logger.Debug().Msg("Refreshing milestone votes")
+
+	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
+		mv, err := h.detectMilestoneVotes(height)
+		if err != nil {
+			h.logger.Warn().Err(err).Uint64("height", height).Msg("Failed to detect milestone votes")
+			continue
+		}
+		h.milestoneVotes = append(h.milestoneVotes, mv)
 	}
 }
