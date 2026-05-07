@@ -530,17 +530,6 @@ Variable Labels:
 - signer_address
 - flag
 
-### panoptichain_heimdall_missed_milestone_vote
-Missed milestone votes (when milestone stored at height)
-
-Metric Type: CounterVec
-
-Variable Labels:
-- network
-- provider
-- validator_id
-- signer_address
-
 ## HeimdallSignatureCountObserver
 
 

@@ -477,7 +477,6 @@ type HeimdallMissedVotes struct {
 	Height       uint64
 	MissingCount int
 	MissedVotes  []HeimdallMissedVote
-	HasMilestone bool
 }
 
 type HeimdallSpanObserver struct {
@@ -606,10 +605,9 @@ func (o *HeimdallValidatorSetChangeObserver) GetCollectors() []prometheus.Collec
 	return []prometheus.Collector{o.counter}
 }
 
-// HeimdallMissedVoteObserver tracks missed consensus and milestone votes.
+// HeimdallMissedVoteObserver tracks missed consensus votes.
 type HeimdallMissedVoteObserver struct {
 	consensusCounter *prometheus.CounterVec
-	milestoneCounter *prometheus.CounterVec
 }
 
 func (o *HeimdallMissedVoteObserver) Register(eb *EventBus) {
@@ -621,13 +619,6 @@ func (o *HeimdallMissedVoteObserver) Register(eb *EventBus) {
 		"Missed Heimdall consensus votes",
 		"validator_id", "signer_address", "flag",
 	)
-
-	o.milestoneCounter = metrics.NewCounter(
-		metrics.Heimdall,
-		"missed_milestone_vote",
-		"Missed milestone votes (when milestone stored at height)",
-		"validator_id", "signer_address",
-	)
 }
 
 func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
@@ -638,26 +629,17 @@ func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
 
 	for _, vote := range missed.MissedVotes {
 		id := strconv.FormatUint(vote.ValidatorID, 10)
-
 		o.consensusCounter.WithLabelValues(network, provider, id, vote.SignerAddress, vote.FlagLabel).Inc()
-
-		if missed.HasMilestone {
-			o.milestoneCounter.WithLabelValues(network, provider, id, vote.SignerAddress).Inc()
-		}
 	}
 
 	if missed.MissingCount > 0 {
 		logger.Info().
 			Uint64("height", missed.Height).
 			Int("missing_count", missed.MissingCount).
-			Bool("has_milestone", missed.HasMilestone).
 			Msg("Detected missed votes")
 	}
 }
 
 func (o *HeimdallMissedVoteObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{
-		o.consensusCounter,
-		o.milestoneCounter,
-	}
+	return []prometheus.Collector{o.consensusCounter}
 }

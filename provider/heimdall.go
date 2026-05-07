@@ -590,7 +590,7 @@ func normalizeAddress(addr string) string {
 	return strings.ToLower(strings.TrimPrefix(addr, "0x"))
 }
 
-func (h *HeimdallProvider) detectMissedVotes(height uint64, hasMilestone bool) (*observer.HeimdallMissedVotes, error) {
+func (h *HeimdallProvider) detectMissedVotes(height uint64) (*observer.HeimdallMissedVotes, error) {
 	validators, err := h.getAllValidatorsAtHeight(height)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get validators at height %d: %w", height, err)
@@ -636,7 +636,6 @@ func (h *HeimdallProvider) detectMissedVotes(height uint64, hasMilestone bool) (
 		Height:       height,
 		MissingCount: len(missedVotes),
 		MissedVotes:  missedVotes,
-		HasMilestone: hasMilestone,
 	}, nil
 }
 
@@ -650,15 +649,8 @@ func (h *HeimdallProvider) refreshMissedVotes() {
 
 	h.missedVotes = nil
 
-	// Check if a new milestone was stored this cycle
-	newMilestone := h.milestone != nil && h.milestone.Count > h.prevMilestoneCount
-
 	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
-		// Only mark the last block as having the milestone to avoid double-counting
-		// missed milestone votes across multiple blocks in a single polling cycle.
-		hasMilestone := newMilestone && height == h.blockNumber
-
-		mv, err := h.detectMissedVotes(height, hasMilestone)
+		mv, err := h.detectMissedVotes(height)
 		if err != nil {
 			h.logger.Warn().Err(err).Uint64("height", height).Msg("Failed to detect missed votes")
 			continue
