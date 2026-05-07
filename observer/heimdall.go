@@ -656,12 +656,12 @@ func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
 	o.livenessRisk.WithLabelValues(network, provider).Set(boolToFloat(missed.LivenessRisk))
 
 	for _, vote := range missed.MissedVotes {
-		valIDStr := strconv.FormatUint(vote.ValidatorID, 10)
+		id := strconv.FormatUint(vote.ValidatorID, 10)
 
-		o.consensusCounter.WithLabelValues(network, provider, valIDStr, vote.SignerAddress, vote.FlagLabel).Inc()
+		o.consensusCounter.WithLabelValues(network, provider, id, vote.SignerAddress, vote.FlagLabel).Inc()
 
 		if missed.HasMilestone {
-			o.milestoneCounter.WithLabelValues(network, provider, valIDStr, vote.SignerAddress).Inc()
+			o.milestoneCounter.WithLabelValues(network, provider, id, vote.SignerAddress).Inc()
 		}
 	}
 
