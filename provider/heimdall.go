@@ -651,9 +651,13 @@ func (h *HeimdallProvider) refreshMissedVotes() {
 	h.missedVotes = nil
 
 	// Check if a new milestone was stored this cycle
-	hasMilestone := h.milestone != nil && h.milestone.Count > h.prevMilestoneCount
+	newMilestone := h.milestone != nil && h.milestone.Count > h.prevMilestoneCount
 
 	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
+		// Only mark the last block as having the milestone to avoid double-counting
+		// missed milestone votes across multiple blocks in a single polling cycle.
+		hasMilestone := newMilestone && height == h.blockNumber
+
 		mv, err := h.detectMissedVotes(height, hasMilestone)
 		if err != nil {
 			h.logger.Warn().Err(err).Uint64("height", height).Msg("Failed to detect missed votes")
