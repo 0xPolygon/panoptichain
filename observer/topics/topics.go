@@ -44,5 +44,6 @@ const (
 	TrustedBatch                                       // *util.Batch
 	ValidatorWallet                                    // observer.ValidatorWalletBalances
 	ValidatorSet                                       // *observer.HeimdallValidatorSets
+	MissedVote                                         // *observer.HeimdallMissedVotes
 	ZkEVMBatches                                       // observer.ZkEVMBatches
 )

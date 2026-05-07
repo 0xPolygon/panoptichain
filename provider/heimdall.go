@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -51,6 +52,9 @@ type HeimdallProvider struct {
 
 	validatorSets *observer.HeimdallValidatorSets
 
+	missedVotes    *observer.HeimdallMissedVotes
+	validatorIDMap map[string]uint64 // normalized signer_address -> val_id
+
 	refreshStateTime *time.Duration
 }
 
@@ -89,6 +93,7 @@ func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	h.refreshMissedBlockProposal()
 	h.refreshSpan()
 	h.refreshValidatorSet()
+	h.refreshMissedVotes()
 
 	return nil
 }
@@ -169,6 +174,11 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.ValidatorSet, m)
 	}
 
+	if h.missedVotes != nil && h.missedVotes.MissingCount > 0 {
+		m := observer.NewMessage(h.network, h.label, h.missedVotes)
+		h.bus.Publish(ctx, topics.MissedVote, m)
+	}
+
 	h.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(h.network, h.label, h.refreshStateTime))
 
 	return nil
@@ -237,6 +247,37 @@ func (h *HeimdallProvider) getValidators(height uint64) *observer.HeimdallValida
 	}
 
 	return &validators
+}
+
+// getAllValidatorsAtHeight fetches all validators at a specific height with pagination.
+func (h *HeimdallProvider) getAllValidatorsAtHeight(height uint64) ([]*observer.HeimdallValidator, error) {
+	const perPage = 100
+	const maxPages = 10
+
+	var allValidators []*observer.HeimdallValidator
+
+	for page := 1; page <= maxPages; page++ {
+		path, err := url.JoinPath(h.tendermintURL, "validators")
+		if err != nil {
+			return nil, fmt.Errorf("failed to join validators path: %w", err)
+		}
+
+		path = fmt.Sprintf("%s?height=%d&per_page=%d&page=%d", path, height, perPage, page)
+
+		var validators observer.HeimdallValidators
+		if err := api.GetJSON(path, &validators); err != nil {
+			return nil, fmt.Errorf("failed to get validators at height %d page %d: %w", height, page, err)
+		}
+
+		allValidators = append(allValidators, validators.Validators()...)
+
+		total, _ := strconv.Atoi(validators.Result.Total)
+		if len(allValidators) >= total {
+			break
+		}
+	}
+
+	return allValidators, nil
 }
 
 func (h *HeimdallProvider) fillRange(start uint64) {
@@ -512,4 +553,132 @@ func (h *HeimdallProvider) refreshValidatorSet() error {
 	h.validatorSets.Curr = curr
 
 	return nil
+}
+
+func (h *HeimdallProvider) getCommit(height uint64) (*observer.HeimdallCommit, error) {
+	path, err := url.JoinPath(h.tendermintURL, "commit")
+	if err != nil {
+		return nil, fmt.Errorf("failed to join commit path: %w", err)
+	}
+
+	var commit observer.HeimdallCommit
+	if err := api.GetJSON(fmt.Sprintf("%s?height=%d", path, height), &commit); err != nil {
+		return nil, fmt.Errorf("failed to get commit at height %d: %w", height, err)
+	}
+
+	return &commit, nil
+}
+
+// buildValidatorIDMap creates a mapping from normalized signer addresses to validator IDs
+// for cross-referencing Tendermint commit signatures with Heimdall validators.
+func (h *HeimdallProvider) buildValidatorIDMap() error {
+	validators, err := api.GetValidators(h.heimdallURL)
+	if err != nil {
+		return fmt.Errorf("failed to get validators: %w", err)
+	}
+
+	h.validatorIDMap = make(map[string]uint64, len(validators))
+	for _, v := range validators {
+		h.validatorIDMap[normalizeAddress(v.Signer)] = v.ID
+	}
+
+	return nil
+}
+
+func normalizeAddress(addr string) string {
+	return strings.ToLower(strings.TrimPrefix(addr, "0x"))
+}
+
+func (h *HeimdallProvider) detectMissedVotes(height uint64) error {
+	validatorList, err := h.getAllValidatorsAtHeight(height)
+	if err != nil {
+		return fmt.Errorf("failed to get validators at height %d: %w", height, err)
+	}
+
+	commit, err := h.getCommit(height)
+	if err != nil {
+		return err
+	}
+
+	signatures := commit.Result.SignedHeader.Commit.Signatures
+	if len(signatures) != len(validatorList) {
+		h.logger.Warn().
+			Int("validators", len(validatorList)).
+			Int("signatures", len(signatures)).
+			Uint64("height", height).
+			Msg("Validator and signature array length mismatch")
+		return nil
+	}
+
+	var totalVP int64
+	for _, v := range validatorList {
+		vp, _ := strconv.ParseInt(v.VotingPower, 10, 64)
+		totalVP += vp
+	}
+
+	if totalVP == 0 {
+		return nil
+	}
+
+	var missedVotes []observer.HeimdallMissedVote
+	var missingVP int64
+
+	for i, sig := range signatures {
+		if sig.BlockIDFlag == 2 {
+			continue
+		}
+
+		validator := validatorList[i]
+		vp, _ := strconv.ParseInt(validator.VotingPower, 10, 64)
+		valID := h.validatorIDMap[normalizeAddress(validator.Address)]
+
+		flagLabel := "absent"
+		if sig.BlockIDFlag == 3 {
+			flagLabel = "nil"
+		}
+
+		missedVotes = append(missedVotes, observer.HeimdallMissedVote{
+			ValidatorID:    valID,
+			SignerAddress:  validator.Address,
+			VotingPower:    vp,
+			VotingPowerPct: float64(vp) / float64(totalVP) * 100,
+			BlockIDFlag:    sig.BlockIDFlag,
+			FlagLabel:      flagLabel,
+		})
+		missingVP += vp
+	}
+
+	missingVPPct := float64(missingVP) / float64(totalVP) * 100
+	hasMilestone := h.milestone != nil && h.milestone.Count > h.prevMilestoneCount
+
+	h.missedVotes = &observer.HeimdallMissedVotes{
+		Height:          height,
+		TotalValidators: len(validatorList),
+		TotalVP:         totalVP,
+		MissingCount:    len(missedVotes),
+		MissingVP:       missingVP,
+		MissingVPPct:    missingVPPct,
+		LivenessRisk:    missingVPPct > 33.0,
+		MissedVotes:     missedVotes,
+		HasMilestone:    hasMilestone,
+	}
+
+	return nil
+}
+
+func (h *HeimdallProvider) refreshMissedVotes() {
+	if h.validatorIDMap == nil {
+		if err := h.buildValidatorIDMap(); err != nil {
+			h.logger.Error().Err(err).Msg("Failed to build validator ID map")
+			return
+		}
+	}
+
+	h.missedVotes = nil
+
+	if h.blockNumber > 0 {
+		if err := h.detectMissedVotes(h.blockNumber); err != nil {
+			h.logger.Warn().Err(err).Uint64("height", h.blockNumber).Msg("Failed to detect missed votes")
+		}
+	}
 }

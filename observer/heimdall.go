@@ -5,6 +5,7 @@ package observer
 import (
 	"context"
 	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -438,6 +439,45 @@ type HeimdallValidatorSets struct {
 	Prev ValidatorMap
 }
 
+type HeimdallCommitSignature struct {
+	BlockIDFlag      int    `json:"block_id_flag"`
+	ValidatorAddress string `json:"validator_address"`
+	Timestamp        string `json:"timestamp"`
+	Signature        string `json:"signature"`
+}
+
+type HeimdallCommit struct {
+	Result struct {
+		SignedHeader struct {
+			Commit struct {
+				Height     string                    `json:"height"`
+				Signatures []HeimdallCommitSignature `json:"signatures"`
+			} `json:"commit"`
+		} `json:"signed_header"`
+	} `json:"result"`
+}
+
+type HeimdallMissedVote struct {
+	ValidatorID    uint64
+	SignerAddress  string
+	VotingPower    int64
+	VotingPowerPct float64
+	BlockIDFlag    int
+	FlagLabel      string
+}
+
+type HeimdallMissedVotes struct {
+	Height          uint64
+	TotalValidators int
+	TotalVP         int64
+	MissingCount    int
+	MissingVP       int64
+	MissingVPPct    float64
+	LivenessRisk    bool
+	MissedVotes     []HeimdallMissedVote
+	HasMilestone    bool
+}
+
 type HeimdallSpanObserver struct {
 	spanID     *prometheus.GaugeVec
 	startBlock *prometheus.GaugeVec
@@ -562,4 +602,81 @@ func (o *HeimdallValidatorSetChangeObserver) detectChanges(logger zerolog.Logger
 
 func (o *HeimdallValidatorSetChangeObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.counter}
+}
+
+// HeimdallMissedVoteObserver tracks missed consensus and milestone votes.
+type HeimdallMissedVoteObserver struct {
+	consensusCounter *prometheus.CounterVec // all missed consensus votes
+	milestoneCounter *prometheus.CounterVec // missed votes when milestone stored
+	missingVPGauge   *prometheus.GaugeVec   // current missing VP percentage
+	livenessRisk     *prometheus.GaugeVec   // 1 if >33% VP missing
+}
+
+func (o *HeimdallMissedVoteObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.MissedVote, o)
+
+	o.consensusCounter = metrics.NewCounter(
+		metrics.Heimdall,
+		"missed_consensus_vote",
+		"Missed Heimdall consensus votes",
+		"validator_id", "signer_address", "flag",
+	)
+
+	o.milestoneCounter = metrics.NewCounter(
+		metrics.Heimdall,
+		"missed_milestone_vote",
+		"Missed milestone votes (when milestone stored at height)",
+		"validator_id", "signer_address",
+	)
+
+	o.missingVPGauge = metrics.NewGauge(
+		metrics.Heimdall,
+		"missing_voting_power_pct",
+		"Percentage of voting power missing from last block",
+	)
+
+	o.livenessRisk = metrics.NewGauge(
+		metrics.Heimdall,
+		"liveness_risk",
+		"1 if >33% voting power missing (chain halt risk)",
+	)
+}
+
+func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
+	logger := NewLogger(o, m)
+	missed := m.Data().(*HeimdallMissedVotes)
+	network := m.Network().GetName()
+	provider := m.Provider()
+
+	o.missingVPGauge.WithLabelValues(network, provider).Set(missed.MissingVPPct)
+	o.livenessRisk.WithLabelValues(network, provider).Set(boolToFloat(missed.LivenessRisk))
+
+	for _, vote := range missed.MissedVotes {
+		valIDStr := strconv.FormatUint(vote.ValidatorID, 10)
+
+		o.consensusCounter.WithLabelValues(network, provider, valIDStr, vote.SignerAddress, vote.FlagLabel).Inc()
+
+		if missed.HasMilestone {
+			o.milestoneCounter.WithLabelValues(network, provider, valIDStr, vote.SignerAddress).Inc()
+		}
+	}
+
+	if missed.MissingCount > 0 {
+		logger.Info().
+			Uint64("height", missed.Height).
+			Int("missing_count", missed.MissingCount).
+			Float64("missing_vp_pct", missed.MissingVPPct).
+			Bool("liveness_risk", missed.LivenessRisk).
+			Bool("has_milestone", missed.HasMilestone).
+			Msg("Detected missed votes")
+	}
+}
+
+func (o *HeimdallMissedVoteObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
+		o.consensusCounter,
+		o.milestoneCounter,
+		o.missingVPGauge,
+		o.livenessRisk,
+	}
 }
