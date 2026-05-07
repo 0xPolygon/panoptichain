@@ -296,9 +296,3 @@ func NewLogger(o Observer, m Message) zerolog.Logger {
 		Logger()
 }
 
-func boolToFloat(b bool) float64 {
-	if b {
-		return 1.0
-	}
-	return 0.0
-}

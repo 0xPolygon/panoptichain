@@ -541,24 +541,6 @@ Variable Labels:
 - validator_id
 - signer_address
 
-### panoptichain_heimdall_missing_voting_power_pct
-Percentage of voting power missing from last block
-
-Metric Type: GaugeVec
-
-Variable Labels:
-- network
-- provider
-
-### panoptichain_heimdall_liveness_risk
-1 if >33% voting power missing (chain halt risk)
-
-Metric Type: GaugeVec
-
-Variable Labels:
-- network
-- provider
-
 ## HeimdallSignatureCountObserver
 
 

@@ -610,10 +610,8 @@ func (o *HeimdallValidatorSetChangeObserver) GetCollectors() []prometheus.Collec
 
 // HeimdallMissedVoteObserver tracks missed consensus and milestone votes.
 type HeimdallMissedVoteObserver struct {
-	consensusCounter *prometheus.CounterVec // all missed consensus votes
-	milestoneCounter *prometheus.CounterVec // missed votes when milestone stored
-	missingVPGauge   *prometheus.GaugeVec   // current missing VP percentage
-	livenessRisk     *prometheus.GaugeVec   // 1 if >33% VP missing
+	consensusCounter *prometheus.CounterVec
+	milestoneCounter *prometheus.CounterVec
 }
 
 func (o *HeimdallMissedVoteObserver) Register(eb *EventBus) {
@@ -632,18 +630,6 @@ func (o *HeimdallMissedVoteObserver) Register(eb *EventBus) {
 		"Missed milestone votes (when milestone stored at height)",
 		"validator_id", "signer_address",
 	)
-
-	o.missingVPGauge = metrics.NewGauge(
-		metrics.Heimdall,
-		"missing_voting_power_pct",
-		"Percentage of voting power missing from last block",
-	)
-
-	o.livenessRisk = metrics.NewGauge(
-		metrics.Heimdall,
-		"liveness_risk",
-		"1 if >33% voting power missing (chain halt risk)",
-	)
 }
 
 func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
@@ -651,9 +637,6 @@ func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
 	missed := m.Data().(*HeimdallMissedVotes)
 	network := m.Network().GetName()
 	provider := m.Provider()
-
-	o.missingVPGauge.WithLabelValues(network, provider).Set(missed.MissingVPPct)
-	o.livenessRisk.WithLabelValues(network, provider).Set(boolToFloat(missed.LivenessRisk))
 
 	for _, vote := range missed.MissedVotes {
 		id := strconv.FormatUint(vote.ValidatorID, 10)
@@ -680,7 +663,5 @@ func (o *HeimdallMissedVoteObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		o.consensusCounter,
 		o.milestoneCounter,
-		o.missingVPGauge,
-		o.livenessRisk,
 	}
 }
