@@ -515,6 +515,50 @@ Variable Labels:
 - provider
 - signer_address
 
+## HeimdallMissedVoteObserver
+
+
+### panoptichain_heimdall_missed_consensus_vote
+Missed Heimdall consensus votes
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+- flag
+
+### panoptichain_heimdall_missed_milestone_vote
+Missed milestone votes (when milestone stored at height)
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_heimdall_missing_voting_power_pct
+Percentage of voting power missing from last block
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_liveness_risk
+1 if >33% voting power missing (chain halt risk)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## HeimdallSignatureCountObserver
 
 
