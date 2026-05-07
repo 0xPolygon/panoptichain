@@ -446,14 +446,18 @@ type HeimdallCommitSignature struct {
 	Signature        string `json:"signature"`
 }
 
+type HeimdallCommitData struct {
+	Height     string                    `json:"height"`
+	Signatures []HeimdallCommitSignature `json:"signatures"`
+}
+
+type HeimdallSignedHeader struct {
+	Commit HeimdallCommitData `json:"commit"`
+}
+
 type HeimdallCommit struct {
 	Result struct {
-		SignedHeader struct {
-			Commit struct {
-				Height     string                    `json:"height"`
-				Signatures []HeimdallCommitSignature `json:"signatures"`
-			} `json:"commit"`
-		} `json:"signed_header"`
+		SignedHeader HeimdallSignedHeader `json:"signed_header"`
 	} `json:"result"`
 }
 
