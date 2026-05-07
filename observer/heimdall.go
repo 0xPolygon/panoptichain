@@ -462,24 +462,16 @@ type HeimdallCommit struct {
 }
 
 type HeimdallMissedVote struct {
-	ValidatorID    uint64
-	SignerAddress  string
-	VotingPower    int64
-	VotingPowerPct float64
-	BlockIDFlag    int
-	FlagLabel      string
+	ValidatorID   uint64
+	SignerAddress string
+	FlagLabel     string
 }
 
 type HeimdallMissedVotes struct {
-	Height          uint64
-	TotalValidators int
-	TotalVP         int64
-	MissingCount    int
-	MissingVP       int64
-	MissingVPPct    float64
-	LivenessRisk    bool
-	MissedVotes     []HeimdallMissedVote
-	HasMilestone    bool
+	Height       uint64
+	MissingCount int
+	MissedVotes  []HeimdallMissedVote
+	HasMilestone bool
 }
 
 type HeimdallSpanObserver struct {
@@ -652,8 +644,6 @@ func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
 		logger.Info().
 			Uint64("height", missed.Height).
 			Int("missing_count", missed.MissingCount).
-			Float64("missing_vp_pct", missed.MissingVPPct).
-			Bool("liveness_risk", missed.LivenessRisk).
 			Bool("has_milestone", missed.HasMilestone).
 			Msg("Detected missed votes")
 	}

@@ -590,7 +590,7 @@ func normalizeAddress(addr string) string {
 }
 
 func (h *HeimdallProvider) detectMissedVotes(height uint64) error {
-	validatorList, err := h.getAllValidatorsAtHeight(height)
+	validators, err := h.getAllValidatorsAtHeight(height)
 	if err != nil {
 		return fmt.Errorf("failed to get validators at height %d: %w", height, err)
 	}
@@ -601,35 +601,22 @@ func (h *HeimdallProvider) detectMissedVotes(height uint64) error {
 	}
 
 	signatures := commit.Result.SignedHeader.Commit.Signatures
-	if len(signatures) != len(validatorList) {
+	if len(signatures) != len(validators) {
 		h.logger.Warn().
-			Int("validators", len(validatorList)).
+			Int("validators", len(validators)).
 			Int("signatures", len(signatures)).
 			Uint64("height", height).
 			Msg("Validator and signature array length mismatch")
 		return nil
 	}
 
-	var totalVP int64
-	for _, v := range validatorList {
-		vp, _ := strconv.ParseInt(v.VotingPower, 10, 64)
-		totalVP += vp
-	}
-
-	if totalVP == 0 {
-		return nil
-	}
-
 	var missedVotes []observer.HeimdallMissedVote
-	var missingVP int64
-
 	for i, sig := range signatures {
 		if sig.BlockIDFlag == 2 {
 			continue
 		}
 
-		validator := validatorList[i]
-		vp, _ := strconv.ParseInt(validator.VotingPower, 10, 64)
+		validator := validators[i]
 		valID := h.validatorIDMap[normalizeAddress(validator.Address)]
 
 		flagLabel := "absent"
@@ -638,29 +625,17 @@ func (h *HeimdallProvider) detectMissedVotes(height uint64) error {
 		}
 
 		missedVotes = append(missedVotes, observer.HeimdallMissedVote{
-			ValidatorID:    valID,
-			SignerAddress:  validator.Address,
-			VotingPower:    vp,
-			VotingPowerPct: float64(vp) / float64(totalVP) * 100,
-			BlockIDFlag:    sig.BlockIDFlag,
-			FlagLabel:      flagLabel,
+			ValidatorID:   valID,
+			SignerAddress: validator.Address,
+			FlagLabel:     flagLabel,
 		})
-		missingVP += vp
 	}
 
-	missingVPPct := float64(missingVP) / float64(totalVP) * 100
-	hasMilestone := h.milestone != nil && h.milestone.Count > h.prevMilestoneCount
-
 	h.missedVotes = &observer.HeimdallMissedVotes{
-		Height:          height,
-		TotalValidators: len(validatorList),
-		TotalVP:         totalVP,
-		MissingCount:    len(missedVotes),
-		MissingVP:       missingVP,
-		MissingVPPct:    missingVPPct,
-		LivenessRisk:    missingVPPct > 33.0,
-		MissedVotes:     missedVotes,
-		HasMilestone:    hasMilestone,
+		Height:       height,
+		MissingCount: len(missedVotes),
+		MissedVotes:  missedVotes,
+		HasMilestone: h.milestone != nil && h.milestone.Count > h.prevMilestoneCount,
 	}
 
 	return nil
