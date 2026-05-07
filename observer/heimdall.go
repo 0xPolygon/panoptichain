@@ -389,6 +389,12 @@ type HeimdallCurrentCheckpointProposer struct {
 	Validator api.Validator `json:"validator"`
 }
 
+type HeimdallPrepareNextCheckpoint struct {
+	Checkpoint struct {
+		Proposer string `json:"proposer"`
+	} `json:"checkpoint"`
+}
+
 type HeimdallMissedCheckpointProposalObserver struct {
 	counter *prometheus.CounterVec
 }

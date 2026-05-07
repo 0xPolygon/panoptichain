@@ -362,18 +362,18 @@ func (h *HeimdallProvider) refreshCheckpoint() error {
 	return nil
 }
 
-func (h *HeimdallProvider) getCurrentCheckpointProposer() (*api.Validator, error) {
-	path, err := url.JoinPath(h.heimdallURL, "checkpoint", "proposers", "current")
+func (h *HeimdallProvider) getCurrentCheckpointProposer() (string, error) {
+	path, err := url.JoinPath(h.heimdallURL, "checkpoints", "prepare-next")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	var proposer observer.HeimdallCurrentCheckpointProposer
-	if err = api.GetJSON(path, &proposer); err != nil {
-		return nil, err
+	var resp observer.HeimdallPrepareNextCheckpoint
+	if err = api.GetJSON(path, &resp); err != nil {
+		return "", err
 	}
 
-	return &proposer.Validator, nil
+	return resp.Checkpoint.Proposer, nil
 }
 
 func (h *HeimdallProvider) refreshMissedCheckpointProposal() error {
@@ -389,13 +389,12 @@ func (h *HeimdallProvider) refreshMissedCheckpointProposal() error {
 
 	h.missedCheckpointProposers = nil
 
-	current, err := h.getCurrentCheckpointProposer()
+	signer, err := h.getCurrentCheckpointProposer()
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get Heimdall current checkpoint proposer")
 		return err
 	}
 
-	signer := current.Signer
 	if _, ok := h.checkpointProposers.Get(signer); !ok {
 		h.checkpointProposers.Set(signer, struct{}{})
 	}
