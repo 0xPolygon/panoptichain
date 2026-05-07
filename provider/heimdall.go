@@ -52,7 +52,7 @@ type HeimdallProvider struct {
 
 	validatorSets *observer.HeimdallValidatorSets
 
-	missedVotes    *observer.HeimdallMissedVotes
+	missedVotes    []*observer.HeimdallMissedVotes
 	validatorIDMap map[string]uint64 // normalized signer_address -> val_id
 
 	refreshStateTime *time.Duration
@@ -174,9 +174,11 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.ValidatorSet, m)
 	}
 
-	if h.missedVotes != nil && h.missedVotes.MissingCount > 0 {
-		m := observer.NewMessage(h.network, h.label, h.missedVotes)
-		h.bus.Publish(ctx, topics.MissedVote, m)
+	for _, mv := range h.missedVotes {
+		if mv.MissingCount > 0 {
+			m := observer.NewMessage(h.network, h.label, mv)
+			h.bus.Publish(ctx, topics.MissedVote, m)
+		}
 	}
 
 	h.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(h.network, h.label, h.refreshStateTime))
@@ -589,15 +591,15 @@ func normalizeAddress(addr string) string {
 	return strings.ToLower(strings.TrimPrefix(addr, "0x"))
 }
 
-func (h *HeimdallProvider) detectMissedVotes(height uint64) error {
+func (h *HeimdallProvider) detectMissedVotes(height uint64, hasMilestone bool) (*observer.HeimdallMissedVotes, error) {
 	validators, err := h.getAllValidatorsAtHeight(height)
 	if err != nil {
-		return fmt.Errorf("failed to get validators at height %d: %w", height, err)
+		return nil, fmt.Errorf("failed to get validators at height %d: %w", height, err)
 	}
 
 	commit, err := h.getCommit(height)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	signatures := commit.Result.SignedHeader.Commit.Signatures
@@ -607,7 +609,7 @@ func (h *HeimdallProvider) detectMissedVotes(height uint64) error {
 			Int("signatures", len(signatures)).
 			Uint64("height", height).
 			Msg("Validator and signature array length mismatch")
-		return nil
+		return nil, nil
 	}
 
 	var missedVotes []observer.HeimdallMissedVote
@@ -631,14 +633,12 @@ func (h *HeimdallProvider) detectMissedVotes(height uint64) error {
 		})
 	}
 
-	h.missedVotes = &observer.HeimdallMissedVotes{
+	return &observer.HeimdallMissedVotes{
 		Height:       height,
 		MissingCount: len(missedVotes),
 		MissedVotes:  missedVotes,
-		HasMilestone: h.milestone != nil && h.milestone.Count > h.prevMilestoneCount,
-	}
-
-	return nil
+		HasMilestone: hasMilestone,
+	}, nil
 }
 
 func (h *HeimdallProvider) refreshMissedVotes() {
@@ -651,9 +651,17 @@ func (h *HeimdallProvider) refreshMissedVotes() {
 
 	h.missedVotes = nil
 
-	if h.blockNumber > 0 {
-		if err := h.detectMissedVotes(h.blockNumber); err != nil {
-			h.logger.Warn().Err(err).Uint64("height", h.blockNumber).Msg("Failed to detect missed votes")
+	// Check if a new milestone was stored this cycle
+	hasMilestone := h.milestone != nil && h.milestone.Count > h.prevMilestoneCount
+
+	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
+		mv, err := h.detectMissedVotes(height, hasMilestone)
+		if err != nil {
+			h.logger.Warn().Err(err).Uint64("height", height).Msg("Failed to detect missed votes")
+			continue
+		}
+		if mv != nil {
+			h.missedVotes = append(h.missedVotes, mv)
 		}
 	}
 }
