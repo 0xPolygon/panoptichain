@@ -514,7 +514,7 @@ Variable Labels:
 - validator_id
 - signer_address
 
-### panoptichain_heimdall_milestone_voting_power_pct
+### panoptichain_heimdall_milestone_voting_power
 Percentage of voting power that proposed milestone
 
 Metric Type: GaugeVec

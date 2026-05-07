@@ -261,12 +261,12 @@ func (h *HeimdallProvider) getValidators(height uint64) *observer.HeimdallValida
 	return &validators
 }
 
-// getAllValidatorsAtHeight fetches all validators at a specific height with pagination.
-func (h *HeimdallProvider) getAllValidatorsAtHeight(height uint64) ([]*observer.HeimdallValidator, error) {
+// getValidatorsAtHeight fetches all validators at a specific height with pagination.
+func (h *HeimdallProvider) getValidatorsAtHeight(height uint64) ([]*observer.HeimdallValidator, error) {
 	const perPage = 100
 	const maxPages = 10
 
-	var allValidators []*observer.HeimdallValidator
+	var v []*observer.HeimdallValidator
 
 	for page := 1; page <= maxPages; page++ {
 		path, err := url.JoinPath(h.tendermintURL, "validators")
@@ -281,15 +281,15 @@ func (h *HeimdallProvider) getAllValidatorsAtHeight(height uint64) ([]*observer.
 			return nil, fmt.Errorf("failed to get validators at height %d page %d: %w", height, page, err)
 		}
 
-		allValidators = append(allValidators, validators.Validators()...)
+		v = append(v, validators.Validators()...)
 
 		total, _ := strconv.Atoi(validators.Result.Total)
-		if len(allValidators) >= total {
+		if len(v) >= total {
 			break
 		}
 	}
 
-	return allValidators, nil
+	return v, nil
 }
 
 func (h *HeimdallProvider) fillRange(start uint64) {
@@ -554,17 +554,17 @@ func (h *HeimdallProvider) refreshValidatorSet() error {
 	}
 
 	curr := make(observer.ValidatorMap, len(validators))
-	idMap := make(map[string]uint64, len(validators))
+	ids := make(map[string]uint64, len(validators))
 	for _, v := range validators {
 		curr[v.ID] = v
-		idMap[normalizeAddress(v.Signer)] = v.ID
+		ids[normalizeAddress(v.Signer)] = v.ID
 	}
 
 	if h.validatorSets.Curr != nil {
 		h.validatorSets.Prev = h.validatorSets.Curr
 	}
 	h.validatorSets.Curr = curr
-	h.validatorIDMap = idMap
+	h.validatorIDMap = ids
 
 	return nil
 }
@@ -587,8 +587,8 @@ func normalizeAddress(addr string) string {
 	return strings.ToLower(strings.TrimPrefix(addr, "0x"))
 }
 
-func (h *HeimdallProvider) detectMissedVotes(height uint64) (*observer.HeimdallMissedVotes, error) {
-	validators, err := h.getAllValidatorsAtHeight(height)
+func (h *HeimdallProvider) getMissedVotes(height uint64) (*observer.HeimdallMissedVotes, error) {
+	validators, err := h.getValidatorsAtHeight(height)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get validators at height %d: %w", height, err)
 	}
@@ -646,7 +646,7 @@ func (h *HeimdallProvider) refreshMissedVotes() {
 	h.logger.Debug().Msg("Refreshing missed consensus votes")
 
 	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
-		mv, err := h.detectMissedVotes(height)
+		mv, err := h.getMissedVotes(height)
 		if err != nil {
 			h.logger.Warn().Err(err).Uint64("height", height).Msg("Failed to detect missed votes")
 			continue
@@ -684,8 +684,8 @@ func (h *HeimdallProvider) getExtendedCommitInfo(height uint64) (*heimdall.Exten
 	return extCommit, nil
 }
 
-// detectMilestoneVotes processes vote extensions from a block and returns milestone vote data.
-func (h *HeimdallProvider) detectMilestoneVotes(height uint64) (*observer.HeimdallMilestoneVotes, error) {
+// getMilestoneVotes processes vote extensions from a block and returns milestone vote data.
+func (h *HeimdallProvider) getMilestoneVotes(height uint64) (*observer.HeimdallMilestoneVotes, error) {
 	extCommit, err := h.getExtendedCommitInfo(height)
 	if err != nil {
 		return nil, err
@@ -714,7 +714,7 @@ func (h *HeimdallProvider) detectMilestoneVotes(height uint64) (*observer.Heimda
 		}
 
 		if len(v.VoteExtension) > 0 {
-			h.extractMilestoneFromVoteExtension(&vote, v.VoteExtension)
+			h.getMilestoneFromVoteExtension(&vote, v.VoteExtension)
 			if vote.HasMilestone {
 				milestoneVP += votingPower
 				milestoneVoters++
@@ -734,8 +734,8 @@ func (h *HeimdallProvider) detectMilestoneVotes(height uint64) (*observer.Heimda
 	}, nil
 }
 
-// extractMilestoneFromVoteExtension decodes the vote extension and populates milestone data if present.
-func (h *HeimdallProvider) extractMilestoneFromVoteExtension(vote *observer.HeimdallMilestoneVote, data []byte) {
+// getMilestoneFromVoteExtension decodes the vote extension and populates milestone data if present.
+func (h *HeimdallProvider) getMilestoneFromVoteExtension(vote *observer.HeimdallMilestoneVote, data []byte) {
 	ve, err := heimdall.UnmarshalVoteExtension(data)
 	if err != nil {
 		h.logger.Warn().
@@ -768,7 +768,7 @@ func (h *HeimdallProvider) refreshMilestoneVotes() {
 	h.logger.Debug().Msg("Refreshing milestone votes")
 
 	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
-		mv, err := h.detectMilestoneVotes(height)
+		mv, err := h.getMilestoneVotes(height)
 		if err != nil {
 			h.logger.Warn().Err(err).Uint64("height", height).Msg("Failed to detect milestone votes")
 			continue
