@@ -159,6 +159,8 @@ var observersMap = map[string]Observer{
 	"heimdall_checkpoint":                 new(HeimdallCheckpointObserver),
 	"heimdall_missed_block_proposal":      new(HeimdallMissedBlockProposalObserver),
 	"heimdall_missed_checkpoint_proposal": new(HeimdallMissedCheckpointProposalObserver),
+	"heimdall_missed_vote":                new(HeimdallMissedVoteObserver),
+	"heimdall_milestone_vote":             new(HeimdallMilestoneVoteObserver),
 	"heimdall_signature_count":            new(HeimdallSignatureCountObserver),
 	"heimdall_validator_set_change":       new(HeimdallValidatorSetChangeObserver),
 	"milestone":                           new(MilestoneObserver),
@@ -294,3 +296,4 @@ func NewLogger(o Observer, m Message) zerolog.Logger {
 		Str("provider", m.Provider()).Time("time", m.Time()).
 		Logger()
 }
+

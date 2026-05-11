@@ -5,6 +5,7 @@ package observer
 import (
 	"context"
 	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -14,6 +15,7 @@ import (
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/proto/heimdall"
 )
 
 type PreCommit struct {
@@ -388,6 +390,12 @@ type HeimdallCurrentCheckpointProposer struct {
 	Validator api.Validator `json:"validator"`
 }
 
+type HeimdallPrepareNextCheckpoint struct {
+	Checkpoint struct {
+		Proposer string `json:"proposer"`
+	} `json:"checkpoint"`
+}
+
 type HeimdallMissedCheckpointProposalObserver struct {
 	counter *prometheus.CounterVec
 }
@@ -436,6 +444,61 @@ type ValidatorMap = map[uint64]api.Validator
 type HeimdallValidatorSets struct {
 	Curr ValidatorMap
 	Prev ValidatorMap
+}
+
+type HeimdallCommitSignature struct {
+	BlockIDFlag      int    `json:"block_id_flag"`
+	ValidatorAddress string `json:"validator_address"`
+	Timestamp        string `json:"timestamp"`
+	Signature        string `json:"signature"`
+}
+
+type HeimdallCommitData struct {
+	Height     string                    `json:"height"`
+	Signatures []HeimdallCommitSignature `json:"signatures"`
+}
+
+type HeimdallSignedHeader struct {
+	Commit HeimdallCommitData `json:"commit"`
+}
+
+type HeimdallCommit struct {
+	Result struct {
+		SignedHeader HeimdallSignedHeader `json:"signed_header"`
+	} `json:"result"`
+}
+
+type HeimdallMissedVote struct {
+	ValidatorID   uint64
+	SignerAddress string
+	FlagLabel     string
+}
+
+type HeimdallMissedVotes struct {
+	Height       uint64
+	MissingCount int
+	MissedVotes  []HeimdallMissedVote
+}
+
+// HeimdallMilestoneVote represents a validator's milestone vote from vote extensions.
+type HeimdallMilestoneVote struct {
+	ValidatorAddress string
+	ValidatorID      uint64
+	VotingPower      int64
+	BlockIDFlag      int // see heimdall.BlockIDFlag* constants
+	HasMilestone     bool
+	MilestoneStart   uint64
+	MilestoneEnd     uint64
+}
+
+// HeimdallMilestoneVotes represents all milestone votes for a block.
+type HeimdallMilestoneVotes struct {
+	Height               uint64
+	TotalValidators      int
+	TotalVotingPower     int64
+	MilestoneVoters      int   // validators who proposed milestone
+	MilestoneVotingPower int64 // VP of milestone voters
+	Votes                []HeimdallMilestoneVote
 }
 
 type HeimdallSpanObserver struct {
@@ -562,4 +625,112 @@ func (o *HeimdallValidatorSetChangeObserver) detectChanges(logger zerolog.Logger
 
 func (o *HeimdallValidatorSetChangeObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.counter}
+}
+
+// HeimdallMissedVoteObserver tracks missed consensus votes.
+type HeimdallMissedVoteObserver struct {
+	consensus *prometheus.CounterVec
+}
+
+func (o *HeimdallMissedVoteObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.MissedVote, o)
+
+	o.consensus = metrics.NewCounter(
+		metrics.Heimdall,
+		"missed_consensus_vote",
+		"Missed Heimdall consensus votes",
+		"validator_id", "signer_address", "flag",
+	)
+}
+
+func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
+	logger := NewLogger(o, m)
+	missed := m.Data().(*HeimdallMissedVotes)
+	network := m.Network().GetName()
+	provider := m.Provider()
+
+	for _, vote := range missed.MissedVotes {
+		id := strconv.FormatUint(vote.ValidatorID, 10)
+		o.consensus.WithLabelValues(network, provider, id, vote.SignerAddress, vote.FlagLabel).Inc()
+	}
+
+	if missed.MissingCount > 0 {
+		logger.Trace().
+			Uint64("height", missed.Height).
+			Int("missing_count", missed.MissingCount).
+			Msg("Detected missed votes")
+	}
+}
+
+func (o *HeimdallMissedVoteObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.consensus}
+}
+
+// HeimdallMilestoneVoteObserver tracks milestone votes from vote extensions.
+type HeimdallMilestoneVoteObserver struct {
+	proposed    *prometheus.CounterVec
+	missed      *prometheus.CounterVec
+	votingPower *prometheus.GaugeVec
+}
+
+func (o *HeimdallMilestoneVoteObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.MilestoneVote, o)
+
+	o.proposed = metrics.NewCounter(
+		metrics.Heimdall,
+		"milestone_vote_proposed",
+		"Validators who proposed milestone in vote extension",
+		"validator_id", "signer_address",
+	)
+
+	o.missed = metrics.NewCounter(
+		metrics.Heimdall,
+		"milestone_vote_missed",
+		"Validators who signed but didn't propose milestone",
+		"validator_id", "signer_address",
+	)
+
+	o.votingPower = metrics.NewGauge(
+		metrics.Heimdall,
+		"milestone_voting_power",
+		"Percentage of voting power that proposed milestone",
+	)
+}
+
+func (o *HeimdallMilestoneVoteObserver) Notify(ctx context.Context, m Message) {
+	logger := NewLogger(o, m)
+	votes := m.Data().(*HeimdallMilestoneVotes)
+	network := m.Network().GetName()
+	provider := m.Provider()
+
+	var vpPct float64
+	if votes.TotalVotingPower > 0 {
+		vpPct = float64(votes.MilestoneVotingPower) / float64(votes.TotalVotingPower) * 100
+	}
+	o.votingPower.WithLabelValues(network, provider).Set(vpPct)
+
+	for _, vote := range votes.Votes {
+		id := strconv.FormatUint(vote.ValidatorID, 10)
+		switch {
+		case vote.HasMilestone:
+			o.proposed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+		case vote.BlockIDFlag == heimdall.BlockIDFlagCommit:
+			// Signed the block but did not propose milestone
+			o.missed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+		}
+	}
+
+	missed := votes.TotalValidators - votes.MilestoneVoters
+	if missed > 0 {
+		logger.Trace().
+			Uint64("height", votes.Height).
+			Int("total_validators", votes.TotalValidators).
+			Int("milestone_voters", votes.MilestoneVoters).
+			Int("missed", missed).
+			Msg("Detected validators without milestone vote")
+	}
+}
+
+func (o *HeimdallMilestoneVoteObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.proposed, o.missed, o.votingPower}
 }
