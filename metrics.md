@@ -1168,6 +1168,40 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_rpc_validator_set_size
+The current number of active validators
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+## StakingEventsObserver
+
+
+### panoptichain_rpc_stake_for_pol
+The total number of Staked events observed
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_rpc_unstake_pol
+The total number of UnstakeInit events observed
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
 ## StateSyncObserver
 
 

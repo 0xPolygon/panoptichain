@@ -63,6 +63,8 @@ type RPCProvider struct {
 	validatorBalances    observer.ValidatorWalletBalances
 	missedBlockProposal  observer.MissedBlockProposal
 	stakeManager         *observer.StakeManager
+	stakingEvents        *observer.StakingEvents
+	stakingInfoAddress   *common.Address
 
 	// zkEVM
 	batches        observer.ZkEVMBatches
@@ -157,6 +159,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	}
 
 	r.refreshStakeManager(ctx, c)
+	r.refreshStakingEvents(ctx, c)
 
 	if r.hasTxPool {
 		r.refreshTxPoolStatus(ctx, c)
@@ -310,6 +313,11 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 		r.bus.Publish(ctx, topics.StakeManager, m)
 	}
 
+	if r.stakingEvents != nil {
+		m := observer.NewMessage(r.network, r.label, r.stakingEvents)
+		r.bus.Publish(ctx, topics.StakingEvents, m)
+	}
+
 	r.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(r.network, r.label, r.refreshStateTime))
 
 	return nil
@@ -440,14 +448,74 @@ func (r *RPCProvider) refreshStakeManager(ctx context.Context, c *ethclient.Clie
 	}
 
 	co := bind.CallOpts{Context: ctx}
+
+	stakingInfoAddress, err := contract.Logger(&co)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to get staking info address from stake manager")
+	} else {
+		r.stakingInfoAddress = &stakingInfoAddress
+	}
+
 	totalStaked, err := contract.CurrentValidatorSetTotalStake(&co)
 	if err != nil {
 		r.logger.Error().Err(err).Msg("Failed to get current validator set total stake")
 		return err
 	}
 
+	validatorSetSize, err := contract.CurrentValidatorSetSize(&co)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to get current validator set size")
+		return err
+	}
+
 	r.stakeManager = &observer.StakeManager{
-		TotalStaked: totalStaked,
+		TotalStaked:      totalStaked,
+		ValidatorSetSize: validatorSetSize,
+	}
+
+	return nil
+}
+
+func (r *RPCProvider) refreshStakingEvents(ctx context.Context, c *ethclient.Client) error {
+	if r.stakingInfoAddress == nil {
+		return nil
+	}
+
+	r.stakingEvents = nil
+
+	stakingInfo, err := contracts.NewStakingInfo(*r.stakingInfoAddress, c)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to bind staking info contract")
+		return err
+	}
+
+	opts := r.getFilterOpts()
+
+	stakedEvents := make([]*contracts.StakingInfoStaked, 0)
+	stakedIter, err := stakingInfo.FilterStaked(opts, nil, nil, nil)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to filter Staked events")
+	} else {
+		for stakedIter.Next() && stakedIter.Event != nil {
+			stakedEvents = append(stakedEvents, stakedIter.Event)
+		}
+	}
+
+	unstakeInitEvents := make([]*contracts.StakingInfoUnstakeInit, 0)
+	unstakeInitIter, err := stakingInfo.FilterUnstakeInit(opts, nil, nil, nil)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to filter UnstakeInit events")
+	} else {
+		for unstakeInitIter.Next() && unstakeInitIter.Event != nil {
+			unstakeInitEvents = append(unstakeInitEvents, unstakeInitIter.Event)
+		}
+	}
+
+	if len(stakedEvents) > 0 || len(unstakeInitEvents) > 0 {
+		r.stakingEvents = &observer.StakingEvents{
+			StakedEvents:      stakedEvents,
+			UnstakeInitEvents: unstakeInitEvents,
+		}
 	}
 
 	return nil

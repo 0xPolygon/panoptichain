@@ -91,13 +91,13 @@ type Rollup struct {
 // transactions on the network and records how long they took to be recorded in
 // a block.
 type TimeToMine struct {
-	Sender           string `mapstructure:"sender" validate:"required"`
-	SenderPrivateKey string `mapstructure:"sender_private_key" validate:"required"`
-	Receiver         string `mapstructure:"receiver" validate:"required"`
-	Value            int64  `mapstructure:"value" validate:"required"`
-	Data             string `mapstructure:"data"`
-	GasPriceFactor   int64  `mapstructure:"gas_price_factor"`
-	GasLimit         uint64 `mapstructure:"gas_limit" validate:"required"`
+	Sender           string  `mapstructure:"sender" validate:"required"`
+	SenderPrivateKey string  `mapstructure:"sender_private_key" validate:"required"`
+	Receiver         string  `mapstructure:"receiver" validate:"required"`
+	Value            int64   `mapstructure:"value" validate:"required"`
+	Data             string  `mapstructure:"data"`
+	GasPriceFactor   int64   `mapstructure:"gas_price_factor"`
+	GasLimit         uint64  `mapstructure:"gas_limit" validate:"required"`
 	SendMethod       *string `mapstructure:"send_method"`
 }
 

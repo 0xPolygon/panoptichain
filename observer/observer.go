@@ -177,6 +177,7 @@ var observersMap = map[string]Observer{
 	"state_sync":                          new(StateSyncObserver),
 	"stolen_block":                        new(StolenBlockObserver),
 	"spn_proof_request":                   new(ProofRequestObserver),
+	"staking_events":                      new(StakingEventsObserver),
 	"system":                              new(SystemObserver),
 	"time_to_finalized":                   new(TimeToFinalizedObserver),
 	"time_to_mine":                        new(TimeToMineObserver),
@@ -296,4 +297,3 @@ func NewLogger(o Observer, m Message) zerolog.Logger {
 		Str("provider", m.Provider()).Time("time", m.Time()).
 		Logger()
 }
-
