@@ -1709,7 +1709,13 @@ func (o *TimeToFinalizedObserver) GetCollectors() []prometheus.Collector {
 }
 
 type StakeManager struct {
-	TotalStaked *big.Int
+	TotalStaked      *big.Int
+	ValidatorSetSize *big.Int
+}
+
+type StakingEvents struct {
+	StakedEvents      []*contracts.StakingInfoStaked
+	UnstakeInitEvents []*contracts.StakingInfoUnstakeInit
 }
 
 type StakeManagerObserver struct {
@@ -1737,4 +1743,92 @@ func (o *StakeManagerObserver) Register(eb *EventBus) {
 
 func (o *StakeManagerObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.totalStaked}
+}
+
+type StakingEventsObserver struct {
+	stakeCounter   *prometheus.CounterVec
+	unstakeCounter *prometheus.CounterVec
+}
+
+func (o *StakingEventsObserver) Notify(ctx context.Context, m Message) {
+	logger := NewLogger(o, m)
+
+	data := m.Data().(*StakingEvents)
+
+	for _, event := range data.StakedEvents {
+		validatorID := event.ValidatorId.String()
+		signerAddress := event.Signer.Hex()
+
+		logger.Info().
+			Str("validator_id", validatorID).
+			Str("signer_address", signerAddress).
+			Str("amount", event.Amount.String()).
+			Msg("Staked event detected")
+
+		o.stakeCounter.WithLabelValues(m.Network().GetName(), m.Provider(), validatorID, signerAddress).Inc()
+	}
+
+	for _, event := range data.UnstakeInitEvents {
+		validatorID := event.ValidatorId.String()
+		signerAddress := event.User.Hex()
+
+		logger.Info().
+			Str("validator_id", validatorID).
+			Str("signer_address", signerAddress).
+			Str("amount", event.Amount.String()).
+			Msg("UnstakeInit event detected")
+
+		o.unstakeCounter.WithLabelValues(m.Network().GetName(), m.Provider(), validatorID, signerAddress).Inc()
+	}
+}
+
+func (o *StakingEventsObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.StakingEvents, o)
+
+	o.stakeCounter = metrics.NewCounter(
+		metrics.RPC,
+		"stake_for_pol",
+		"The total number of Staked events observed",
+		"validator_id",
+		"signer_address",
+	)
+
+	o.unstakeCounter = metrics.NewCounter(
+		metrics.RPC,
+		"unstake_pol",
+		"The total number of UnstakeInit events observed",
+		"validator_id",
+		"signer_address",
+	)
+}
+
+func (o *StakingEventsObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.stakeCounter, o.unstakeCounter}
+}
+
+type ValidatorSetSizeObserver struct {
+	gauge *prometheus.GaugeVec
+}
+
+func (o *ValidatorSetSizeObserver) Notify(ctx context.Context, m Message) {
+	data := m.Data().(*StakeManager)
+
+	if data.ValidatorSetSize != nil {
+		size, _ := data.ValidatorSetSize.Float64()
+		o.gauge.WithLabelValues(m.Network().GetName(), m.Provider()).Set(size)
+	}
+}
+
+func (o *ValidatorSetSizeObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.StakeManager, o)
+
+	o.gauge = metrics.NewGauge(
+		metrics.RPC,
+		"validator_set_size",
+		"The current number of active validators",
+	)
+}
+
+func (o *ValidatorSetSizeObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.gauge}
 }
