@@ -15,7 +15,6 @@ import (
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
-	"github.com/0xPolygon/panoptichain/proto/heimdall"
 )
 
 type PreCommit struct {
@@ -714,8 +713,8 @@ func (o *HeimdallMilestoneVoteObserver) Notify(ctx context.Context, m Message) {
 		switch {
 		case vote.HasMilestone:
 			o.proposed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
-		case vote.BlockIDFlag == heimdall.BlockIDFlagCommit:
-			// Signed the block but did not propose milestone
+		default:
+			// Did not propose milestone (regardless of whether they signed)
 			o.missed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
 		}
 	}
