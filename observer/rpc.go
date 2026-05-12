@@ -1719,7 +1719,8 @@ type StakingEvents struct {
 }
 
 type StakeManagerObserver struct {
-	totalStaked *prometheus.GaugeVec
+	totalStaked      *prometheus.GaugeVec
+	validatorSetSize *prometheus.GaugeVec
 }
 
 func (o *StakeManagerObserver) Notify(ctx context.Context, m Message) {
@@ -1728,6 +1729,11 @@ func (o *StakeManagerObserver) Notify(ctx context.Context, m Message) {
 	if data.TotalStaked != nil {
 		totalStaked, _ := weiToEther(data.TotalStaked).Float64()
 		o.totalStaked.WithLabelValues(m.Network().GetName(), m.Provider()).Set(totalStaked)
+	}
+
+	if data.ValidatorSetSize != nil {
+		size, _ := data.ValidatorSetSize.Float64()
+		o.validatorSetSize.WithLabelValues(m.Network().GetName(), m.Provider()).Set(size)
 	}
 }
 
@@ -1739,10 +1745,16 @@ func (o *StakeManagerObserver) Register(eb *EventBus) {
 		"total_staked",
 		"Total amount staked in the stake manager contract (in ether)",
 	)
+
+	o.validatorSetSize = metrics.NewGauge(
+		metrics.RPC,
+		"validator_set_size",
+		"The current number of active validators",
+	)
 }
 
 func (o *StakeManagerObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.totalStaked}
+	return []prometheus.Collector{o.totalStaked, o.validatorSetSize}
 }
 
 type StakingEventsObserver struct {
@@ -1804,31 +1816,4 @@ func (o *StakingEventsObserver) Register(eb *EventBus) {
 
 func (o *StakingEventsObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.stakeCounter, o.unstakeCounter}
-}
-
-type ValidatorSetSizeObserver struct {
-	gauge *prometheus.GaugeVec
-}
-
-func (o *ValidatorSetSizeObserver) Notify(ctx context.Context, m Message) {
-	data := m.Data().(*StakeManager)
-
-	if data.ValidatorSetSize != nil {
-		size, _ := data.ValidatorSetSize.Float64()
-		o.gauge.WithLabelValues(m.Network().GetName(), m.Provider()).Set(size)
-	}
-}
-
-func (o *ValidatorSetSizeObserver) Register(eb *EventBus) {
-	eb.Subscribe(topics.StakeManager, o)
-
-	o.gauge = metrics.NewGauge(
-		metrics.RPC,
-		"validator_set_size",
-		"The current number of active validators",
-	)
-}
-
-func (o *ValidatorSetSizeObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.gauge}
 }

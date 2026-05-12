@@ -191,7 +191,6 @@ var observersMap = map[string]Observer{
 	"transaction_value":                   new(TransactionValueObserver),
 	"trusted_batch":                       new(TrustedBatchObserver),
 	"uncles":                              new(UnclesObserver),
-	"validator_set_size":                  new(ValidatorSetSizeObserver),
 	"validator_wallet_balance":            new(ValidatorWalletBalanceObserver),
 	"zkevm_batches":                       new(ZkEVMBatchObserver),
 }

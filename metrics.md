@@ -1168,6 +1168,15 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_rpc_validator_set_size
+The current number of active validators
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## StakingEventsObserver
 
 
@@ -1396,18 +1405,6 @@ Variable Labels:
 The number of uncles for the block
 
 Metric Type: CounterVec
-
-Variable Labels:
-- network
-- provider
-
-## ValidatorSetSizeObserver
-
-
-### panoptichain_rpc_validator_set_size
-The current number of active validators
-
-Metric Type: GaugeVec
 
 Variable Labels:
 - network
