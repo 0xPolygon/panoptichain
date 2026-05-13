@@ -438,6 +438,16 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_heimdall_block_proposed
+Heimdall blocks proposed by validator
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- proposer_address
+
 ## HeimdallBlockIntervalObserver
 
 
@@ -505,6 +515,17 @@ Variable Labels:
 
 ### panoptichain_heimdall_milestone_vote_missed
 Validators who signed but didn't propose milestone
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_heimdall_milestone_signed_but_missed
+Validators who signed consensus but didn't propose milestone
 
 Metric Type: CounterVec
 

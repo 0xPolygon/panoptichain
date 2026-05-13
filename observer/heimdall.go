@@ -15,6 +15,7 @@ import (
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
+	"github.com/0xPolygon/panoptichain/proto/heimdall"
 )
 
 type PreCommit struct {
@@ -143,9 +144,10 @@ func (o *HeimdallBlockIntervalObserver) GetCollectors() []prometheus.Collector {
 }
 
 type HeimdallBlockObserver struct {
-	height   *prometheus.GaugeVec
-	txs      *prometheus.HistogramVec
-	totalTxs *prometheus.CounterVec
+	height        *prometheus.GaugeVec
+	txs           *prometheus.HistogramVec
+	totalTxs      *prometheus.CounterVec
+	blockProposed *prometheus.CounterVec
 }
 
 func (o *HeimdallBlockObserver) Register(eb *EventBus) {
@@ -167,6 +169,12 @@ func (o *HeimdallBlockObserver) Register(eb *EventBus) {
 		"total_transaction_count",
 		"The number of total transactions observed for Heimdall",
 	)
+	o.blockProposed = metrics.NewCounter(
+		metrics.Heimdall,
+		"block_proposed",
+		"Heimdall blocks proposed by validator",
+		"proposer_address",
+	)
 
 	for _, h := range config.Config().Providers.HeimdallEndpoints {
 		o.totalTxs.WithLabelValues(h.Name, h.Label).Add(0)
@@ -177,22 +185,28 @@ func (o *HeimdallBlockObserver) Notify(ctx context.Context, m Message) {
 	logger := NewLogger(o, m)
 
 	block := m.Data().(*HeimdallBlock)
+	network := m.Network().GetName()
+	provider := m.Provider()
 
 	height := block.Number()
 	if height == nil {
 		logger.Error().Msg("Failed to get Heimdall block number")
 	} else {
 		h, _ := height.Float64()
-		o.height.WithLabelValues(m.Network().GetName(), m.Provider()).Set(h)
+		o.height.WithLabelValues(network, provider).Set(h)
 	}
 
 	txs, _ := block.Txs().Float64()
-	o.txs.WithLabelValues(m.Network().GetName(), m.Provider()).Observe(txs)
-	o.totalTxs.WithLabelValues(m.Network().GetName(), m.Provider()).Add(txs)
+	o.txs.WithLabelValues(network, provider).Observe(txs)
+	o.totalTxs.WithLabelValues(network, provider).Add(txs)
+
+	if proposer := block.ProposerAddress(); proposer != "" {
+		o.blockProposed.WithLabelValues(network, provider, proposer).Inc()
+	}
 }
 
 func (o *HeimdallBlockObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.height, o.txs, o.totalTxs}
+	return []prometheus.Collector{o.height, o.txs, o.totalTxs, o.blockProposed}
 }
 
 type HeimdallSignatureCountObserver struct {
@@ -667,9 +681,10 @@ func (o *HeimdallMissedVoteObserver) GetCollectors() []prometheus.Collector {
 
 // HeimdallMilestoneVoteObserver tracks milestone votes from vote extensions.
 type HeimdallMilestoneVoteObserver struct {
-	proposed    *prometheus.CounterVec
-	missed      *prometheus.CounterVec
-	votingPower *prometheus.GaugeVec
+	proposed        *prometheus.CounterVec
+	missed          *prometheus.CounterVec
+	signedButMissed *prometheus.CounterVec
+	votingPower     *prometheus.GaugeVec
 }
 
 func (o *HeimdallMilestoneVoteObserver) Register(eb *EventBus) {
@@ -686,6 +701,13 @@ func (o *HeimdallMilestoneVoteObserver) Register(eb *EventBus) {
 		metrics.Heimdall,
 		"milestone_vote_missed",
 		"Validators who signed but didn't propose milestone",
+		"validator_id", "signer_address",
+	)
+
+	o.signedButMissed = metrics.NewCounter(
+		metrics.Heimdall,
+		"milestone_signed_but_missed",
+		"Validators who signed consensus but didn't propose milestone",
 		"validator_id", "signer_address",
 	)
 
@@ -713,8 +735,12 @@ func (o *HeimdallMilestoneVoteObserver) Notify(ctx context.Context, m Message) {
 		switch {
 		case vote.HasMilestone:
 			o.proposed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+		case vote.BlockIDFlag == heimdall.BlockIDFlagCommit:
+			// Signed consensus but didn't propose milestone
+			o.signedButMissed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+			o.missed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
 		default:
-			// Did not propose milestone (regardless of whether they signed)
+			// Absent/nil - didn't sign consensus and no milestone
 			o.missed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
 		}
 	}
@@ -731,5 +757,5 @@ func (o *HeimdallMilestoneVoteObserver) Notify(ctx context.Context, m Message) {
 }
 
 func (o *HeimdallMilestoneVoteObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.proposed, o.missed, o.votingPower}
+	return []prometheus.Collector{o.proposed, o.missed, o.signedButMissed, o.votingPower}
 }
