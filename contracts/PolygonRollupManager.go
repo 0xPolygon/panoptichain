@@ -5034,4 +5034,3 @@ func (_PolygonRollupManager *PolygonRollupManagerFilterer) ParseVerifyBatchesTru
 	event.Raw = log
 	return event, nil
 }
-

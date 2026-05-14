@@ -293,4 +293,3 @@ func (_PolygonZkEVMGlobalExitRootL2 *PolygonZkEVMGlobalExitRootL2Session) Update
 func (_PolygonZkEVMGlobalExitRootL2 *PolygonZkEVMGlobalExitRootL2TransactorSession) UpdateExitRoot(newRoot [32]byte) (*types.Transaction, error) {
 	return _PolygonZkEVMGlobalExitRootL2.Contract.UpdateExitRoot(&_PolygonZkEVMGlobalExitRootL2.TransactOpts, newRoot)
 }
-

@@ -249,6 +249,12 @@
       ## @param data - string - optional - default ""
       ## @env PANOPTICHAIN_PROVIDERS_RPC_0_TIME_TO_MINE_DATA
       ## The transaction ABI-encoded data.
+      ##
+      ## @param send_method - string - optional
+      ## @env PANOPTICHAIN_PROVIDERS_RPC_0_TIME_TO_MINE_SEND_METHOD
+      ## Custom RPC method to use for sending transactions. If not set, the
+      ## standard `eth_sendRawTransaction` method is used. This can be set to
+      ## methods like `eth_sendRawTransactionPrivate` for private mempools.
   #
   # rpc:
   #   - name: "Polygon Mainnet"
@@ -358,6 +364,13 @@
     ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_INTERVAL - string - optional - default: runner.interval
     ## The polling interval for the `heimdall` provider.
     ##
+    ## @param max_span_lag - integer - optional - default: 10
+    ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_MAX_SPAN_LAG - integer - optional - default: 10
+    ## Maximum number of spans to walk sequentially when catching up. If the
+    ## current span falls behind the latest span by more than this value, the
+    ## provider jumps directly to the latest span instead of walking one at a
+    ## time. This prevents long catch-up periods after transient API failures.
+    ##
     ## @param version - integer - optional - default: 1
     ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_VERSION - integer - optional - default: 1
     ## The Heimdall version.
@@ -368,6 +381,7 @@
   #     heimdall_url: "https://heimdall-api.polygon.technology"
   #     label: "polygon.technology"
   #     interval: 5s
+  #     max_span_lag: 10
   #     version: 1
   #
   #   - name: "Polygon Amoy"
@@ -375,6 +389,7 @@
   #     heimdall_url: "https://heimdall-api-amoy.polygon.technology"
   #     label: "polygon.technology"
   #     interval: 5s
+  #     max_span_lag: 10
   #     version: 1
 
   ## @param sensor_network - list of objects - optional

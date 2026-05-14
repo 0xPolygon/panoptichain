@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/0xPolygon/panoptichain/api"
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/contracts"
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
@@ -59,6 +60,10 @@ func (o *EmptyBlockObserver) Register(eb *EventBus) {
 		"empty_block",
 		"The total number of empty blocks observed",
 	)
+
+	for _, rpc := range config.Config().Providers.RPCs {
+		o.counter.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+	}
 }
 
 func (o *EmptyBlockObserver) GetCollectors() []prometheus.Collector {
@@ -91,6 +96,10 @@ func (o *BlockObserver) Register(eb *EventBus) {
 	o.difficulty = metrics.NewGauge(metrics.RPC, "difficulty", "The difficulty of the block")
 	o.blockSize = metrics.NewHistogram(metrics.RPC, "block_size", "The block size per block (bytes)", newExponentialBuckets(2, 14))
 	o.extraSize = metrics.NewHistogram(metrics.RPC, "extra_size", "The size of the extra data (bytes)", newExponentialBuckets(2, 14))
+
+	for _, rpc := range config.Config().Providers.RPCs {
+		o.blockCounter.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+	}
 }
 
 func (o *BlockObserver) GetCollectors() []prometheus.Collector {
@@ -168,6 +177,10 @@ func (o *BogonBlockObserver) Register(eb *EventBus) {
 		"bogon_block",
 		"The total number of bogon blocks observed",
 	)
+
+	for _, rpc := range config.Config().Providers.RPCs {
+		o.counter.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+	}
 }
 
 func (o *BogonBlockObserver) GetCollectors() []prometheus.Collector {
@@ -535,6 +548,10 @@ func (o *UnclesObserver) Register(eb *EventBus) {
 		"uncles",
 		"The number of uncles for the block",
 	)
+
+	for _, rpc := range config.Config().Providers.RPCs {
+		o.counter.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+	}
 }
 
 func (o *UnclesObserver) Notify(ctx context.Context, m Message) {
@@ -918,6 +935,12 @@ func (o *ExitRootsObserver) Register(eb *EventBus) {
 		"rollup_exit_roots",
 		"The number of unique rollup exit roots that have been observed",
 	)
+
+	for _, rpc := range config.Config().Providers.RPCs {
+		o.globalExitRoots.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+		o.mainnetExitRoots.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+		o.rollupExitRoots.WithLabelValues(rpc.Name, rpc.Label).Add(0)
+	}
 }
 
 func (o *ExitRootsObserver) GetCollectors() []prometheus.Collector {
@@ -1687,11 +1710,18 @@ func (o *TimeToFinalizedObserver) GetCollectors() []prometheus.Collector {
 }
 
 type StakeManager struct {
-	TotalStaked *big.Int
+	TotalStaked      *big.Int
+	ValidatorSetSize *big.Int
+}
+
+type StakingEvents struct {
+	StakedEvents      []*contracts.StakingInfoStaked
+	UnstakeInitEvents []*contracts.StakingInfoUnstakeInit
 }
 
 type StakeManagerObserver struct {
-	totalStaked *prometheus.GaugeVec
+	totalStaked      *prometheus.GaugeVec
+	validatorSetSize *prometheus.GaugeVec
 }
 
 func (o *StakeManagerObserver) Notify(ctx context.Context, m Message) {
@@ -1700,6 +1730,11 @@ func (o *StakeManagerObserver) Notify(ctx context.Context, m Message) {
 	if data.TotalStaked != nil {
 		totalStaked, _ := weiToEther(data.TotalStaked).Float64()
 		o.totalStaked.WithLabelValues(m.Network().GetName(), m.Provider()).Set(totalStaked)
+	}
+
+	if data.ValidatorSetSize != nil {
+		size, _ := data.ValidatorSetSize.Float64()
+		o.validatorSetSize.WithLabelValues(m.Network().GetName(), m.Provider()).Set(size)
 	}
 }
 
@@ -1711,10 +1746,77 @@ func (o *StakeManagerObserver) Register(eb *EventBus) {
 		"total_staked",
 		"Total amount staked in the stake manager contract (in ether)",
 	)
+
+	o.validatorSetSize = metrics.NewGauge(
+		metrics.RPC,
+		"validator_set_size",
+		"The current number of active validators",
+	)
 }
 
 func (o *StakeManagerObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.totalStaked}
+	return []prometheus.Collector{o.totalStaked, o.validatorSetSize}
+}
+
+type StakingEventsObserver struct {
+	stakeCounter   *prometheus.CounterVec
+	unstakeCounter *prometheus.CounterVec
+}
+
+func (o *StakingEventsObserver) Notify(ctx context.Context, m Message) {
+	logger := NewLogger(o, m)
+
+	data := m.Data().(*StakingEvents)
+
+	for _, event := range data.StakedEvents {
+		validatorID := event.ValidatorId.String()
+		signerAddress := event.Signer.Hex()
+
+		logger.Info().
+			Str("validator_id", validatorID).
+			Str("signer_address", signerAddress).
+			Str("amount", event.Amount.String()).
+			Msg("Staked event detected")
+
+		o.stakeCounter.WithLabelValues(m.Network().GetName(), m.Provider(), validatorID, signerAddress).Inc()
+	}
+
+	for _, event := range data.UnstakeInitEvents {
+		validatorID := event.ValidatorId.String()
+		signerAddress := event.User.Hex()
+
+		logger.Info().
+			Str("validator_id", validatorID).
+			Str("signer_address", signerAddress).
+			Str("amount", event.Amount.String()).
+			Msg("UnstakeInit event detected")
+
+		o.unstakeCounter.WithLabelValues(m.Network().GetName(), m.Provider(), validatorID, signerAddress).Inc()
+	}
+}
+
+func (o *StakingEventsObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.StakingEvents, o)
+
+	o.stakeCounter = metrics.NewCounter(
+		metrics.RPC,
+		"stake_for_pol",
+		"The total number of Staked events observed",
+		"validator_id",
+		"signer_address",
+	)
+
+	o.unstakeCounter = metrics.NewCounter(
+		metrics.RPC,
+		"unstake_pol",
+		"The total number of UnstakeInit events observed",
+		"validator_id",
+		"signer_address",
+	)
+}
+
+func (o *StakingEventsObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.stakeCounter, o.unstakeCounter}
 }
 
 // SPOLValidator represents a single validator from the sPOLController contract.

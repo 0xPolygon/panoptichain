@@ -5288,4 +5288,3 @@ func (_AggchainFEP *AggchainFEPFilterer) ParseUpdateAggchainVKey(log types.Log) 
 	event.Raw = log
 	return event, nil
 }
-

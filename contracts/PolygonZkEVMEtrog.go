@@ -3045,4 +3045,3 @@ func (_PolygonZkEVMEtrog *PolygonZkEVMEtrogFilterer) ParseVerifyBatches(log type
 	event.Raw = log
 	return event, nil
 }
-

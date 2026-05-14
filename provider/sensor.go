@@ -203,7 +203,9 @@ func (s *SensorNetworkProvider) fillRange(ctx context.Context, start uint64) {
 			continue
 		}
 
-		go s.getBlockEvents(ctx, key, &b, &wg)
+		wg.Go(func() {
+			s.getBlockEvents(ctx, key, &b)
+		})
 
 		block, err := NewBlockFromDatastoreBlock(&b)
 		if err != nil {
@@ -223,10 +225,7 @@ func (s *SensorNetworkProvider) fillRange(ctx context.Context, start uint64) {
 	wg.Wait()
 }
 
-func (s *SensorNetworkProvider) getBlockEvents(ctx context.Context, key *datastore.Key, block *database.DatastoreBlock, wg *sync.WaitGroup) {
-	wg.Add(1)
-	defer wg.Done()
-
+func (s *SensorNetworkProvider) getBlockEvents(ctx context.Context, key *datastore.Key, block *database.DatastoreBlock) {
 	query := datastore.NewQuery(database.BlockEventsKind).FilterField("Hash", "=", key)
 	var events []database.DatastoreEvent
 

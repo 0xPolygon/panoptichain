@@ -15,7 +15,7 @@ import (
 	"github.com/0xPolygon/panoptichain/network"
 	"github.com/0xPolygon/panoptichain/observer"
 	"github.com/0xPolygon/panoptichain/observer/topics"
-	"github.com/0xPolygon/panoptichain/proto"
+	spnpb "github.com/0xPolygon/panoptichain/proto/network"
 )
 
 type SuccinctProverNetworkProvider struct {
@@ -30,7 +30,7 @@ type SuccinctProverNetworkProvider struct {
 	apiKey           string
 	requester        *string
 	fulfiller        *string
-	proofRequests    []*proto.ProofRequest
+	proofRequests    []*spnpb.ProofRequest
 	seen             map[string]time.Time
 }
 
@@ -61,22 +61,22 @@ func (r *SuccinctProverNetworkProvider) RefreshState(ctx context.Context) error 
 	}
 	defer conn.Close()
 
-	c := proto.NewProverNetworkClient(conn)
+	c := spnpb.NewProverNetworkClient(conn)
 
 	r.refreshProofRequests(ctx, c)
 
 	return nil
 }
 
-func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context, c proto.ProverNetworkClient) {
+func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context, c spnpb.ProverNetworkClient) {
 	r.proofRequests = nil
 
 	limit := uint32(100)
 
-	req := &proto.GetFilteredProofRequestsRequest{
+	req := &spnpb.GetFilteredProofRequestsRequest{
 		Limit:             &limit,
-		ExecutionStatus:   proto.ExecutionStatus_EXECUTED.Enum(),
-		FulfillmentStatus: proto.FulfillmentStatus_FULFILLED.Enum(),
+		ExecutionStatus:   spnpb.ExecutionStatus_EXECUTED.Enum(),
+		FulfillmentStatus: spnpb.FulfillmentStatus_FULFILLED.Enum(),
 	}
 
 	if r.requester != nil {

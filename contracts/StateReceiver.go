@@ -262,4 +262,3 @@ func (_StateReceiver *StateReceiverSession) CommitState(syncTime *big.Int, recor
 func (_StateReceiver *StateReceiverTransactorSession) CommitState(syncTime *big.Int, recordBytes []byte) (*types.Transaction, error) {
 	return _StateReceiver.Contract.CommitState(&_StateReceiver.TransactOpts, syncTime, recordBytes)
 }
-

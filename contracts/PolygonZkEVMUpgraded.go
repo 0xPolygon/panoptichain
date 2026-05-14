@@ -5398,4 +5398,3 @@ func (_PolygonZkEVMUpgraded *PolygonZkEVMUpgradedFilterer) ParseVerifyBatchesTru
 	event.Raw = log
 	return event, nil
 }
-

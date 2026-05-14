@@ -104,9 +104,8 @@ func main() {
 		for _, c := range o.GetCollectors() {
 			descCh := make(chan *prometheus.Desc)
 			var wg sync.WaitGroup
-			wg.Add(1)
 
-			go func() {
+			wg.Go(func() {
 				desc := <-descCh
 				d, _ := parseDesc(desc.String())
 				d.ObserverType = observerType.Name()
@@ -120,9 +119,7 @@ func main() {
 				if *markdownMode {
 					printDesc(d)
 				}
-
-				wg.Done()
-			}()
+			})
 
 			c.Describe(descCh)
 			wg.Wait()

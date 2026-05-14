@@ -1447,4 +1447,3 @@ func (_ValidatorSet *ValidatorSetFilterer) ParseNewSpan(log types.Log) (*Validat
 	event.Raw = log
 	return event, nil
 }
-

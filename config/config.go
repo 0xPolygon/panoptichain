@@ -15,6 +15,7 @@ import (
 )
 
 const DefaultBlockLookBack uint64 = 1000
+const DefaultMaxSpanLag uint64 = 10
 
 // Runner configures the execution interval of the job system.
 type Runner struct {
@@ -91,13 +92,14 @@ type Rollup struct {
 // transactions on the network and records how long they took to be recorded in
 // a block.
 type TimeToMine struct {
-	Sender           string `mapstructure:"sender" validate:"required"`
-	SenderPrivateKey string `mapstructure:"sender_private_key" validate:"required"`
-	Receiver         string `mapstructure:"receiver" validate:"required"`
-	Value            int64  `mapstructure:"value" validate:"required"`
-	Data             string `mapstructure:"data"`
-	GasPriceFactor   int64  `mapstructure:"gas_price_factor"`
-	GasLimit         uint64 `mapstructure:"gas_limit" validate:"required"`
+	Sender           string  `mapstructure:"sender" validate:"required"`
+	SenderPrivateKey string  `mapstructure:"sender_private_key" validate:"required"`
+	Receiver         string  `mapstructure:"receiver" validate:"required"`
+	Value            int64   `mapstructure:"value" validate:"required"`
+	Data             string  `mapstructure:"data"`
+	GasPriceFactor   int64   `mapstructure:"gas_price_factor"`
+	GasLimit         uint64  `mapstructure:"gas_limit" validate:"required"`
+	SendMethod       *string `mapstructure:"send_method"`
 }
 
 // HashDivergence configures the hash divergence provider. This tracks whether
@@ -128,6 +130,7 @@ type HeimdallEndpoint struct {
 	HeimdallURL   string         `mapstructure:"heimdall_url" validate:"url,required"`
 	Label         string         `mapstructure:"label" validate:"required"`
 	Interval      *time.Duration `mapstructure:"interval"`
+	MaxSpanLag    *uint64        `mapstructure:"max_span_lag"`
 }
 
 // SensorNetwork configures the sensor network provider. This fetches data from

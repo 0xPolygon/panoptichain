@@ -44,5 +44,9 @@ const (
 	TransactionPool                                    // *observer.TransactionPool
 	TrustedBatch                                       // *util.Batch
 	ValidatorWallet                                    // observer.ValidatorWalletBalances
+	ValidatorSet                                       // *observer.HeimdallValidatorSets
+	MissedVote                                         // *observer.HeimdallMissedVotes
+	MilestoneVote                                      // *observer.HeimdallMilestoneVotes
 	ZkEVMBatches                                       // observer.ZkEVMBatches
+	StakingEvents                                      // *observer.StakingEvents
 )

@@ -63,6 +63,15 @@ func (o *GrafanaObserver) Notify(ctx context.Context, m Message) {
 			continue
 		}
 
+		if len(frame.Data.Values) < 2 {
+			log.Warn().Msg("Invalid frame: expected at least 2 value arrays")
+			continue
+		}
+		if len(frame.Data.Values[0]) == 0 || len(frame.Data.Values[1]) == 0 {
+			log.Warn().Msg("Invalid frame: empty value arrays")
+			continue
+		}
+
 		ms := int64(frame.Data.Values[0][len(frame.Data.Values[0])-1])
 		timestamp := time.UnixMilli(ms)
 

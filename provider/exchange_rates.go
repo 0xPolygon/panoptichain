@@ -2,14 +2,13 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
 
+	"github.com/0xPolygon/panoptichain/api"
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/observer"
 	"github.com/0xPolygon/panoptichain/observer/topics"
@@ -57,17 +56,10 @@ func (e *ExchangeRatesProvider) RefreshState(ctx context.Context) error {
 
 func (e *ExchangeRatesProvider) fetchRates(base string, quotes []string) {
 	url := e.coinbaseURL + base
-	r, err := http.Get(url)
-	if err != nil {
-		e.logger.Error().Err(err).Str("url", url).Send()
-		return
-	}
-	defer r.Body.Close()
 
 	var body CoinbaseExchangeRates
-	err = json.NewDecoder(r.Body).Decode(&body)
-	if err != nil {
-		e.logger.Error().Err(err).Msg("Failed to get exchange rates")
+	if err := api.GetJSON(url, &body); err != nil {
+		e.logger.Error().Err(err).Str("url", url).Msg("Failed to fetch exchange rates")
 		return
 	}
 

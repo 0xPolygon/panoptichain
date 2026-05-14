@@ -3626,4 +3626,3 @@ func (_StakeManager *StakeManagerFilterer) ParseRootChainChanged(log types.Log) 
 	event.Raw = log
 	return event, nil
 }
-

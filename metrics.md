@@ -438,6 +438,16 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_heimdall_block_proposed
+Heimdall blocks proposed by validator
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- proposer_address
+
 ## HeimdallBlockIntervalObserver
 
 
@@ -489,6 +499,51 @@ Variable Labels:
 - network
 - provider
 
+## HeimdallMilestoneVoteObserver
+
+
+### panoptichain_heimdall_milestone_vote_proposed
+Validators who proposed milestone in vote extension
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_heimdall_milestone_vote_missed
+Validators who signed but didn't propose milestone
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_heimdall_milestone_signed_but_missed
+Validators who signed consensus but didn't propose milestone
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_heimdall_milestone_voting_power
+Percentage of voting power that proposed milestone
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## HeimdallMissedBlockProposalObserver
 
 
@@ -515,6 +570,21 @@ Variable Labels:
 - provider
 - signer_address
 
+## HeimdallMissedVoteObserver
+
+
+### panoptichain_heimdall_missed_consensus_vote
+Missed Heimdall consensus votes
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+- flag
+
 ## HeimdallSignatureCountObserver
 
 
@@ -526,6 +596,19 @@ Metric Type: GaugeVec
 Variable Labels:
 - network
 - provider
+
+## HeimdallValidatorSetChangeObserver
+
+
+### panoptichain_heimdall_validator_set_change
+The number of validator set changes (onboarded or unbonded)
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- change_type
 
 ## MilestoneObserver
 
@@ -1177,6 +1260,40 @@ Metric Type: GaugeVec
 Variable Labels:
 - network
 - provider
+
+### panoptichain_rpc_validator_set_size
+The current number of active validators
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+## StakingEventsObserver
+
+
+### panoptichain_rpc_stake_for_pol
+The total number of Staked events observed
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_rpc_unstake_pol
+The total number of UnstakeInit events observed
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
 
 ## StateSyncObserver
 
