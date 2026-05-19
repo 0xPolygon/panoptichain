@@ -1249,6 +1249,77 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_rpc_spol_exchange_rate
+sPOL to POL exchange rate (POL per 1 sPOL, in ether)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_rpc_spol_paused
+sPOLController paused state (0=active, 1=paused)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_rpc_spol_global_withdraw_nonce
+sPOLController global withdrawal nonce counter
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_rpc_spol_validator_real_dpol_balance
+Real dPOL balance (balanceOf on ValidatorShare) in ether
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- validator_address
+
+### panoptichain_rpc_spol_validator_delegation_locked
+Validator delegation locked state (0=enabled, 1=locked)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- validator_address
+
+### panoptichain_rpc_spol_validator_liquid_rewards
+Validator pending liquid rewards (in ether)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- validator_address
+
+### panoptichain_rpc_spol_validator_share_exchange_rate
+ValidatorShare exchange rate (should be ~1e29)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- validator_address
+
 ## StakeManagerObserver
 
 
