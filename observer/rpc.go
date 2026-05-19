@@ -1895,7 +1895,9 @@ func (o *SPOLControllerObserver) Notify(ctx context.Context, m Message) {
 		}
 
 		if v.ShareExchangeRate != nil {
-			o.validatorShareExchangeRate.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(float64(v.ShareExchangeRate.Uint64()))
+			rate := new(big.Float).SetInt(v.ShareExchangeRate)
+			rateFloat, _ := rate.Float64()
+			o.validatorShareExchangeRate.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(rateFloat)
 		}
 	}
 
@@ -1957,13 +1959,13 @@ func (o *SPOLControllerObserver) Register(eb *EventBus) {
 
 	o.validatorCount = metrics.NewGauge(
 		metrics.RPC,
-		"spol_validator_count",
+		"spol_total_validators",
 		"Total number of validators in sPOLController",
 	)
 
 	o.activeValidatorCount = metrics.NewGauge(
 		metrics.RPC,
-		"spol_active_validator_count",
+		"spol_active_validators",
 		"Number of active validators in sPOLController",
 	)
 
@@ -2024,7 +2026,7 @@ func (o *SPOLControllerObserver) Register(eb *EventBus) {
 	o.validatorShareExchangeRate = metrics.NewGauge(
 		metrics.RPC,
 		"spol_validator_share_exchange_rate",
-		"ValidatorShare exchange rate (should be ~1e29)",
+		"ValidatorShare exchange rate (raw value, typically ~1e29 for healthy validators)",
 		"validator_id",
 		"validator_address",
 	)

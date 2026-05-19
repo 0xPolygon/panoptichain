@@ -1213,7 +1213,7 @@ Variable Labels:
 - validator_id
 - validator_address
 
-### panoptichain_rpc_spol_validator_count
+### panoptichain_rpc_spol_total_validators
 Total number of validators in sPOLController
 
 Metric Type: GaugeVec
@@ -1222,7 +1222,7 @@ Variable Labels:
 - network
 - provider
 
-### panoptichain_rpc_spol_active_validator_count
+### panoptichain_rpc_spol_active_validators
 Number of active validators in sPOLController
 
 Metric Type: GaugeVec
@@ -1310,7 +1310,7 @@ Variable Labels:
 - validator_address
 
 ### panoptichain_rpc_spol_validator_share_exchange_rate
-ValidatorShare exchange rate (should be ~1e29)
+ValidatorShare exchange rate (raw value, typically ~1e29 for healthy validators)
 
 Metric Type: GaugeVec
 
