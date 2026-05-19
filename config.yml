@@ -167,6 +167,8 @@
     ## - checkpoint_address            (PoS, L1)
     ## - state_sync_sender_address     (PoS, L1)
     ## - state_sync_receiver_address   (PoS, L2)
+    ## - stake_manager_address         (PoS, L1)
+    ## - spol_controller_address       (PoS, L1)
     ## - rollup_manager_address        (zkEVM, L1)
     ## - zkevm_bridge_address          (zkEVM, L2)
     ## - global_exit_root_l2_address   (zkEVM, L2)
