@@ -543,6 +543,8 @@ func (r *RPCProvider) refreshSPOLController(ctx context.Context, c *ethclient.Cl
 	callOpts := bind.CallOpts{Context: ctx}
 	validators := make([]observer.SPOLValidator, 0)
 	activeCount := 0
+	controllerAddr := address // SPOLController address for balanceOf queries
+	const activeStatus = 1
 
 	// Iterate through validator list until we get an error (end of list)
 	for index := 0; ; index++ {
@@ -557,15 +559,68 @@ func (r *RPCProvider) refreshSPOLController(ctx context.Context, c *ethclient.Cl
 			continue
 		}
 
-		validators = append(validators, observer.SPOLValidator{
+		validator := observer.SPOLValidator{
 			ID:           validatorID,
 			Status:       validatorInfo.Status,
 			DepositShare: validatorInfo.DepositShare,
 			Address:      validatorInfo.ValidatorContract,
 			TotalStaked:  validatorInfo.TotalStaked,
-		})
+		}
 
-		const activeStatus = 1
+		validatorShare, err := contracts.NewValidatorShare(validatorInfo.ValidatorContract, c)
+		if err != nil {
+			r.logger.Warn().
+				Err(err).
+				Uint16("validator_id", validatorID).
+				Msg("Failed to bind ValidatorShare contract")
+			validators = append(validators, validator)
+			if validatorInfo.Status == activeStatus {
+				activeCount++
+			}
+			continue
+		}
+
+		balance, err := validatorShare.BalanceOf(&callOpts, controllerAddr)
+		if err != nil {
+			r.logger.Warn().
+				Err(err).
+				Uint16("validator_id", validatorID).
+				Msg("Failed to get ValidatorShare balanceOf")
+		} else {
+			validator.RealDPOLBalance = balance
+		}
+
+		delegation, err := validatorShare.Delegation(&callOpts)
+		if err != nil {
+			r.logger.Warn().
+				Err(err).
+				Uint16("validator_id", validatorID).
+				Msg("Failed to get ValidatorShare delegation")
+		} else {
+			validator.DelegationLocked = !delegation
+		}
+
+		rewards, err := validatorShare.GetLiquidRewards(&callOpts, controllerAddr)
+		if err != nil {
+			r.logger.Warn().
+				Err(err).
+				Uint16("validator_id", validatorID).
+				Msg("Failed to get ValidatorShare liquidRewards")
+		} else {
+			validator.LiquidRewards = rewards
+		}
+
+		rate, err := validatorShare.ExchangeRate(&callOpts)
+		if err != nil {
+			r.logger.Warn().
+				Err(err).
+				Uint16("validator_id", validatorID).
+				Msg("Failed to get ValidatorShare exchangeRate")
+		} else {
+			validator.ShareExchangeRate = rate
+		}
+
+		validators = append(validators, validator)
 		if validatorInfo.Status == activeStatus {
 			activeCount++
 		}
@@ -589,6 +644,28 @@ func (r *RPCProvider) refreshSPOLController(ctx context.Context, c *ethclient.Cl
 		r.logger.Warn().Err(err).Msg("Failed to get totalsPOLBalance")
 	} else {
 		r.sPOLController.SPOL = sPOL
+	}
+
+	onesPOL := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+	exchangeRate, err := contract.ConvertSPOLtoPOL(&callOpts, onesPOL)
+	if err != nil {
+		r.logger.Warn().Err(err).Msg("Failed to get sPOL exchange rate")
+	} else {
+		r.sPOLController.ExchangeRate = exchangeRate
+	}
+
+	paused, err := contract.Paused(&callOpts)
+	if err != nil {
+		r.logger.Warn().Err(err).Msg("Failed to get paused state")
+	} else {
+		r.sPOLController.Paused = paused
+	}
+
+	withdrawNonce, err := contract.GlobalWithdrawNonce(&callOpts)
+	if err != nil {
+		r.logger.Warn().Err(err).Msg("Failed to get global withdraw nonce")
+	} else {
+		r.sPOLController.WithdrawNonce = withdrawNonce
 	}
 
 	return nil

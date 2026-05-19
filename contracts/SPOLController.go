@@ -4156,4 +4156,3 @@ func (_SPOLController *SPOLControllerFilterer) ParseSPOLMinted(log types.Log) (*
 	event.Raw = log
 	return event, nil
 }
-
