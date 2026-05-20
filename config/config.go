@@ -53,6 +53,7 @@ type RPC struct {
 	Accounts      []Account      `mapstructure:"accounts"`
 	BlockLookBack *uint64        `mapstructure:"block_look_back"`
 	TxPool        bool           `mapstructure:"txpool"`
+	Observers     *Observers     `mapstructure:"observers"`
 }
 
 // Contracts maps specific contracts to their addresses. This is used to

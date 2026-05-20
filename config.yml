@@ -217,6 +217,20 @@
       ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS_0_TAG - string - optional
       ## A tag to label this account in metrics (e.g., "sequencer", "proposer").
     ##
+    ## @param observers - object - optional - default: global observers
+    ## Override the observer set for this specific provider. If omitted, the
+    ## global `observers` config is used (all observers enabled by default).
+    ## Only observers listed here will emit metrics for this provider.
+    ## YAML anchors (&) and references (*) can be used to share observer groups
+    ## across providers without repeating the list.
+    ##
+      ## @param enabled - list of strings - optional
+      ## Enable only specific observers for this provider.
+      ##
+      ## @param disabled - list of strings - optional
+      ## Disable specific observers for this provider (only applies when
+      ## `enabled` is not set, i.e. all-minus-disabled semantics).
+    ##
     ## @param time_to_mine - object - optional
     ## The `time_to_mine` configuration. This will periodically send
     ## transactions and record the time it took to be included in a block. If
@@ -530,23 +544,51 @@
     #     - eur
 
 ## @param observers - object - optional
-## Observers control which metrics will be emitted. By default, all observers are
-## enabled unless explicitly disabled.
+## Controls which observers are active globally. By default, all observers are
+## enabled. Use `enabled` to enable only specific observers, or `disabled` to
+## disable specific observers from the default set.
+##
+## Individual RPC providers can override this using the `observers` field.
+## YAML anchors (&) and references (*) can be used to share observer groups.
+##
+## Example with per-provider overrides:
+##
+##   # Define reusable groups with YAML anchors
+##   x-observer-groups:
+##     light: &light
+##       enabled:
+##         - block
+##         - finalized_height
+##
+##   observers: &full
+##     enabled:
+##       - block
+##       - finalized_height
+##       - block_interval
+##       - transaction_count
+##
+##   providers:
+##     rpc:
+##       - name: "Polygon Mainnet"
+##         url: "https://internal-rpc"
+##         label: "internal"
+##         # No override = uses global observers
+##
+##       - name: "Polygon Mainnet"
+##         url: "https://external-rpc"
+##         label: "external"
+##         observers: *light  # Uses the 'light' group
 #
 # observers:
 #
-  ## @param disabled - list of strings - optional
-  ## @env PANOPTICHAIN_OBSERVERS_DISABLED - list of strings - optional
-  ## Disable specific observers from the observer list.
-  #
-  # disabled:
-  #
   ## @param enabled - list of strings - optional
-  ## @env PANOPTICHAIN_OBSERVERS_ENABLED - list of strings - optional - default enables all observers
-  ## Enable only specific observers. Below are all available observers:
+  ## @env PANOPTICHAIN_OBSERVERS_ENABLED - list of strings - optional
+  ## Enable only specific observers. If set, only these observers will be active.
   #
   # enabled:
   #   - "account_balances"
+  #   - "account_txs"
+  #   - "aggchain"
   #   - "base_fee_per_gas"
   #   - "block"
   #   - "block_interval"
@@ -562,23 +604,27 @@
   #   - "finalized_height"
   #   - "gas_limit"
   #   - "gas_used"
+  #   - "grafana"
   #   - "hash_divergence"
   #   - "heimdall_block"
   #   - "heimdall_block_interval"
   #   - "heimdall_checkpoint"
-  #   - "heimdall_height"
   #   - "heimdall_missed_block_proposal"
   #   - "heimdall_missed_checkpoint_proposal"
-  #   - "heimdall_missed_milestone_proposal"
   #   - "heimdall_signature_count"
+  #   - "heimdall_validator_set_change"
   #   - "milestone"
   #   - "missed_block_proposal"
   #   - "refresh_state_time"
   #   - "reorg"
+  #   - "rollup_manager"
   #   - "sealed_out_of_turn"
   #   - "sensor_block_events"
   #   - "sensor_blocks"
   #   - "sensor_bogon_block"
+  #   - "span"
+  #   - "spn_proof_request"
+  #   - "stake_manager"
   #   - "state_sync"
   #   - "stolen_block"
   #   - "system"
@@ -596,5 +642,10 @@
   #   - "uncles"
   #   - "validator_wallet_balance"
   #   - "zkevm_batches"
-  #   - "rollup_manager"
-  #   - "span"
+  #
+  ## @param disabled - list of strings - optional
+  ## @env PANOPTICHAIN_OBSERVERS_DISABLED - list of strings - optional
+  ## Disable specific observers. Only applies when `enabled` is not set.
+  #
+  # disabled:
+  #   - "time_to_mine"

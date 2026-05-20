@@ -14,7 +14,6 @@ import (
 )
 
 var providers []provider.Provider
-var observers observer.ObserverSet
 
 // Start starts the main infinite loop of this program.
 func Start(ctx context.Context) {
@@ -43,7 +42,11 @@ func Start(ctx context.Context) {
 
 // Init configures all the providers and observers of the system.
 func Init(ctx context.Context) error {
+	// Global EventBus for all providers without custom observers.
 	eb := observer.NewEventBus()
+	observers := observer.GetEnabledObserverSet()
+	observers.Register(eb)
+
 	providers = []provider.Provider{}
 	rpcProviders := []*provider.RPCProvider{}
 
@@ -53,7 +56,15 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		p := provider.NewRPCProvider(n, eb, r)
+		providerEB := eb // default to global
+		if r.Observers != nil {
+			// Provider has custom observers - create dedicated EventBus.
+			providerEB = observer.NewEventBus()
+			obs := observer.GetObserverSetFrom(*r.Observers)
+			obs.Register(providerEB)
+		}
+
+		p := provider.NewRPCProvider(n, providerEB, r)
 		providers = append(providers, p)
 		rpcProviders = append(rpcProviders, p)
 	}
@@ -126,9 +137,6 @@ func Init(ctx context.Context) error {
 		p := provider.NewExchangeRatesProvider(eb, *er)
 		providers = append(providers, p)
 	}
-
-	observers = observer.GetEnabledObserverSet()
-	observers.Register(eb)
 
 	return nil
 }

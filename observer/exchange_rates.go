@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/observer/topics"
@@ -23,11 +22,19 @@ type ExchangeRatesObserver struct {
 func (o *ExchangeRatesObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.ExchangeRate, o)
 
-	o.gauge = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	g := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: config.Config().Namespace,
 		Name:      "exchange_rates",
 		Help:      "The exchange rate between the base and quote currencies",
 	}, []string{"base", "quote"})
+	if err := prometheus.Register(g); err != nil {
+		if are, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			g = are.ExistingCollector.(*prometheus.GaugeVec)
+		} else {
+			panic(err)
+		}
+	}
+	o.gauge = g
 }
 
 func (o *ExchangeRatesObserver) Notify(ctx context.Context, m Message) {
