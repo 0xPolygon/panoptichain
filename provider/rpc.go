@@ -52,10 +52,12 @@ type RPCProvider struct {
 	timeToMine       *config.TimeToMine
 	accounts         []config.Account
 	accountBalances  observer.AccountBalances
-	accountTxs       observer.AccountTxs
-	timeToFinalized  *uint64
-	blockLookBack    uint64
-	hasTxPool        bool
+	accountTxs             observer.AccountTxs
+	timeToFinalized        *uint64
+	blockLookBack          uint64
+	hasTxPool              bool
+	fetchValidatorBalances bool
+	fetchMissedProposals   bool
 
 	// PoS
 	stateSync            map[bool]*observer.StateSync
@@ -104,31 +106,36 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		blb = *cfg.BlockLookBack
 	}
 
+	fetchValidatorBalances := cfg.ValidatorBalances == nil || *cfg.ValidatorBalances
+	fetchMissedProposals := cfg.MissedProposals == nil || *cfg.MissedProposals
+
 	return &RPCProvider{
-		url:                  cfg.URL,
-		network:              n,
-		label:                cfg.Label,
-		bus:                  eb,
-		blockBuffer:          blockbuffer.NewBlockBuffer(128),
-		interval:             GetInterval(cfg.Interval),
-		logger:               NewLogger(n, cfg.Label),
-		refreshStateTime:     new(time.Duration),
-		contracts:            cfg.Contracts,
-		timeToMine:           cfg.TimeToMine,
-		accounts:             cfg.Accounts,
-		accountBalances:      make(observer.AccountBalances, 0),
-		accountTxs:           make(observer.AccountTxs, 0),
-		stateSync:            make(map[bool]*observer.StateSync),
-		checkpointSignatures: make(map[bool]*observer.CheckpointSignatures),
-		validatorBalances:    make(observer.ValidatorWalletBalances),
-		missedBlockProposal:  make(observer.MissedBlockProposal),
-		bridgeEventTimes:     make(observer.BridgeEventTimes),
-		claimEventTimes:      make(observer.ClaimEventTimes),
-		trustedSequencers:    make(map[uint32]*RPCProvider),
-		trustedSequencerURL:  make(chan string),
-		rollupContracts:      make(map[uint32]common.Address),
-		blockLookBack:        blb,
-		hasTxPool:            cfg.TxPool,
+		url:                    cfg.URL,
+		network:                n,
+		label:                  cfg.Label,
+		bus:                    eb,
+		blockBuffer:            blockbuffer.NewBlockBuffer(128),
+		interval:               GetInterval(cfg.Interval),
+		logger:                 NewLogger(n, cfg.Label),
+		refreshStateTime:       new(time.Duration),
+		contracts:              cfg.Contracts,
+		timeToMine:             cfg.TimeToMine,
+		accounts:               cfg.Accounts,
+		accountBalances:        make(observer.AccountBalances, 0),
+		accountTxs:             make(observer.AccountTxs, 0),
+		stateSync:              make(map[bool]*observer.StateSync),
+		checkpointSignatures:   make(map[bool]*observer.CheckpointSignatures),
+		validatorBalances:      make(observer.ValidatorWalletBalances),
+		missedBlockProposal:    make(observer.MissedBlockProposal),
+		bridgeEventTimes:       make(observer.BridgeEventTimes),
+		claimEventTimes:        make(observer.ClaimEventTimes),
+		trustedSequencers:      make(map[uint32]*RPCProvider),
+		trustedSequencerURL:    make(chan string),
+		rollupContracts:        make(map[uint32]common.Address),
+		blockLookBack:          blb,
+		hasTxPool:              cfg.TxPool,
+		fetchValidatorBalances: fetchValidatorBalances,
+		fetchMissedProposals:   fetchMissedProposals,
 	}
 }
 
@@ -144,12 +151,10 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 		return err
 	}
 
-	// Reset accountBalances and accountTxs for this refresh cycle
 	r.accountBalances = make(observer.AccountBalances, 0)
 	r.accountTxs = make(observer.AccountTxs, 0)
 
 	r.refreshBlockBuffer(ctx, c)
-
 	r.refreshStateSync(ctx, c, true)
 	r.refreshStateSync(ctx, c, false)
 	r.refreshCheckpoint(ctx, c)
@@ -832,6 +837,10 @@ func padLeft(data []byte, size int) []byte {
 }
 
 func (r *RPCProvider) refreshValidatorBalances(ctx context.Context, c *ethclient.Client) (err error) {
+	if !r.fetchValidatorBalances {
+		return nil
+	}
+
 	signers, err := api.Signers(r.network)
 	if err != nil {
 		r.logger.Warn().Err(err).Msg("Failed to get signers validator map")
@@ -896,6 +905,10 @@ type SnapshotProposerSequence struct {
 }
 
 func (r *RPCProvider) refreshMissedBlockProposal(ctx context.Context, c *ethclient.Client) error {
+	if !r.fetchMissedProposals {
+		return nil
+	}
+
 	for i := r.prevBlockNumber + 1; i <= r.blockNumber && r.prevBlockNumber != 0; i++ {
 		var response SnapshotProposerSequence
 		err := c.Client().CallContext(ctx, &response, "bor_getSnapshotProposerSequence", hexutil.EncodeUint64(i))

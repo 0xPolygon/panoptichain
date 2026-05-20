@@ -44,16 +44,18 @@ type Account struct {
 
 // RPC defines the various RPC providers that will be monitored.
 type RPC struct {
-	Name          string         `mapstructure:"name" validate:"required"`
-	URL           string         `mapstructure:"url" validate:"url,required"`
-	Label         string         `mapstructure:"label" validate:"required"`
-	Interval      *time.Duration `mapstructure:"interval"`
-	Contracts     Contracts      `mapstructure:"contracts"`
-	TimeToMine    *TimeToMine    `mapstructure:"time_to_mine"`
-	Accounts      []Account      `mapstructure:"accounts"`
-	BlockLookBack *uint64        `mapstructure:"block_look_back"`
-	TxPool        bool           `mapstructure:"txpool"`
-	Observers     *Observers     `mapstructure:"observers"`
+	Name              string         `mapstructure:"name" validate:"required"`
+	URL               string         `mapstructure:"url" validate:"url,required"`
+	Label             string         `mapstructure:"label" validate:"required"`
+	Interval          *time.Duration `mapstructure:"interval"`
+	Contracts         Contracts      `mapstructure:"contracts"`
+	TimeToMine        *TimeToMine    `mapstructure:"time_to_mine"`
+	Accounts          []Account      `mapstructure:"accounts"`
+	BlockLookBack     *uint64        `mapstructure:"block_look_back"`
+	TxPool            bool           `mapstructure:"txpool"`
+	Observers         *Observers     `mapstructure:"observers"`
+	ValidatorBalances *bool          `mapstructure:"validator_balances"`
+	MissedProposals   *bool          `mapstructure:"missed_proposals"`
 }
 
 // Contracts maps specific contracts to their addresses. This is used to
