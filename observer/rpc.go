@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"strconv"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -1709,11 +1710,18 @@ func (o *TimeToFinalizedObserver) GetCollectors() []prometheus.Collector {
 }
 
 type StakeManager struct {
-	TotalStaked *big.Int
+	TotalStaked      *big.Int
+	ValidatorSetSize *big.Int
+}
+
+type StakingEvents struct {
+	StakedEvents      []*contracts.StakingInfoStaked
+	UnstakeInitEvents []*contracts.StakingInfoUnstakeInit
 }
 
 type StakeManagerObserver struct {
-	totalStaked *prometheus.GaugeVec
+	totalStaked      *prometheus.GaugeVec
+	validatorSetSize *prometheus.GaugeVec
 }
 
 func (o *StakeManagerObserver) Notify(ctx context.Context, m Message) {
@@ -1722,6 +1730,11 @@ func (o *StakeManagerObserver) Notify(ctx context.Context, m Message) {
 	if data.TotalStaked != nil {
 		totalStaked, _ := weiToEther(data.TotalStaked).Float64()
 		o.totalStaked.WithLabelValues(m.Network().GetName(), m.Provider()).Set(totalStaked)
+	}
+
+	if data.ValidatorSetSize != nil {
+		size, _ := data.ValidatorSetSize.Float64()
+		o.validatorSetSize.WithLabelValues(m.Network().GetName(), m.Provider()).Set(size)
 	}
 }
 
@@ -1733,8 +1746,307 @@ func (o *StakeManagerObserver) Register(eb *EventBus) {
 		"total_staked",
 		"Total amount staked in the stake manager contract (in ether)",
 	)
+
+	o.validatorSetSize = metrics.NewGauge(
+		metrics.RPC,
+		"validator_set_size",
+		"The current number of active validators",
+	)
 }
 
 func (o *StakeManagerObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.totalStaked}
+	return []prometheus.Collector{o.totalStaked, o.validatorSetSize}
+}
+
+type StakingEventsObserver struct {
+	stakeCounter   *prometheus.CounterVec
+	unstakeCounter *prometheus.CounterVec
+}
+
+func (o *StakingEventsObserver) Notify(ctx context.Context, m Message) {
+	logger := NewLogger(o, m)
+
+	data := m.Data().(*StakingEvents)
+
+	for _, event := range data.StakedEvents {
+		validatorID := event.ValidatorId.String()
+		signerAddress := event.Signer.Hex()
+
+		logger.Info().
+			Str("validator_id", validatorID).
+			Str("signer_address", signerAddress).
+			Str("amount", event.Amount.String()).
+			Msg("Staked event detected")
+
+		o.stakeCounter.WithLabelValues(m.Network().GetName(), m.Provider(), validatorID, signerAddress).Inc()
+	}
+
+	for _, event := range data.UnstakeInitEvents {
+		validatorID := event.ValidatorId.String()
+		signerAddress := event.User.Hex()
+
+		logger.Info().
+			Str("validator_id", validatorID).
+			Str("signer_address", signerAddress).
+			Str("amount", event.Amount.String()).
+			Msg("UnstakeInit event detected")
+
+		o.unstakeCounter.WithLabelValues(m.Network().GetName(), m.Provider(), validatorID, signerAddress).Inc()
+	}
+}
+
+func (o *StakingEventsObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.StakingEvents, o)
+
+	o.stakeCounter = metrics.NewCounter(
+		metrics.RPC,
+		"stake_for_pol",
+		"The total number of Staked events observed",
+		"validator_id",
+		"signer_address",
+	)
+
+	o.unstakeCounter = metrics.NewCounter(
+		metrics.RPC,
+		"unstake_pol",
+		"The total number of UnstakeInit events observed",
+		"validator_id",
+		"signer_address",
+	)
+}
+
+func (o *StakingEventsObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.stakeCounter, o.unstakeCounter}
+}
+
+// SPOLValidator represents a single validator from the sPOLController contract.
+type SPOLValidator struct {
+	ID                uint16
+	Status            uint8
+	DepositShare      uint8
+	Address           common.Address
+	TotalStaked       *big.Int
+	RealDPOLBalance   *big.Int
+	DelegationLocked  bool
+	LiquidRewards     *big.Int
+	ShareExchangeRate *big.Int
+}
+
+// SPOLController represents the sPOLController contract state.
+type SPOLController struct {
+	Validators       []SPOLValidator
+	TotalValidators  int
+	ActiveValidators int
+	DPOL             *big.Int
+	SPOL             *big.Int
+	ExchangeRate     *big.Int
+	Paused           bool
+	WithdrawNonce    *big.Int
+}
+
+type SPOLControllerObserver struct {
+	validatorStatus            *prometheus.GaugeVec
+	validatorDepositShare      *prometheus.GaugeVec
+	validatorTotalStaked       *prometheus.GaugeVec
+	validatorCount             *prometheus.GaugeVec
+	activeValidatorCount       *prometheus.GaugeVec
+	dPOLBalance                *prometheus.GaugeVec
+	sPOLBalance                *prometheus.GaugeVec
+	exchangeRate               *prometheus.GaugeVec
+	paused                     *prometheus.GaugeVec
+	withdrawNonce              *prometheus.GaugeVec
+	validatorRealDPOLBalance   *prometheus.GaugeVec
+	validatorDelegationLocked  *prometheus.GaugeVec
+	validatorLiquidRewards     *prometheus.GaugeVec
+	validatorShareExchangeRate *prometheus.GaugeVec
+}
+
+func (o *SPOLControllerObserver) Notify(ctx context.Context, m Message) {
+	data := m.Data().(*SPOLController)
+	networkName := m.Network().GetName()
+	provider := m.Provider()
+
+	for _, v := range data.Validators {
+		validatorID := strconv.FormatUint(uint64(v.ID), 10)
+		validatorAddress := v.Address.Hex()
+
+		o.validatorStatus.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(float64(v.Status))
+		o.validatorDepositShare.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(float64(v.DepositShare))
+
+		if v.TotalStaked != nil {
+			staked, _ := weiToEther(v.TotalStaked).Float64()
+			o.validatorTotalStaked.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(staked)
+		}
+
+		if v.RealDPOLBalance != nil {
+			balance, _ := weiToEther(v.RealDPOLBalance).Float64()
+			o.validatorRealDPOLBalance.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(balance)
+		}
+
+		delegationLocked := 0.0
+		if v.DelegationLocked {
+			delegationLocked = 1.0
+		}
+		o.validatorDelegationLocked.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(delegationLocked)
+
+		if v.LiquidRewards != nil {
+			rewards, _ := weiToEther(v.LiquidRewards).Float64()
+			o.validatorLiquidRewards.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(rewards)
+		}
+
+		if v.ShareExchangeRate != nil {
+			rate := new(big.Float).SetInt(v.ShareExchangeRate)
+			rateFloat, _ := rate.Float64()
+			o.validatorShareExchangeRate.WithLabelValues(networkName, provider, validatorID, validatorAddress).Set(rateFloat)
+		}
+	}
+
+	o.validatorCount.WithLabelValues(networkName, provider).Set(float64(data.TotalValidators))
+	o.activeValidatorCount.WithLabelValues(networkName, provider).Set(float64(data.ActiveValidators))
+
+	if data.DPOL != nil {
+		dPOL, _ := weiToEther(data.DPOL).Float64()
+		o.dPOLBalance.WithLabelValues(networkName, provider).Set(dPOL)
+	}
+
+	if data.SPOL != nil {
+		sPOL, _ := weiToEther(data.SPOL).Float64()
+		o.sPOLBalance.WithLabelValues(networkName, provider).Set(sPOL)
+	}
+
+	if data.ExchangeRate != nil {
+		rate, _ := weiToEther(data.ExchangeRate).Float64()
+		o.exchangeRate.WithLabelValues(networkName, provider).Set(rate)
+	}
+
+	paused := 0.0
+	if data.Paused {
+		paused = 1.0
+	}
+	o.paused.WithLabelValues(networkName, provider).Set(paused)
+
+	if data.WithdrawNonce != nil {
+		o.withdrawNonce.WithLabelValues(networkName, provider).Set(float64(data.WithdrawNonce.Uint64()))
+	}
+}
+
+func (o *SPOLControllerObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.SPOLController, o)
+
+	o.validatorStatus = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_status",
+		"sPOLController validator status (0=inactive, 1=active)",
+		"validator_id",
+		"validator_address",
+	)
+
+	o.validatorDepositShare = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_deposit_share",
+		"sPOLController validator target deposit share percentage",
+		"validator_id",
+		"validator_address",
+	)
+
+	o.validatorTotalStaked = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_total_staked",
+		"sPOLController validator total staked amount (in ether)",
+		"validator_id",
+		"validator_address",
+	)
+
+	o.validatorCount = metrics.NewGauge(
+		metrics.RPC,
+		"spol_total_validators",
+		"Total number of validators in sPOLController",
+	)
+
+	o.activeValidatorCount = metrics.NewGauge(
+		metrics.RPC,
+		"spol_active_validators",
+		"Number of active validators in sPOLController",
+	)
+
+	o.dPOLBalance = metrics.NewGauge(
+		metrics.RPC,
+		"spol_dpol_balance",
+		"Total dPOL balance in sPOLController (in ether)",
+	)
+
+	o.sPOLBalance = metrics.NewGauge(
+		metrics.RPC,
+		"spol_spol_balance",
+		"Total sPOL token balance in sPOLController (in ether)",
+	)
+
+	o.exchangeRate = metrics.NewGauge(
+		metrics.RPC,
+		"spol_exchange_rate",
+		"sPOL to POL exchange rate (POL per 1 sPOL, in ether)",
+	)
+
+	o.paused = metrics.NewGauge(
+		metrics.RPC,
+		"spol_paused",
+		"sPOLController paused state (0=active, 1=paused)",
+	)
+
+	o.withdrawNonce = metrics.NewGauge(
+		metrics.RPC,
+		"spol_global_withdraw_nonce",
+		"sPOLController global withdrawal nonce counter",
+	)
+
+	o.validatorRealDPOLBalance = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_real_dpol_balance",
+		"Real dPOL balance (balanceOf on ValidatorShare) in ether",
+		"validator_id",
+		"validator_address",
+	)
+
+	o.validatorDelegationLocked = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_delegation_locked",
+		"Validator delegation locked state (0=enabled, 1=locked)",
+		"validator_id",
+		"validator_address",
+	)
+
+	o.validatorLiquidRewards = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_liquid_rewards",
+		"Validator pending liquid rewards (in ether)",
+		"validator_id",
+		"validator_address",
+	)
+
+	o.validatorShareExchangeRate = metrics.NewGauge(
+		metrics.RPC,
+		"spol_validator_share_exchange_rate",
+		"ValidatorShare exchange rate (raw value, typically ~1e29 for healthy validators)",
+		"validator_id",
+		"validator_address",
+	)
+}
+
+func (o *SPOLControllerObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
+		o.validatorStatus,
+		o.validatorDepositShare,
+		o.validatorTotalStaked,
+		o.validatorCount,
+		o.activeValidatorCount,
+		o.dPOLBalance,
+		o.sPOLBalance,
+		o.exchangeRate,
+		o.paused,
+		o.withdrawNonce,
+		o.validatorRealDPOLBalance,
+		o.validatorDelegationLocked,
+		o.validatorLiquidRewards,
+		o.validatorShareExchangeRate,
+	}
 }

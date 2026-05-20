@@ -63,6 +63,9 @@ type RPCProvider struct {
 	validatorBalances    observer.ValidatorWalletBalances
 	missedBlockProposal  observer.MissedBlockProposal
 	stakeManager         *observer.StakeManager
+	sPOLController       *observer.SPOLController
+	stakingEvents        *observer.StakingEvents
+	stakingInfoAddress   *common.Address
 
 	// zkEVM
 	batches        observer.ZkEVMBatches
@@ -157,6 +160,8 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	}
 
 	r.refreshStakeManager(ctx, c)
+	r.refreshSPOLController(ctx, c)
+	r.refreshStakingEvents(ctx, c)
 
 	if r.hasTxPool {
 		r.refreshTxPoolStatus(ctx, c)
@@ -310,6 +315,16 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 		r.bus.Publish(ctx, topics.StakeManager, m)
 	}
 
+	if r.sPOLController != nil {
+		m := observer.NewMessage(r.network, r.label, r.sPOLController)
+		r.bus.Publish(ctx, topics.SPOLController, m)
+	}
+
+	if r.stakingEvents != nil {
+		m := observer.NewMessage(r.network, r.label, r.stakingEvents)
+		r.bus.Publish(ctx, topics.StakingEvents, m)
+	}
+
 	r.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(r.network, r.label, r.refreshStateTime))
 
 	return nil
@@ -440,14 +455,217 @@ func (r *RPCProvider) refreshStakeManager(ctx context.Context, c *ethclient.Clie
 	}
 
 	co := bind.CallOpts{Context: ctx}
+
+	stakingInfoAddress, err := contract.Logger(&co)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to get staking info address from stake manager")
+	} else {
+		r.stakingInfoAddress = &stakingInfoAddress
+	}
+
 	totalStaked, err := contract.CurrentValidatorSetTotalStake(&co)
 	if err != nil {
 		r.logger.Error().Err(err).Msg("Failed to get current validator set total stake")
 		return err
 	}
 
+	validatorSetSize, err := contract.CurrentValidatorSetSize(&co)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to get current validator set size")
+		return err
+	}
+
 	r.stakeManager = &observer.StakeManager{
-		TotalStaked: totalStaked,
+		TotalStaked:      totalStaked,
+		ValidatorSetSize: validatorSetSize,
+	}
+
+	return nil
+}
+
+func (r *RPCProvider) refreshStakingEvents(ctx context.Context, c *ethclient.Client) error {
+	if r.stakingInfoAddress == nil {
+		return nil
+	}
+
+	r.stakingEvents = nil
+
+	stakingInfo, err := contracts.NewStakingInfo(*r.stakingInfoAddress, c)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to bind staking info contract")
+		return err
+	}
+
+	opts := r.getFilterOpts()
+
+	stakedEvents := make([]*contracts.StakingInfoStaked, 0)
+	stakedIter, err := stakingInfo.FilterStaked(opts, nil, nil, nil)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to filter Staked events")
+	} else {
+		for stakedIter.Next() && stakedIter.Event != nil {
+			stakedEvents = append(stakedEvents, stakedIter.Event)
+		}
+	}
+
+	unstakeInitEvents := make([]*contracts.StakingInfoUnstakeInit, 0)
+	unstakeInitIter, err := stakingInfo.FilterUnstakeInit(opts, nil, nil, nil)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to filter UnstakeInit events")
+	} else {
+		for unstakeInitIter.Next() && unstakeInitIter.Event != nil {
+			unstakeInitEvents = append(unstakeInitEvents, unstakeInitIter.Event)
+		}
+	}
+
+	if len(stakedEvents) > 0 || len(unstakeInitEvents) > 0 {
+		r.stakingEvents = &observer.StakingEvents{
+			StakedEvents:      stakedEvents,
+			UnstakeInitEvents: unstakeInitEvents,
+		}
+	}
+
+	return nil
+}
+
+func (r *RPCProvider) refreshSPOLController(ctx context.Context, c *ethclient.Client) error {
+	if r.contracts.SPOLControllerAddress == nil {
+		return nil
+	}
+
+	address := common.HexToAddress(*r.contracts.SPOLControllerAddress)
+	contract, err := contracts.NewSPOLController(address, c)
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to bind sPOLController contract")
+		return err
+	}
+
+	callOpts := bind.CallOpts{Context: ctx}
+	validators := make([]observer.SPOLValidator, 0)
+	activeCount := 0
+	controllerAddr := address // SPOLController address for balanceOf queries
+	const activeStatus = 1
+
+	// Iterate through validator list until we get an error (end of list)
+	for index := 0; ; index++ {
+		validatorID, err := contract.ValidatorList(&callOpts, big.NewInt(int64(index)))
+		if err != nil {
+			break
+		}
+
+		validatorInfo, err := contract.Validators(&callOpts, validatorID)
+		if err != nil {
+			r.logger.Warn().Err(err).Uint16("validator_id", validatorID).Msg("Failed to get validator info")
+			continue
+		}
+
+		validator := observer.SPOLValidator{
+			ID:           validatorID,
+			Status:       validatorInfo.Status,
+			DepositShare: validatorInfo.DepositShare,
+			Address:      validatorInfo.ValidatorContract,
+			TotalStaked:  validatorInfo.TotalStaked,
+		}
+
+		validatorShare, err := contracts.NewValidatorShare(validatorInfo.ValidatorContract, c)
+		if err != nil {
+			r.logger.Warn().
+				Err(err).
+				Uint16("validator_id", validatorID).
+				Msg("Failed to bind ValidatorShare contract")
+			validators = append(validators, validator)
+			if validatorInfo.Status == activeStatus {
+				activeCount++
+			}
+			continue
+		}
+
+		balance, err := validatorShare.BalanceOf(&callOpts, controllerAddr)
+		if err != nil {
+			r.logger.Warn().
+				Err(err).
+				Uint16("validator_id", validatorID).
+				Msg("Failed to get ValidatorShare balanceOf")
+		} else {
+			validator.RealDPOLBalance = balance
+		}
+
+		delegation, err := validatorShare.Delegation(&callOpts)
+		if err != nil {
+			r.logger.Warn().
+				Err(err).
+				Uint16("validator_id", validatorID).
+				Msg("Failed to get ValidatorShare delegation")
+		} else {
+			validator.DelegationLocked = !delegation
+		}
+
+		rewards, err := validatorShare.GetLiquidRewards(&callOpts, controllerAddr)
+		if err != nil {
+			r.logger.Warn().
+				Err(err).
+				Uint16("validator_id", validatorID).
+				Msg("Failed to get ValidatorShare liquidRewards")
+		} else {
+			validator.LiquidRewards = rewards
+		}
+
+		rate, err := validatorShare.ExchangeRate(&callOpts)
+		if err != nil {
+			r.logger.Warn().
+				Err(err).
+				Uint16("validator_id", validatorID).
+				Msg("Failed to get ValidatorShare exchangeRate")
+		} else {
+			validator.ShareExchangeRate = rate
+		}
+
+		validators = append(validators, validator)
+		if validatorInfo.Status == activeStatus {
+			activeCount++
+		}
+	}
+
+	r.sPOLController = &observer.SPOLController{
+		Validators:       validators,
+		TotalValidators:  len(validators),
+		ActiveValidators: activeCount,
+	}
+
+	dPOL, err := contract.TotaldPOLBalance(&callOpts)
+	if err != nil {
+		r.logger.Warn().Err(err).Msg("Failed to get totaldPOLBalance")
+	} else {
+		r.sPOLController.DPOL = dPOL
+	}
+
+	sPOL, err := contract.TotalsPOLBalance(&callOpts)
+	if err != nil {
+		r.logger.Warn().Err(err).Msg("Failed to get totalsPOLBalance")
+	} else {
+		r.sPOLController.SPOL = sPOL
+	}
+
+	onesPOL := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+	exchangeRate, err := contract.ConvertSPOLtoPOL(&callOpts, onesPOL)
+	if err != nil {
+		r.logger.Warn().Err(err).Msg("Failed to get sPOL exchange rate")
+	} else {
+		r.sPOLController.ExchangeRate = exchangeRate
+	}
+
+	paused, err := contract.Paused(&callOpts)
+	if err != nil {
+		r.logger.Warn().Err(err).Msg("Failed to get paused state")
+	} else {
+		r.sPOLController.Paused = paused
+	}
+
+	withdrawNonce, err := contract.GlobalWithdrawNonce(&callOpts)
+	if err != nil {
+		r.logger.Warn().Err(err).Msg("Failed to get global withdraw nonce")
+	} else {
+		r.sPOLController.WithdrawNonce = withdrawNonce
 	}
 
 	return nil

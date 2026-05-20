@@ -9,11 +9,11 @@ import (
 
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
-	"github.com/0xPolygon/panoptichain/proto"
+	spnpb "github.com/0xPolygon/panoptichain/proto/network"
 )
 
 type UsageSummary struct {
-	*proto.UsageSummary
+	*spnpb.UsageSummary
 	Requester string
 }
 
@@ -98,7 +98,7 @@ func (o *ProofRequestObserver) Register(eb *EventBus) {
 }
 
 func (o *ProofRequestObserver) Notify(ctx context.Context, msg Message) {
-	proof := msg.Data().(*proto.ProofRequest)
+	proof := msg.Data().(*spnpb.ProofRequest)
 	labels := []string{
 		msg.Network().GetName(),
 		msg.Provider(),

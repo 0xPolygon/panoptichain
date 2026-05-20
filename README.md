@@ -155,6 +155,7 @@ options.
   abigen --abi PolygonRollupManager.abi.json --pkg contracts --type PolygonRollupManager > PolygonRollupManager.go
   abigen --abi AggchainFEP.abi.json --pkg contracts --type AggchainFEP > AggchainFEP.go
   abigen --abi StakeManager.abi.json --pkg contracts --type StakeManager > StakeManager.go
+  abigen --abi sPOLController.abi.json --pkg contracts --type SPOLController > SPOLController.go
   ```
 
 - Clone `succinctlabs/network` and compile `protobuf`
@@ -165,12 +166,55 @@ options.
   protoc ~/src/network/proto/network.proto ~/src/network/proto/types.proto \
     --proto_path ~/src/network/proto \
     --go_out=. \
-    --go_opt=Mnetwork.proto=./proto \
-    --go_opt=Mtypes.proto=./proto \
+    --go_opt=Mnetwork.proto=github.com/0xPolygon/panoptichain/proto/network \
+    --go_opt=Mtypes.proto=github.com/0xPolygon/panoptichain/proto/network \
     --go-grpc_out=. \
-    --go-grpc_opt=Mnetwork.proto=./proto \
-    --go-grpc_opt=Mtypes.proto=./proto
+    --go-grpc_opt=Mnetwork.proto=github.com/0xPolygon/panoptichain/proto/network \
+    --go-grpc_opt=Mtypes.proto=github.com/0xPolygon/panoptichain/proto/network
+
+  # Move generated files to correct location
+  mv github.com/0xPolygon/panoptichain/proto/network/*.pb.go proto/network/
+  rm -rf github.com
   ```
+
+#### Heimdall Vote Extension Types
+
+Generate Heimdall vote extension types from CometBFT and Heimdall v2 proto files.
+Clone the repos to `~/src` if they don't exist:
+
+```bash
+# Clone dependencies (if not already present)
+[ -d ~/src/cometbft ] || git clone https://github.com/cometbft/cometbft.git ~/src/cometbft
+[ -d ~/src/heimdall-v2 ] || git clone https://github.com/0xPolygon/heimdall-v2.git ~/src/heimdall-v2
+
+# Generate ABCI types from CometBFT
+protoc ~/src/cometbft/proto/tendermint/abci/types.proto \
+  --proto_path ~/src/cometbft/proto \
+  --proto_path ~/src/cometbft/third_party/proto \
+  --go_out=. \
+  --go_opt=Mtendermint/abci/types.proto=github.com/0xPolygon/panoptichain/proto/heimdall
+
+# Generate sidetxs types from Heimdall v2
+protoc ~/src/heimdall-v2/proto/heimdall/sidetxs/sidetxs.proto \
+  --proto_path ~/src/heimdall-v2/proto \
+  --proto_path ~/src/heimdall-v2/third_party/proto \
+  --go_out=. \
+  --go_opt=Mheimdall/sidetxs/sidetxs.proto=github.com/0xPolygon/panoptichain/proto/heimdall
+
+# Move generated files to correct location
+mv github.com/0xPolygon/panoptichain/proto/heimdall/*.pb.go proto/heimdall/
+rm -rf github.com
+```
+
+**Note:** The upstream protos use gogo-proto annotations. If generation fails, create
+minimal proto files locally (see `proto/heimdall/*.pb.go` comments for field definitions).
+
+The `proto/heimdall` package provides:
+
+- `ExtendedCommitInfo`, `ExtendedVoteInfo` - CometBFT ABCI types
+- `VoteExtension`, `MilestoneProposition` - Heimdall vote extension types
+- `UnmarshalExtendedCommitInfo(data []byte)` - decodes ExtendedCommitInfo from block txs[0]
+- `UnmarshalVoteExtension(data []byte)` - decodes VoteExtension from validator votes
 
 ## Architecture
 

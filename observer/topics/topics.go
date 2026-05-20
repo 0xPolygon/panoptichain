@@ -36,6 +36,7 @@ const (
 	SensorBlocks                                       // *observer.SensorBlocks
 	Span                                               // *observer.HeimdallSpans
 	StakeManager                                       // *observer.StakeManager
+	SPOLController                                     // *observer.SPOLController
 	StolenBlock                                        // *types.Block
 	System                                             // *observer.System
 	TimeToFinalized                                    // uint64
@@ -44,5 +45,8 @@ const (
 	TrustedBatch                                       // *util.Batch
 	ValidatorWallet                                    // observer.ValidatorWalletBalances
 	ValidatorSet                                       // *observer.HeimdallValidatorSets
+	MissedVote                                         // *observer.HeimdallMissedVotes
+	MilestoneVote                                      // *observer.HeimdallMilestoneVotes
 	ZkEVMBatches                                       // observer.ZkEVMBatches
+	StakingEvents                                      // *observer.StakingEvents
 )
