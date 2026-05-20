@@ -200,9 +200,19 @@
     ## value to 0 will not populate metrics with any historical data.
     ##
     ## @param txpool - boolean - optional - default false
-    ## @env PANOTICHAIN_PROVIDERS_RPC_0_TXPOOL - boolean - optional - default false
-    ## Whether the underlying RPC node is supports `txpool_*` API requests. This
+    ## @env PANOPTICHAIN_PROVIDERS_RPC_0_TXPOOL - boolean - optional - default false
+    ## Whether the underlying RPC node supports `txpool_*` API requests. This
     ## is usually only available for Geth based clients.
+    ##
+    ## @param validator_balances - boolean - optional - default true
+    ## @env PANOPTICHAIN_PROVIDERS_RPC_0_VALIDATOR_BALANCES - boolean - optional - default true
+    ## Whether to fetch validator wallet balances via eth_getBalance batch calls.
+    ## Only applies to Polygon PoS networks. Set to false to reduce RPC load.
+    ##
+    ## @param missed_proposals - boolean - optional - default true
+    ## @env PANOPTICHAIN_PROVIDERS_RPC_0_MISSED_PROPOSALS - boolean - optional - default true
+    ## Whether to fetch missed block proposals via bor_getSnapshotProposerSequence.
+    ## Only applies to Polygon PoS networks. Set to false to reduce RPC load.
     ##
     ## @param accounts - list of objects - optional
     ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS - list of objects - optional
@@ -276,6 +286,8 @@
   #   - name: "Polygon Mainnet"
   #     url: "https://polygon-rpc.com"
   #     label: "polygon-rpc.com"
+  #     validator_balances: false  # Skip eth_getBalance batch (default: true)
+  #     missed_proposals: false    # Skip bor_getSnapshotProposerSequence (default: true)
   #     contracts:
   #       state_sync_receiver_address: "0x0000000000000000000000000000000000001001"
   #
