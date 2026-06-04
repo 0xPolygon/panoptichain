@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/url"
 	"sort"
 	"strconv"
@@ -48,7 +47,7 @@ type HeimdallProvider struct {
 	checkpointProposers       *orderedmap.OrderedMap[string, struct{}]
 	missedCheckpointProposers []string
 
-	milestone          *observer.HeimdallMilestone
+	milestones         []*observer.HeimdallMilestone
 	prevMilestoneCount int64
 
 	spans *observer.HeimdallSpans
@@ -164,8 +163,8 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.MissedCheckpointProposal, m)
 	}
 
-	if h.milestone != nil {
-		m := observer.NewMessage(h.network, h.label, h.milestone)
+	for _, milestone := range h.milestones {
+		m := observer.NewMessage(h.network, h.label, milestone)
 		h.bus.Publish(ctx, topics.Milestone, m)
 	}
 
@@ -309,48 +308,41 @@ func (h *HeimdallProvider) fillRange(start uint64) {
 	}
 }
 
-func (h *HeimdallProvider) getHeimdallMilestoneCount() (*big.Int, error) {
+func (h *HeimdallProvider) refreshMilestone() error {
 	path, err := url.JoinPath(h.heimdallURL, "milestones", "count")
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone count path")
-		return nil, err
+		return err
 	}
 
 	var count observer.HeimdallMilestoneCount
 	if err := api.GetJSON(path, &count); err != nil {
-		return nil, err
-	}
-
-	return new(big.Int).SetUint64(count.Count), nil
-}
-
-func (h *HeimdallProvider) refreshMilestone() error {
-	if h.milestone != nil {
-		h.prevMilestoneCount = h.milestone.Count
-	}
-
-	count, err := h.getHeimdallMilestoneCount()
-	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone count")
 		return err
 	}
 
-	path, err := url.JoinPath(h.heimdallURL, "milestones", count.String())
-	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone path")
-		return err
+	currentCount := int64(count.Count)
+	h.milestones = nil
+
+	for i := h.prevMilestoneCount + 1; i <= currentCount; i++ {
+		path, err := url.JoinPath(h.heimdallURL, "milestones", strconv.FormatInt(i, 10))
+		if err != nil {
+			h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone path")
+			continue
+		}
+
+		var v2 observer.HeimdallMilestoneV2
+		if err = api.GetJSON(path, &v2); err != nil {
+			h.logger.Error().Err(err).Int64("milestone", i).Msg("Failed to get Heimdall milestone")
+			continue
+		}
+
+		milestone := &v2.Milestone
+		milestone.Count = i
+		h.milestones = append(h.milestones, milestone)
 	}
 
-	var v2 observer.HeimdallMilestoneV2
-	if err = api.GetJSON(path, &v2); err != nil {
-		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone")
-		return err
-	}
-
-	h.milestone = &v2.Milestone
-	h.milestone.PrevCount = h.prevMilestoneCount
-	h.milestone.Count = count.Int64()
-
+	h.prevMilestoneCount = currentCount
 	return nil
 }
 

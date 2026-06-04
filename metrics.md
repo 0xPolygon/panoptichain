@@ -514,7 +514,7 @@ Variable Labels:
 - signer_address
 
 ### panoptichain_heimdall_milestone_vote_missed
-Validators who signed but didn't propose milestone
+Validators who didn't propose milestone
 
 Metric Type: CounterVec
 

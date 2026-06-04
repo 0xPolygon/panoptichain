@@ -245,7 +245,6 @@ type HeimdallMilestone struct {
 	MilestoneID string `json:"milestone_id"`
 	Timestamp   int64  `json:"timestamp,string"`
 	Count       int64
-	PrevCount   int64
 }
 
 type HeimdallMilestoneV2 struct {
@@ -265,18 +264,14 @@ func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 	milestone := m.Data().(*HeimdallMilestone)
 
 	seconds := time.Since(time.Unix(milestone.Timestamp, 0)).Seconds()
-	startBlock := milestone.StartBlock
-	endBlock := milestone.EndBlock
 
 	o.count.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.Count))
 	o.time.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(seconds))
 	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.StartBlock))
 	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.EndBlock))
 
-	if milestone.Count > milestone.PrevCount {
-		o.observed.WithLabelValues(m.Network().GetName(), m.Provider()).Inc()
-		o.blockRange.WithLabelValues(m.Network().GetName(), m.Provider()).Observe(float64(endBlock - startBlock))
-	}
+	o.observed.WithLabelValues(m.Network().GetName(), m.Provider()).Inc()
+	o.blockRange.WithLabelValues(m.Network().GetName(), m.Provider()).Observe(float64(milestone.EndBlock - milestone.StartBlock))
 }
 
 func (o *MilestoneObserver) Register(eb *EventBus) {
@@ -700,7 +695,7 @@ func (o *HeimdallMilestoneVoteObserver) Register(eb *EventBus) {
 	o.missed = metrics.NewCounter(
 		metrics.Heimdall,
 		"milestone_vote_missed",
-		"Validators who signed but didn't propose milestone",
+		"Validators who didn't propose milestone",
 		"validator_id", "signer_address",
 	)
 
