@@ -261,6 +261,7 @@ type MilestoneObserver struct {
 	startBlock *prometheus.GaugeVec
 	endBlock   *prometheus.GaugeVec
 	observed   *prometheus.CounterVec
+	proposed   *prometheus.CounterVec
 	blockRange *prometheus.HistogramVec
 
 	// Vote metrics (merged from HeimdallMilestoneVoteObserver)
@@ -284,6 +285,7 @@ func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 	o.endBlock.WithLabelValues(network, provider).Set(float64(milestone.EndBlock))
 
 	o.observed.WithLabelValues(network, provider).Inc()
+	o.proposed.WithLabelValues(network, provider, milestone.Proposer).Inc()
 	o.blockRange.WithLabelValues(network, provider).Observe(float64(milestone.EndBlock - milestone.StartBlock))
 
 	// Process vote metrics if votes are attached
@@ -332,6 +334,7 @@ func (o *MilestoneObserver) Register(eb *EventBus) {
 	o.startBlock = metrics.NewGauge(metrics.Heimdall, "milestone_start_block", "The milestone start block")
 	o.endBlock = metrics.NewGauge(metrics.Heimdall, "milestone_end_block", "The milestone end block")
 	o.observed = metrics.NewCounter(metrics.Heimdall, "milestone_observed", "The number of milestones observed")
+	o.proposed = metrics.NewCounter(metrics.Heimdall, "milestone_proposed", "Milestones proposed by validator", "proposer")
 	o.blockRange = metrics.NewHistogram(
 		metrics.Heimdall,
 		"milestone_block_range",
@@ -376,6 +379,7 @@ func (o *MilestoneObserver) GetCollectors() []prometheus.Collector {
 		o.startBlock,
 		o.endBlock,
 		o.observed,
+		o.proposed,
 		o.blockRange,
 		o.voteProposed,
 		o.voteMissed,

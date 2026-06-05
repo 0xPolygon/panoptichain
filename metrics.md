@@ -613,6 +613,16 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_heimdall_milestone_proposed
+Milestones proposed by validator
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- proposer
+
 ### panoptichain_heimdall_milestone_block_range
 The number of blocks in the milestone
 
