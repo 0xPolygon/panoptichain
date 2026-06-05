@@ -499,51 +499,6 @@ Variable Labels:
 - network
 - provider
 
-## HeimdallMilestoneVoteObserver
-
-
-### panoptichain_heimdall_milestone_vote_proposed
-Validators who proposed milestone in vote extension
-
-Metric Type: CounterVec
-
-Variable Labels:
-- network
-- provider
-- validator_id
-- signer_address
-
-### panoptichain_heimdall_milestone_vote_missed
-Validators who didn't propose milestone
-
-Metric Type: CounterVec
-
-Variable Labels:
-- network
-- provider
-- validator_id
-- signer_address
-
-### panoptichain_heimdall_milestone_signed_but_missed
-Validators who signed consensus but didn't propose milestone
-
-Metric Type: CounterVec
-
-Variable Labels:
-- network
-- provider
-- validator_id
-- signer_address
-
-### panoptichain_heimdall_milestone_voting_power
-Percentage of voting power that proposed milestone
-
-Metric Type: GaugeVec
-
-Variable Labels:
-- network
-- provider
-
 ## HeimdallMissedBlockProposalObserver
 
 
@@ -658,10 +613,62 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_heimdall_milestone_proposed
+Milestones proposed by validator
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- proposer
+
 ### panoptichain_heimdall_milestone_block_range
 The number of blocks in the milestone
 
 Metric Type: HistogramVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_milestone_vote_proposed
+Validators who proposed milestone in vote extension
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_heimdall_milestone_vote_missed
+Validators who didn't propose milestone
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_heimdall_milestone_signed_but_missed
+Validators who signed consensus but didn't propose milestone
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
+### panoptichain_heimdall_milestone_voting_power
+Percentage of voting power that proposed milestone
+
+Metric Type: GaugeVec
 
 Variable Labels:
 - network

@@ -245,6 +245,10 @@ type HeimdallMilestone struct {
 	MilestoneID string `json:"milestone_id"`
 	Timestamp   int64  `json:"timestamp,string"`
 	Count       int64
+
+	// Votes contains the milestone votes from the block where this milestone was finalized.
+	// This is populated by matching the milestone range to vote extensions.
+	Votes *HeimdallMilestoneVotes
 }
 
 type HeimdallMilestoneV2 struct {
@@ -257,21 +261,69 @@ type MilestoneObserver struct {
 	startBlock *prometheus.GaugeVec
 	endBlock   *prometheus.GaugeVec
 	observed   *prometheus.CounterVec
+	proposed   *prometheus.CounterVec
 	blockRange *prometheus.HistogramVec
+
+	// Vote metrics (merged from HeimdallMilestoneVoteObserver)
+	voteProposed        *prometheus.CounterVec
+	voteMissed          *prometheus.CounterVec
+	voteSignedButMissed *prometheus.CounterVec
+	votingPower         *prometheus.GaugeVec
 }
 
 func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
+	logger := NewLogger(o, m)
 	milestone := m.Data().(*HeimdallMilestone)
+	network := m.Network().GetName()
+	provider := m.Provider()
 
 	seconds := time.Since(time.Unix(milestone.Timestamp, 0)).Seconds()
 
-	o.count.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.Count))
-	o.time.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(seconds))
-	o.startBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.StartBlock))
-	o.endBlock.WithLabelValues(m.Network().GetName(), m.Provider()).Set(float64(milestone.EndBlock))
+	o.count.WithLabelValues(network, provider).Set(float64(milestone.Count))
+	o.time.WithLabelValues(network, provider).Set(float64(seconds))
+	o.startBlock.WithLabelValues(network, provider).Set(float64(milestone.StartBlock))
+	o.endBlock.WithLabelValues(network, provider).Set(float64(milestone.EndBlock))
 
-	o.observed.WithLabelValues(m.Network().GetName(), m.Provider()).Inc()
-	o.blockRange.WithLabelValues(m.Network().GetName(), m.Provider()).Observe(float64(milestone.EndBlock - milestone.StartBlock))
+	o.observed.WithLabelValues(network, provider).Inc()
+	o.proposed.WithLabelValues(network, provider, milestone.Proposer).Inc()
+	o.blockRange.WithLabelValues(network, provider).Observe(float64(milestone.EndBlock - milestone.StartBlock))
+
+	// Process vote metrics if votes are attached
+	votes := milestone.Votes
+	if votes == nil {
+		return
+	}
+
+	var vpPct float64
+	if votes.TotalVotingPower > 0 {
+		vpPct = float64(votes.MilestoneVotingPower) / float64(votes.TotalVotingPower) * 100
+	}
+	o.votingPower.WithLabelValues(network, provider).Set(vpPct)
+
+	for _, vote := range votes.Votes {
+		id := strconv.FormatUint(vote.ValidatorID, 10)
+		switch {
+		case vote.HasMilestone:
+			o.voteProposed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+		case vote.BlockIDFlag == heimdall.BlockIDFlagCommit:
+			// Signed consensus but didn't propose milestone
+			o.voteSignedButMissed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+			o.voteMissed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+		default:
+			// Absent/nil - didn't sign consensus and no milestone
+			o.voteMissed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+		}
+	}
+
+	missed := votes.TotalValidators - votes.MilestoneVoters
+	if missed > 0 {
+		logger.Trace().
+			Uint64("height", votes.Height).
+			Int("total_validators", votes.TotalValidators).
+			Int("milestone_voters", votes.MilestoneVoters).
+			Int("missed", missed).
+			Msg("Detected validators without milestone vote")
+	}
 }
 
 func (o *MilestoneObserver) Register(eb *EventBus) {
@@ -282,11 +334,37 @@ func (o *MilestoneObserver) Register(eb *EventBus) {
 	o.startBlock = metrics.NewGauge(metrics.Heimdall, "milestone_start_block", "The milestone start block")
 	o.endBlock = metrics.NewGauge(metrics.Heimdall, "milestone_end_block", "The milestone end block")
 	o.observed = metrics.NewCounter(metrics.Heimdall, "milestone_observed", "The number of milestones observed")
+	o.proposed = metrics.NewCounter(metrics.Heimdall, "milestone_proposed", "Milestones proposed by validator", "proposer")
 	o.blockRange = metrics.NewHistogram(
 		metrics.Heimdall,
 		"milestone_block_range",
 		"The number of blocks in the milestone",
 		newExponentialBuckets(2, 10),
+	)
+
+	// Vote metrics (merged from HeimdallMilestoneVoteObserver)
+	o.voteProposed = metrics.NewCounter(
+		metrics.Heimdall,
+		"milestone_vote_proposed",
+		"Validators who proposed milestone in vote extension",
+		"validator_id", "signer_address",
+	)
+	o.voteMissed = metrics.NewCounter(
+		metrics.Heimdall,
+		"milestone_vote_missed",
+		"Validators who didn't propose milestone",
+		"validator_id", "signer_address",
+	)
+	o.voteSignedButMissed = metrics.NewCounter(
+		metrics.Heimdall,
+		"milestone_signed_but_missed",
+		"Validators who signed consensus but didn't propose milestone",
+		"validator_id", "signer_address",
+	)
+	o.votingPower = metrics.NewGauge(
+		metrics.Heimdall,
+		"milestone_voting_power",
+		"Percentage of voting power that proposed milestone",
 	)
 
 	for _, h := range config.Config().Providers.HeimdallEndpoints {
@@ -301,7 +379,12 @@ func (o *MilestoneObserver) GetCollectors() []prometheus.Collector {
 		o.startBlock,
 		o.endBlock,
 		o.observed,
+		o.proposed,
 		o.blockRange,
+		o.voteProposed,
+		o.voteMissed,
+		o.voteSignedButMissed,
+		o.votingPower,
 	}
 }
 
@@ -672,85 +755,4 @@ func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
 
 func (o *HeimdallMissedVoteObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.consensus}
-}
-
-// HeimdallMilestoneVoteObserver tracks milestone votes from vote extensions.
-type HeimdallMilestoneVoteObserver struct {
-	proposed        *prometheus.CounterVec
-	missed          *prometheus.CounterVec
-	signedButMissed *prometheus.CounterVec
-	votingPower     *prometheus.GaugeVec
-}
-
-func (o *HeimdallMilestoneVoteObserver) Register(eb *EventBus) {
-	eb.Subscribe(topics.MilestoneVote, o)
-
-	o.proposed = metrics.NewCounter(
-		metrics.Heimdall,
-		"milestone_vote_proposed",
-		"Validators who proposed milestone in vote extension",
-		"validator_id", "signer_address",
-	)
-
-	o.missed = metrics.NewCounter(
-		metrics.Heimdall,
-		"milestone_vote_missed",
-		"Validators who didn't propose milestone",
-		"validator_id", "signer_address",
-	)
-
-	o.signedButMissed = metrics.NewCounter(
-		metrics.Heimdall,
-		"milestone_signed_but_missed",
-		"Validators who signed consensus but didn't propose milestone",
-		"validator_id", "signer_address",
-	)
-
-	o.votingPower = metrics.NewGauge(
-		metrics.Heimdall,
-		"milestone_voting_power",
-		"Percentage of voting power that proposed milestone",
-	)
-}
-
-func (o *HeimdallMilestoneVoteObserver) Notify(ctx context.Context, m Message) {
-	logger := NewLogger(o, m)
-	votes := m.Data().(*HeimdallMilestoneVotes)
-	network := m.Network().GetName()
-	provider := m.Provider()
-
-	var vpPct float64
-	if votes.TotalVotingPower > 0 {
-		vpPct = float64(votes.MilestoneVotingPower) / float64(votes.TotalVotingPower) * 100
-	}
-	o.votingPower.WithLabelValues(network, provider).Set(vpPct)
-
-	for _, vote := range votes.Votes {
-		id := strconv.FormatUint(vote.ValidatorID, 10)
-		switch {
-		case vote.HasMilestone:
-			o.proposed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
-		case vote.BlockIDFlag == heimdall.BlockIDFlagCommit:
-			// Signed consensus but didn't propose milestone
-			o.signedButMissed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
-			o.missed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
-		default:
-			// Absent/nil - didn't sign consensus and no milestone
-			o.missed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
-		}
-	}
-
-	missed := votes.TotalValidators - votes.MilestoneVoters
-	if missed > 0 {
-		logger.Trace().
-			Uint64("height", votes.Height).
-			Int("total_validators", votes.TotalValidators).
-			Int("milestone_voters", votes.MilestoneVoters).
-			Int("missed", missed).
-			Msg("Detected validators without milestone vote")
-	}
-}
-
-func (o *HeimdallMilestoneVoteObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.proposed, o.missed, o.signedButMissed, o.votingPower}
 }

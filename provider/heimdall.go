@@ -55,7 +55,6 @@ type HeimdallProvider struct {
 	validatorSets *observer.HeimdallValidatorSets
 
 	missedVotes    []*observer.HeimdallMissedVotes
-	milestoneVotes []*observer.HeimdallMilestoneVotes
 	validatorIDMap map[string]uint64 // normalized signer_address -> val_id
 
 	refreshStateTime *time.Duration
@@ -90,14 +89,13 @@ func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	h.logger.Debug().Msg("Refreshing Heimdall state")
 
 	h.refreshBlockBuffer()
+	h.refreshValidatorSet()
 	h.refreshMilestone()
 	h.refreshCheckpoint()
 	h.refreshMissedCheckpointProposal()
 	h.refreshMissedBlockProposal()
 	h.refreshSpan()
-	h.refreshValidatorSet()
 	h.refreshMissedVotes()
-	h.refreshMilestoneVotes()
 
 	return nil
 }
@@ -183,11 +181,6 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 			m := observer.NewMessage(h.network, h.label, mv)
 			h.bus.Publish(ctx, topics.MissedVote, m)
 		}
-	}
-
-	for _, mv := range h.milestoneVotes {
-		m := observer.NewMessage(h.network, h.label, mv)
-		h.bus.Publish(ctx, topics.MilestoneVote, m)
 	}
 
 	h.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(h.network, h.label, h.refreshStateTime))
@@ -346,6 +339,10 @@ func (h *HeimdallProvider) refreshMilestone() error {
 
 		milestone := &v2.Milestone
 		milestone.Count = i
+
+		// Find and attach votes for this milestone
+		milestone.Votes = h.findMilestoneVotes(milestone)
+
 		h.milestones = append(h.milestones, milestone)
 	}
 
@@ -757,21 +754,83 @@ func (h *HeimdallProvider) getMilestoneFromVoteExtension(vote *observer.Heimdall
 	vote.MilestoneEnd = mp.StartBlockNumber + uint64(len(mp.BlockHashes)) - 1
 }
 
-func (h *HeimdallProvider) refreshMilestoneVotes() {
-	if h.validatorIDMap == nil {
-		return
+// getBlockHeight estimates the Heimdall block height for a given timestamp.
+// Assumes ~2 second block time.
+func (h *HeimdallProvider) getBlockHeight(target int64) uint64 {
+	if h.blockNumber == 0 {
+		return 0
 	}
 
-	h.milestoneVotes = nil
+	block := h.getBlock(0)
+	if block == nil {
+		return 0
+	}
 
-	h.logger.Debug().Msg("Refreshing milestone votes")
+	curr, err := block.Time()
+	if err != nil {
+		return 0
+	}
 
-	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
-		mv, err := h.getMilestoneVotes(height)
+	// Estimate based on ~2 second block time
+	diff := (int64(curr) - target) / 2
+	if diff < 0 {
+		return 0
+	}
+
+	if uint64(diff) > h.blockNumber {
+		return 0
+	}
+
+	return h.blockNumber - uint64(diff)
+}
+
+// findMilestoneVotes searches for votes matching this milestone's range.
+// Uses the milestone timestamp to estimate the finalization block.
+// Returns the first matching vote block, or nil if not found.
+func (h *HeimdallProvider) findMilestoneVotes(milestone *observer.HeimdallMilestone) *observer.HeimdallMilestoneVotes {
+	if h.validatorIDMap == nil {
+		return nil
+	}
+
+	height := h.getBlockHeight(milestone.Timestamp)
+	if height == 0 {
+		return nil
+	}
+
+	// Search a small window around the estimated height
+	const window = 5
+	start := max(1, height-window)
+	end := min(h.blockNumber, height+window)
+
+	for i := start; i <= end; i++ {
+		mv, err := h.getMilestoneVotes(i)
 		if err != nil {
-			h.logger.Warn().Err(err).Uint64("height", height).Msg("Failed to detect milestone votes")
 			continue
 		}
-		h.milestoneVotes = append(h.milestoneVotes, mv)
+
+		if mv.MilestoneVoters == 0 {
+			continue
+		}
+
+		if h.votesMatchMilestone(mv, milestone) {
+			return mv
+		}
 	}
+
+	return nil
+}
+
+// votesMatchMilestone checks if any vote in the votes matches the milestone's block range.
+func (h *HeimdallProvider) votesMatchMilestone(mv *observer.HeimdallMilestoneVotes, milestone *observer.HeimdallMilestone) bool {
+	for _, vote := range mv.Votes {
+		if !vote.HasMilestone {
+			continue
+		}
+
+		if vote.MilestoneStart == milestone.StartBlock && vote.MilestoneEnd == milestone.EndBlock {
+			return true
+		}
+	}
+
+	return false
 }
