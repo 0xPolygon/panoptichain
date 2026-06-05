@@ -324,7 +324,14 @@ func (h *HeimdallProvider) refreshMilestone() error {
 	currentCount := int64(count.Count)
 	h.milestones = nil
 
-	for i := h.prevMilestoneCount + 1; i <= currentCount; i++ {
+	// On first poll, fetch only the latest milestone to establish baseline.
+	// On subsequent polls, fetch all new milestones in range.
+	start := h.prevMilestoneCount + 1
+	if h.prevMilestoneCount == 0 {
+		start = currentCount
+	}
+
+	for i := start; i <= currentCount; i++ {
 		path, err := url.JoinPath(h.heimdallURL, "milestones", strconv.FormatInt(i, 10))
 		if err != nil {
 			h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone path")
