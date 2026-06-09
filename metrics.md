@@ -224,6 +224,17 @@ Variable Labels:
 - provider
 - signer
 
+### panoptichain_rpc_missed_checkpoint_signature
+Counts the number of times a validator missed signing a checkpoint
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+
 ## ClaimEventObserver
 
 
@@ -455,6 +466,54 @@ Variable Labels:
 The time interval (in seconds) between Heimdall blocks
 
 Metric Type: HistogramVec
+
+Variable Labels:
+- network
+- provider
+
+## HeimdallBufferedCheckpointObserver
+
+
+### panoptichain_heimdall_buffered_checkpoint_exists
+Whether a buffered checkpoint exists (0 or 1)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_buffered_checkpoint_id
+Checkpoint ID of the buffered checkpoint (0 if none)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_buffered_checkpoint_start_block
+Start block of the buffered checkpoint (0 if none)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_buffered_checkpoint_end_block
+End block of the buffered checkpoint (0 if none)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_time_since_buffered_checkpoint
+Seconds since buffered checkpoint was created (0 if none)
+
+Metric Type: GaugeVec
 
 Variable Labels:
 - network
