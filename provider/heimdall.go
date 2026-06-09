@@ -58,6 +58,9 @@ type HeimdallProvider struct {
 	validatorIDMap map[string]uint64 // normalized signer_address -> val_id
 
 	refreshStateTime *time.Duration
+
+	bufferedCheckpoint      *observer.HeimdallCheckpoint
+	validatorSetRefreshTime time.Time
 }
 
 func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.HeimdallEndpoint) *HeimdallProvider {
@@ -92,6 +95,7 @@ func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	h.refreshValidatorSet()
 	h.refreshMilestone()
 	h.refreshCheckpoint()
+	h.refreshBufferedCheckpoint()
 	h.refreshMissedCheckpointProposal()
 	h.refreshMissedBlockProposal()
 	h.refreshSpan()
@@ -175,6 +179,18 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		m := observer.NewMessage(h.network, h.label, h.validatorSets)
 		h.bus.Publish(ctx, topics.ValidatorSet, m)
 	}
+
+	// Only publish refresh metrics after first successful validator set fetch
+	if h.validatorSets.Curr != nil && !h.validatorSetRefreshTime.IsZero() {
+		refresh := &observer.HeimdallValidatorSetRefresh{
+			RefreshTime: h.validatorSetRefreshTime,
+			Size:        len(h.validatorSets.Curr),
+		}
+		h.bus.Publish(ctx, topics.ValidatorSetRefresh, observer.NewMessage(h.network, h.label, refresh))
+	}
+
+	// Always publish buffered checkpoint (observer handles nil)
+	h.bus.Publish(ctx, topics.BufferedCheckpoint, observer.NewMessage(h.network, h.label, h.bufferedCheckpoint))
 
 	for _, mv := range h.missedVotes {
 		if mv.MissingCount > 0 {
@@ -290,7 +306,7 @@ func (h *HeimdallProvider) fillRange(start uint64) {
 		Uint64("end_block", h.blockNumber).
 		Msg("Filling block range")
 
-	for i := start + 1; i <= h.blockNumber; i++ {
+	for i := start; i <= h.blockNumber; i++ {
 		block := h.getBlock(i)
 		if block == nil {
 			h.logger.Warn().Uint64("block_number", i).Msg("Failed to get block")
@@ -364,6 +380,30 @@ func (h *HeimdallProvider) refreshCheckpoint() error {
 	}
 
 	h.checkpoint = &v2.Checkpoint
+
+	return nil
+}
+
+func (h *HeimdallProvider) refreshBufferedCheckpoint() error {
+	path, err := url.JoinPath(h.heimdallURL, "checkpoints", "buffer")
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall buffered checkpoint path")
+		return err
+	}
+
+	var v2 observer.HeimdallCheckpointV2
+	if err = api.GetJSON(path, &v2); err != nil {
+		h.logger.Warn().Err(err).Msg("Failed to get Heimdall buffered checkpoint")
+		h.bufferedCheckpoint = nil
+		return err
+	}
+
+	// API returns zero ID when no buffered checkpoint exists
+	if v2.Checkpoint.ID == 0 {
+		h.bufferedCheckpoint = nil
+	} else {
+		h.bufferedCheckpoint = &v2.Checkpoint
+	}
 
 	return nil
 }
@@ -561,6 +601,7 @@ func (h *HeimdallProvider) refreshValidatorSet() error {
 	}
 	h.validatorSets.Curr = curr
 	h.validatorIDMap = ids
+	h.validatorSetRefreshTime = time.Now()
 
 	return nil
 }
