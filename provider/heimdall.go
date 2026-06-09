@@ -59,8 +59,7 @@ type HeimdallProvider struct {
 
 	refreshStateTime *time.Duration
 
-	bufferedCheckpoint      *observer.HeimdallCheckpoint
-	validatorSetRefreshTime time.Time
+	bufferedCheckpoint *observer.HeimdallCheckpoint
 }
 
 func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.HeimdallEndpoint) *HeimdallProvider {
@@ -178,15 +177,6 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 	if h.validatorSets != nil {
 		m := observer.NewMessage(h.network, h.label, h.validatorSets)
 		h.bus.Publish(ctx, topics.ValidatorSet, m)
-	}
-
-	// Only publish refresh metrics after first successful validator set fetch
-	if h.validatorSets.Curr != nil && !h.validatorSetRefreshTime.IsZero() {
-		refresh := &observer.HeimdallValidatorSetRefresh{
-			RefreshTime: h.validatorSetRefreshTime,
-			Size:        len(h.validatorSets.Curr),
-		}
-		h.bus.Publish(ctx, topics.ValidatorSetRefresh, observer.NewMessage(h.network, h.label, refresh))
 	}
 
 	// Always publish buffered checkpoint (observer handles nil)
@@ -601,7 +591,6 @@ func (h *HeimdallProvider) refreshValidatorSet() error {
 	}
 	h.validatorSets.Curr = curr
 	h.validatorIDMap = ids
-	h.validatorSetRefreshTime = time.Now()
 
 	return nil
 }

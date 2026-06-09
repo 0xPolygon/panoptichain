@@ -757,53 +757,6 @@ func (o *HeimdallMissedVoteObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.consensus}
 }
 
-// HeimdallValidatorSetRefresh contains metadata about the latest validator set refresh.
-type HeimdallValidatorSetRefresh struct {
-	RefreshTime time.Time
-	Size        int
-}
-
-// HeimdallValidatorSetRefreshObserver tracks validator set refresh metrics.
-type HeimdallValidatorSetRefreshObserver struct {
-	lastRefreshTimestamp *prometheus.GaugeVec
-	refreshAge           *prometheus.GaugeVec
-	validatorCount       *prometheus.GaugeVec
-}
-
-func (o *HeimdallValidatorSetRefreshObserver) Register(eb *EventBus) {
-	eb.Subscribe(topics.ValidatorSetRefresh, o)
-
-	o.lastRefreshTimestamp = metrics.NewGauge(
-		metrics.Heimdall,
-		"validator_set_last_refresh_timestamp",
-		"Unix timestamp of last validator set refresh",
-	)
-	o.refreshAge = metrics.NewGauge(
-		metrics.Heimdall,
-		"validator_set_refresh_age_seconds",
-		"How stale the validator set data is (in seconds)",
-	)
-	o.validatorCount = metrics.NewGauge(
-		metrics.Heimdall,
-		"validator_set_count",
-		"Number of active validators in the set",
-	)
-}
-
-func (o *HeimdallValidatorSetRefreshObserver) Notify(ctx context.Context, m Message) {
-	data := m.Data().(*HeimdallValidatorSetRefresh)
-	network := m.Network().GetName()
-	provider := m.Provider()
-
-	o.lastRefreshTimestamp.WithLabelValues(network, provider).Set(float64(data.RefreshTime.Unix()))
-	o.refreshAge.WithLabelValues(network, provider).Set(time.Since(data.RefreshTime).Seconds())
-	o.validatorCount.WithLabelValues(network, provider).Set(float64(data.Size))
-}
-
-func (o *HeimdallValidatorSetRefreshObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.lastRefreshTimestamp, o.refreshAge, o.validatorCount}
-}
-
 // HeimdallBufferedCheckpointObserver tracks buffered checkpoint metrics.
 type HeimdallBufferedCheckpointObserver struct {
 	exists     *prometheus.GaugeVec

@@ -49,5 +49,4 @@ const (
 	ZkEVMBatches                                       // observer.ZkEVMBatches
 	StakingEvents                                      // *observer.StakingEvents
 	BufferedCheckpoint                                 // *observer.HeimdallCheckpoint (nil if no buffered checkpoint)
-	ValidatorSetRefresh                                // *observer.HeimdallValidatorSetRefresh
 )
