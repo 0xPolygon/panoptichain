@@ -756,3 +756,72 @@ func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
 func (o *HeimdallMissedVoteObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.consensus}
 }
+
+// HeimdallBufferedCheckpointObserver tracks buffered checkpoint metrics.
+type HeimdallBufferedCheckpointObserver struct {
+	exists     *prometheus.GaugeVec
+	id         *prometheus.GaugeVec
+	startBlock *prometheus.GaugeVec
+	endBlock   *prometheus.GaugeVec
+	timeSince  *prometheus.GaugeVec
+}
+
+func (o *HeimdallBufferedCheckpointObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.BufferedCheckpoint, o)
+
+	o.exists = metrics.NewGauge(
+		metrics.Heimdall,
+		"buffered_checkpoint_exists",
+		"Whether a buffered checkpoint exists (0 or 1)",
+	)
+	o.id = metrics.NewGauge(
+		metrics.Heimdall,
+		"buffered_checkpoint_id",
+		"Checkpoint ID of the buffered checkpoint (0 if none)",
+	)
+	o.startBlock = metrics.NewGauge(
+		metrics.Heimdall,
+		"buffered_checkpoint_start_block",
+		"Start block of the buffered checkpoint (0 if none)",
+	)
+	o.endBlock = metrics.NewGauge(
+		metrics.Heimdall,
+		"buffered_checkpoint_end_block",
+		"End block of the buffered checkpoint (0 if none)",
+	)
+	o.timeSince = metrics.NewGauge(
+		metrics.Heimdall,
+		"time_since_buffered_checkpoint",
+		"Seconds since buffered checkpoint was created (0 if none)",
+	)
+}
+
+func (o *HeimdallBufferedCheckpointObserver) Notify(ctx context.Context, m Message) {
+	checkpoint := m.Data().(*HeimdallCheckpoint)
+	network := m.Network().GetName()
+	provider := m.Provider()
+
+	if checkpoint == nil {
+		o.exists.WithLabelValues(network, provider).Set(0)
+		o.id.WithLabelValues(network, provider).Set(0)
+		o.startBlock.WithLabelValues(network, provider).Set(0)
+		o.endBlock.WithLabelValues(network, provider).Set(0)
+		o.timeSince.WithLabelValues(network, provider).Set(0)
+		return
+	}
+
+	o.exists.WithLabelValues(network, provider).Set(1)
+	o.id.WithLabelValues(network, provider).Set(float64(checkpoint.ID))
+	o.startBlock.WithLabelValues(network, provider).Set(float64(checkpoint.StartBlock))
+	o.endBlock.WithLabelValues(network, provider).Set(float64(checkpoint.EndBlock))
+
+	var timeSince float64
+	if checkpoint.Timestamp != 0 {
+		timeSince = time.Since(time.Unix(int64(checkpoint.Timestamp), 0)).Seconds()
+	}
+	o.timeSince.WithLabelValues(network, provider).Set(timeSince)
+}
+
+func (o *HeimdallBufferedCheckpointObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.exists, o.id, o.startBlock, o.endBlock, o.timeSince}
+}

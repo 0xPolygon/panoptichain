@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -581,10 +582,11 @@ type CheckpointSignatures struct {
 }
 
 type CheckpointObserver struct {
-	checkpointID            *prometheus.GaugeVec
-	checkpointSignatures    *prometheus.GaugeVec
-	timeSinceLastCheckpoint *prometheus.GaugeVec
-	signedCheckpoint        *prometheus.CounterVec
+	checkpointID              *prometheus.GaugeVec
+	checkpointSignatures      *prometheus.GaugeVec
+	timeSinceLastCheckpoint   *prometheus.GaugeVec
+	signedCheckpoint          *prometheus.CounterVec
+	missedCheckpointSignature *prometheus.CounterVec
 }
 
 func (o *CheckpointObserver) Register(eb *EventBus) {
@@ -613,9 +615,16 @@ func (o *CheckpointObserver) Register(eb *EventBus) {
 		"Counts the number of times a validator has signed a checkpoint",
 		"signer",
 	)
+	o.missedCheckpointSignature = metrics.NewCounter(
+		metrics.RPC,
+		"missed_checkpoint_signature",
+		"Counts the number of times a validator missed signing a checkpoint",
+		"validator_id", "signer_address",
+	)
 }
 
 func (o *CheckpointObserver) Notify(ctx context.Context, m Message) {
+	logger := NewLogger(o, m)
 	cs := m.Data().(*CheckpointSignatures)
 	finalized := fmt.Sprint(cs.Finalized)
 
@@ -635,6 +644,28 @@ func (o *CheckpointObserver) Notify(ctx context.Context, m Message) {
 	for _, signer := range cs.Signers {
 		o.signedCheckpoint.WithLabelValues(m.Network().GetName(), m.Provider(), signer.Hex()).Inc()
 	}
+
+	// Track validators who missed signing this checkpoint
+	signers, err := api.Signers(m.Network())
+	if err != nil {
+		logger.Warn().Err(err).Msg("Failed to get signers for missed checkpoint tracking")
+		return
+	}
+
+	// Build set of who signed (normalized to lowercase)
+	signedSet := make(map[string]struct{}, len(cs.Signers))
+	for _, signer := range cs.Signers {
+		signedSet[strings.ToLower(signer.Hex())] = struct{}{}
+	}
+
+	// Find validators who didn't sign
+	for addr, validator := range signers {
+		if _, signed := signedSet[strings.ToLower(addr)]; signed {
+			continue
+		}
+		validatorID := strconv.FormatUint(validator.ID, 10)
+		o.missedCheckpointSignature.WithLabelValues(m.Network().GetName(), m.Provider(), validatorID, addr).Inc()
+	}
 }
 
 func (o *CheckpointObserver) GetCollectors() []prometheus.Collector {
@@ -643,6 +674,7 @@ func (o *CheckpointObserver) GetCollectors() []prometheus.Collector {
 		o.checkpointSignatures,
 		o.timeSinceLastCheckpoint,
 		o.signedCheckpoint,
+		o.missedCheckpointSignature,
 	}
 }
 
