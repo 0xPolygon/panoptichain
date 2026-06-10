@@ -32,6 +32,7 @@ func GetJSON(url string, target any) error {
 		return err
 	}
 	req.Header.Set("Cache-Control", "no-cache, no-store")
+	req.Header.Set("Pragma", "no-cache")
 
 	r, err := client.Do(req)
 	if err != nil {
