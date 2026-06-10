@@ -20,6 +20,7 @@ import (
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/contracts"
 	"github.com/0xPolygon/panoptichain/metrics"
+	"github.com/0xPolygon/panoptichain/network"
 	"github.com/0xPolygon/panoptichain/observer/topics"
 	"github.com/0xPolygon/panoptichain/util"
 )
@@ -645,8 +646,23 @@ func (o *CheckpointObserver) Notify(ctx context.Context, m Message) {
 		o.signedCheckpoint.WithLabelValues(m.Network().GetName(), m.Provider(), signer.Hex()).Inc()
 	}
 
-	// Track validators who missed signing this checkpoint
-	signers, err := api.Signers(m.Network())
+	// Track validators who missed signing this checkpoint.
+	// Checkpoints are submitted to L1 but signed by Polygon PoS validators,
+	// so we need to map L1 network to corresponding L2 PoS network.
+	var n network.Network
+	switch m.Network().GetName() {
+	case network.EthereumName:
+		n = &network.PolygonMainnet
+	case network.SepoliaName:
+		n = &network.PolygonAmoy
+	default:
+		logger.Warn().
+			Str("network", m.Network().GetName()).
+			Msg("No Polygon PoS network mapping for L1 network")
+		return
+	}
+
+	signers, err := api.Signers(n)
 	if err != nil {
 		logger.Warn().Err(err).Msg("Failed to get signers for missed checkpoint tracking")
 		return
