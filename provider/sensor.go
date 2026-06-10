@@ -25,6 +25,12 @@ import (
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
+// blockBufferSize is the maximum number of blocks kept in the provider's block
+// buffer. It also bounds how far back a single poll will backfill: there is no
+// point querying more blocks than the buffer can hold, since the oldest are
+// evicted immediately anyway.
+const blockBufferSize = 512
+
 type SensorNetworkProvider struct {
 	network  network.Network
 	label    string
@@ -166,10 +172,37 @@ func (s *SensorNetworkProvider) refreshBlockBuffer(ctx context.Context) error {
 		Msg("Refreshing sensor network block state")
 
 	if s.prevBlockNumber != 0 && s.prevBlockNumber != s.blockNumber {
-		s.fillRange(ctx, s.prevBlockNumber)
+		s.fillRange(ctx, s.clampStart(s.prevBlockNumber))
 	}
 
 	return nil
+}
+
+// clampStart bounds the backfill start block so we never issue a Datastore range
+// query spanning a huge gap. After a freeze and recovery (e.g. the sensor node
+// is restarted), blockNumber can jump far ahead of the previous value; querying
+// that entire mostly-empty range is expensive and was a factor in turning a node
+// blip into a prolonged outage. We clamp to at most blockBufferSize blocks behind
+// the head (querying more is pointless since the buffer would evict them) and
+// log how many blocks are skipped so the gap stays visible.
+func (s *SensorNetworkProvider) clampStart(start uint64) uint64 {
+	if s.blockNumber <= blockBufferSize {
+		return start
+	}
+
+	minStart := s.blockNumber - blockBufferSize
+	if minStart <= start {
+		return start
+	}
+
+	s.logger.Warn().
+		Uint64("prev_block_number", s.prevBlockNumber).
+		Uint64("block_number", s.blockNumber).
+		Uint64("skipped_blocks", minStart-start).
+		Uint64("block_buffer_size", blockBufferSize).
+		Msg("Block gap exceeds buffer size; clamping sensor backfill range")
+
+	return minStart
 }
 
 func (s *SensorNetworkProvider) fillRange(ctx context.Context, start uint64) {
@@ -199,8 +232,13 @@ func (s *SensorNetworkProvider) fillRange(ctx context.Context, start uint64) {
 			break
 		}
 		if err != nil {
+			// A Datastore iterator error is terminal: subsequent calls to
+			// iter.Next return the same error. Break instead of continuing (as
+			// rpc.go and heimdall.go do on a fetch error) so a failing query
+			// can't spin into an unbounded hot loop that floods logs and wedges
+			// the provider goroutine.
 			s.logger.Warn().Err(err).Msg("Failed to get next block")
-			continue
+			break
 		}
 
 		wg.Go(func() {
@@ -215,7 +253,7 @@ func (s *SensorNetworkProvider) fillRange(ctx context.Context, start uint64) {
 
 		// Only keep a certain amount of blocks in the buffer. Remove the oldest
 		// block if it is full.
-		if s.blocks.Len() >= 512 {
+		if s.blocks.Len() >= blockBufferSize {
 			s.blocks.Remove(s.blocks.Front())
 		}
 
