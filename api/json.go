@@ -26,7 +26,15 @@ func (e *HTTPError) Error() string {
 // target variable.
 func GetJSON(url string, target any) error {
 	client := &http.Client{Timeout: 10 * time.Second}
-	r, err := client.Get(url)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Cache-Control", "no-cache, no-store")
+	req.Header.Set("Pragma", "no-cache")
+
+	r, err := client.Do(req)
 	if err != nil {
 		return err
 	}
