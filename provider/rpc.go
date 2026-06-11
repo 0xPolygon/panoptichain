@@ -36,22 +36,22 @@ import (
 
 // RPCProvider is the generic struct for all EVM style JSON RPC services.
 type RPCProvider struct {
-	url              string
-	network          network.Network
-	label            string
-	bus              *observer.EventBus
-	interval         time.Duration
-	logger           zerolog.Logger
-	blockNumber      uint64
-	prevBlockNumber  uint64
-	finalizedHeight  uint64
-	blockBuffer      *blockbuffer.BlockBuffer
-	txPool           *observer.TransactionPool
-	refreshStateTime *time.Duration
-	contracts        config.Contracts
-	timeToMine       *config.TimeToMine
-	accounts         []config.Account
-	accountBalances  observer.AccountBalances
+	url                    string
+	network                network.Network
+	label                  string
+	bus                    *observer.EventBus
+	interval               time.Duration
+	logger                 zerolog.Logger
+	blockNumber            uint64
+	prevBlockNumber        uint64
+	finalizedHeight        uint64
+	blockBuffer            *blockbuffer.BlockBuffer
+	txPool                 *observer.TransactionPool
+	refreshStateTime       *time.Duration
+	contracts              config.Contracts
+	timeToMine             *config.TimeToMine
+	accounts               []config.Account
+	accountBalances        observer.AccountBalances
 	accountTxs             observer.AccountTxs
 	timeToFinalized        *uint64
 	blockLookBack          uint64
@@ -62,12 +62,17 @@ type RPCProvider struct {
 	// PoS
 	stateSync            map[bool]*observer.StateSync
 	checkpointSignatures map[bool]*observer.CheckpointSignatures
-	validatorBalances    observer.ValidatorWalletBalances
-	missedBlockProposal  observer.MissedBlockProposal
-	stakeManager         *observer.StakeManager
-	sPOLController       *observer.SPOLController
-	stakingEvents        *observer.StakingEvents
-	stakingInfoAddress   *common.Address
+	// prevCheckpointID is the header block ID of the most recent checkpoint
+	// whose signatures were counted. Checkpoints are republished on every poll
+	// cycle, so this lets us mark republishes as seen and fire the counters
+	// once per checkpoint.
+	prevCheckpointID    *big.Int
+	validatorBalances   observer.ValidatorWalletBalances
+	missedBlockProposal observer.MissedBlockProposal
+	stakeManager        *observer.StakeManager
+	sPOLController      *observer.SPOLController
+	stakingEvents       *observer.StakingEvents
+	stakingInfoAddress  *common.Address
 
 	// zkEVM
 	batches        observer.ZkEVMBatches
@@ -700,8 +705,14 @@ func (r *RPCProvider) refreshCheckpoint(ctx context.Context, c *ethclient.Client
 		event = iter.Event
 	}
 
-	if event == nil {
-		r.logger.Debug().Msg("No NewHeaderBlock events found")
+	// A new checkpoint is not always present: between checkpoints the scan window
+	// contains no event, and the same checkpoint can be re-found before the next
+	// one arrives. In both cases there is nothing new to record, so skip the
+	// expensive block and transaction lookups below.
+	if r.seenCheckpoint(event) {
+		if event != nil {
+			r.refreshFinalizedCheckpoint(ctx, c)
+		}
 		return
 	}
 
@@ -761,16 +772,43 @@ func (r *RPCProvider) refreshCheckpoint(ctx context.Context, c *ethclient.Client
 
 	r.refreshFinalizedCheckpoint(ctx, c)
 
+	// This is a checkpoint we have not counted before (seenCheckpoint returned
+	// false above), so record its ID and store it unseen for the observer to
+	// count.
 	finalized := false
-	cs := r.checkpointSignatures[finalized]
-	seen := cs != nil && event.HeaderBlockId.Cmp(cs.Event.HeaderBlockId) == 0
+	r.prevCheckpointID = new(big.Int).Set(event.HeaderBlockId)
 	r.checkpointSignatures[finalized] = &observer.CheckpointSignatures{
 		Event:     event,
 		Block:     block,
 		Signers:   signers,
-		Seen:      seen,
+		Seen:      false,
 		Finalized: finalized,
 	}
+}
+
+// seenCheckpoint reports whether the latest observed checkpoint has already been
+// counted. event is the latest NewHeaderBlock event in the scan window, or nil
+// if none was found. A checkpoint is new when an event is present whose header
+// block ID differs from the last one we recorded; in that case the caller must
+// fetch its signatures and store it.
+//
+// Checkpoints are republished on every poll cycle, so when the checkpoint has
+// already been counted — no new event, or the same header block ID — this marks
+// the stored entry seen so the observer does not re-count its signatures. The
+// entry is replaced with a fresh copy rather than mutated because the previous
+// pointer may still be in flight in an observer goroutine.
+func (r *RPCProvider) seenCheckpoint(event *contracts.RootChainNewHeaderBlock) bool {
+	if event != nil && (r.prevCheckpointID == nil || event.HeaderBlockId.Cmp(r.prevCheckpointID) != 0) {
+		return false
+	}
+
+	if prev := r.checkpointSignatures[false]; prev != nil && !prev.Seen {
+		cp := *prev
+		cp.Seen = true
+		r.checkpointSignatures[false] = &cp
+	}
+
+	return true
 }
 
 func (r *RPCProvider) refreshFinalizedCheckpoint(ctx context.Context, c *ethclient.Client) {
