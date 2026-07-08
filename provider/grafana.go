@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/0xPolygon/panoptichain/api"
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/network"
 	"github.com/0xPolygon/panoptichain/observer"
@@ -36,19 +37,18 @@ func NewGrafanaProvider(n network.Network, eb *observer.EventBus, cfg config.Gra
 	}
 }
 
-func (g *GrafanaProvider) RefreshState(context.Context) error {
+func (g *GrafanaProvider) RefreshState(ctx context.Context) error {
 	defer timer(g.refreshStateTime)()
 
 	payload := []byte(`{"intervalMs":10000}`)
-	req, err := http.NewRequest("POST", g.url, bytes.NewBuffer(payload))
+	req, err := http.NewRequestWithContext(ctx, "POST", g.url, bytes.NewBuffer(payload))
 	if err != nil {
 		return err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := api.HTTPClient().Do(req)
 	if err != nil {
 		return err
 	}

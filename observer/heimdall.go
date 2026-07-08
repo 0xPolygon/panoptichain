@@ -255,11 +255,22 @@ type HeimdallMilestoneV2 struct {
 	Milestone HeimdallMilestone `json:"milestone"`
 }
 
+// HeimdallLatestMilestone carries the current tip milestone. It is published
+// every cycle (independent of the per-milestone backlog stream) so the
+// freshness gauges reflect the true latest milestone and can never lag behind a
+// slow catch-up. Skipped is the number of milestones dropped this cycle by the
+// catch-up cap.
+type HeimdallLatestMilestone struct {
+	*HeimdallMilestone
+	Skipped int64
+}
+
 type MilestoneObserver struct {
 	time       *prometheus.GaugeVec
 	count      *prometheus.GaugeVec
 	startBlock *prometheus.GaugeVec
 	endBlock   *prometheus.GaugeVec
+	skipped    *prometheus.CounterVec
 	observed   *prometheus.CounterVec
 	proposed   *prometheus.CounterVec
 	blockRange *prometheus.HistogramVec
@@ -272,17 +283,31 @@ type MilestoneObserver struct {
 }
 
 func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
-	logger := NewLogger(o, m)
-	milestone := m.Data().(*HeimdallMilestone)
 	network := m.Network().GetName()
 	provider := m.Provider()
 
-	seconds := time.Since(time.Unix(milestone.Timestamp, 0)).Seconds()
+	// The tip milestone drives the freshness gauges. It is published every
+	// cycle before the backlog is drained, so these gauges always reflect the
+	// latest milestone and never lag behind a slow catch-up.
+	if latest, ok := m.Data().(*HeimdallLatestMilestone); ok {
+		if latest.HeimdallMilestone == nil {
+			return
+		}
+		seconds := time.Since(time.Unix(latest.Timestamp, 0)).Seconds()
+		o.time.WithLabelValues(network, provider).Set(seconds)
+		o.count.WithLabelValues(network, provider).Set(float64(latest.Count))
+		o.startBlock.WithLabelValues(network, provider).Set(float64(latest.StartBlock))
+		o.endBlock.WithLabelValues(network, provider).Set(float64(latest.EndBlock))
+		if latest.Skipped > 0 {
+			o.skipped.WithLabelValues(network, provider).Add(float64(latest.Skipped))
+		}
+		return
+	}
 
-	o.count.WithLabelValues(network, provider).Set(float64(milestone.Count))
-	o.time.WithLabelValues(network, provider).Set(float64(seconds))
-	o.startBlock.WithLabelValues(network, provider).Set(float64(milestone.StartBlock))
-	o.endBlock.WithLabelValues(network, provider).Set(float64(milestone.EndBlock))
+	// The per-milestone stream drives count/vote accounting. It gaps during
+	// catch-up (see refreshMilestone), which is acceptable.
+	logger := NewLogger(o, m)
+	milestone := m.Data().(*HeimdallMilestone)
 
 	o.observed.WithLabelValues(network, provider).Inc()
 	o.proposed.WithLabelValues(network, provider, milestone.Proposer).Inc()
@@ -328,11 +353,13 @@ func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 
 func (o *MilestoneObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.Milestone, o)
+	eb.Subscribe(topics.MilestoneLatest, o)
 
 	o.time = metrics.NewGauge(metrics.Heimdall, "time_since_last_milestone", "The time since last milestone")
 	o.count = metrics.NewGauge(metrics.Heimdall, "milestone_count", "The milestone count")
 	o.startBlock = metrics.NewGauge(metrics.Heimdall, "milestone_start_block", "The milestone start block")
 	o.endBlock = metrics.NewGauge(metrics.Heimdall, "milestone_end_block", "The milestone end block")
+	o.skipped = metrics.NewCounter(metrics.Heimdall, "milestone_skipped", "The number of milestones skipped during catch-up")
 	o.observed = metrics.NewCounter(metrics.Heimdall, "milestone_observed", "The number of milestones observed")
 	o.proposed = metrics.NewCounter(metrics.Heimdall, "milestone_proposed", "Milestones proposed by validator", "proposer")
 	o.blockRange = metrics.NewHistogram(
@@ -378,6 +405,7 @@ func (o *MilestoneObserver) GetCollectors() []prometheus.Collector {
 		o.count,
 		o.startBlock,
 		o.endBlock,
+		o.skipped,
 		o.observed,
 		o.proposed,
 		o.blockRange,

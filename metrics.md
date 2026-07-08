@@ -663,6 +663,15 @@ Variable Labels:
 - network
 - provider
 
+### panoptichain_heimdall_milestone_skipped
+The number of milestones skipped during catch-up
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+
 ### panoptichain_heimdall_milestone_observed
 The number of milestones observed
 

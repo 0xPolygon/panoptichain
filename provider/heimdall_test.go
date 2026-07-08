@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -62,7 +63,7 @@ func TestRefreshSpan_Bootstrap(t *testing.T) {
 
 	h := newProvider(server.URL, nil)
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -87,7 +88,7 @@ func TestRefreshSpan_Sequential(t *testing.T) {
 
 	h := newProvider(server.URL, newSpan(100, 1000, 1099))
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -115,7 +116,7 @@ func TestRefreshSpan_NextSpanNotAvailable(t *testing.T) {
 	h := newProvider(server.URL, newSpan(100, 1000, 1099))
 	originalCurr := h.spans.Curr
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -138,7 +139,7 @@ func TestRefreshSpan_DetectsOverlappingSpans(t *testing.T) {
 
 	h := newProvider(server.URL, newSpan(100, 1000, 1099))
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -166,7 +167,7 @@ func TestRefreshSpan_GapFillsOneAtATime(t *testing.T) {
 	h := newProvider(server.URL, newSpan(100, 1000, 1099))
 
 	// First call: should advance from 100 to 101 only
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 	if h.spans.Curr.ID != 101 {
@@ -177,7 +178,7 @@ func TestRefreshSpan_GapFillsOneAtATime(t *testing.T) {
 	}
 
 	// Second call: should advance from 101 to 102
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 	if h.spans.Curr.ID != 102 {
@@ -188,7 +189,7 @@ func TestRefreshSpan_GapFillsOneAtATime(t *testing.T) {
 	}
 
 	// Third call: should advance from 102 to 103
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 	if h.spans.Curr.ID != 103 {
@@ -200,7 +201,7 @@ func TestRefreshSpan_GapFillsOneAtATime(t *testing.T) {
 
 	// Fourth call: should not advance (already at latest)
 	prevCurr := h.spans.Curr
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 	if h.spans.Curr != prevCurr {
@@ -218,7 +219,7 @@ func TestFetchSpan_RejectsZeroValueSpan(t *testing.T) {
 	defer server.Close()
 
 	h := newProvider(server.URL, nil)
-	_, err := h.fetchSpan("latest")
+	_, err := h.fetchSpan(context.Background(), "latest")
 
 	if err == nil {
 		t.Fatal("expected error for zero-value span, got nil")
@@ -238,7 +239,7 @@ func TestFetchSpan_AcceptsValidSpanZero(t *testing.T) {
 	defer server.Close()
 
 	h := newProvider(server.URL, nil)
-	span, err := h.fetchSpan("0")
+	span, err := h.fetchSpan(context.Background(), "0")
 
 	if err != nil {
 		t.Fatalf("expected no error for valid span 0, got: %v", err)
@@ -263,7 +264,7 @@ func TestRefreshSpan_ExcessiveLagJumpsToLatest(t *testing.T) {
 	// With maxSpanLag = 5, should jump to latest
 	h := newProviderWithMaxLag(server.URL, newSpan(100, 10000, 10099), 5)
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -287,7 +288,7 @@ func TestRefreshSpan_WithinLagWalksSequentially(t *testing.T) {
 	// With maxSpanLag = 10, should walk sequentially
 	h := newProviderWithMaxLag(server.URL, newSpan(100, 10000, 10099), 10)
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -312,7 +313,7 @@ func TestRefreshSpan_ExactLagThresholdWalksSequentially(t *testing.T) {
 	// With maxSpanLag = 10, should walk sequentially (lag is not > maxSpanLag)
 	h := newProviderWithMaxLag(server.URL, newSpan(100, 10000, 10099), 10)
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
