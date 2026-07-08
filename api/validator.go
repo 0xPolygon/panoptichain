@@ -106,9 +106,10 @@ func GetValidators(basePath string) ([]Validator, error) {
 	}
 
 	var body ValidatorSet
-	// TODO: thread the caller's context here (wave 2). This validator set is
-	// cached for an hour, so it rarely hits the network; use a background
-	// context as a documented seam until callers are made context-aware.
+	// This validator set is cached for an hour, so it rarely hits the network.
+	// A background context is used as a deliberate seam: the callers of
+	// GetValidators are not yet context-aware, so there is no caller context to
+	// thread through here.
 	if err := GetJSON(context.Background(), path, &body); err != nil {
 		return nil, err
 	}
