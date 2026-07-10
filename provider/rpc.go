@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	ethabi "github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -1136,31 +1137,195 @@ func (r *RPCProvider) sendTransaction(ctx context.Context, c *ethclient.Client, 
 	return nil
 }
 
+// accountBalanceBatchSize bounds how many balance lookups go in a single JSON-RPC
+// batch. Fetching one account at a time turned RefreshState into thousands of
+// serial round-trips once large account groups (e.g. the relayer fleets) were
+// attached, which starved the block-height read and made this provider fall
+// behind the "RPC is out of sync" monitor. Batching collapses N accounts into
+// N/batch round-trips.
+//
+// 1000 is the practical maximum: some gateways reject JSON-RPC batches larger
+// than 1000 (verified against the prod endpoint — batches of 1000 succeed for
+// both eth_getBalance and eth_call, 1001+ are rejected). Providers with a lower
+// limit will surface it as a batch error and the cycle continues.
+const accountBalanceBatchSize = 1000
+
 func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.Client) {
-	co := &bind.CallOpts{Context: ctx}
+	if len(r.accounts) == 0 {
+		return
+	}
 
-	for _, account := range r.accounts {
-		address := common.HexToAddress(account.Address)
-
-		ab := &observer.AccountBalance{
-			Address: address,
+	// Build one balance per account up front. Batch responses are scattered back
+	// into this slice, which is the single source of truth for both the account
+	// address and its fetched balances.
+	balances := make([]*observer.AccountBalance, len(r.accounts))
+	for i, account := range r.accounts {
+		balances[i] = &observer.AccountBalance{
+			Address: common.HexToAddress(account.Address),
 			Tag:     account.Tag,
 		}
-
-		eth, err := c.BalanceAt(ctx, address, nil)
-		if err != nil || eth == nil {
-			r.logger.Error().Err(err).
-				Any("address", address).
-				Str("token", observer.ETH).
-				Msg("Failed to get balance")
-		} else {
-			ab.ETH = eth
-		}
-
-		ab.POL = r.getPOL(c, address, co, nil)
-
-		r.accountBalances = append(r.accountBalances, ab)
 	}
+
+	r.fetchETHBalances(ctx, c, balances)
+	r.fetchPOLBalances(ctx, c, balances)
+
+	r.accountBalances = append(r.accountBalances, balances...)
+}
+
+// fetchETHBalances fills the ETH balance for each account using batched
+// eth_getBalance calls.
+func (r *RPCProvider) fetchETHBalances(ctx context.Context, c *ethclient.Client, balances []*observer.AccountBalance) {
+	for start := 0; start < len(balances); start += accountBalanceBatchSize {
+		if ctx.Err() != nil {
+			return
+		}
+		batch := balances[start:min(start+accountBalanceBatchSize, len(balances))]
+
+		reqs := ethBalanceBatch(batch)
+		if err := c.Client().BatchCallContext(ctx, reqs); err != nil {
+			r.logger.Warn().Err(err).Msg("Failed to execute batch request for account ETH balances")
+			continue
+		}
+		r.applyETHBalances(reqs, batch)
+	}
+}
+
+// ethBalanceBatch builds an eth_getBalance batch request, one element per account.
+func ethBalanceBatch(balances []*observer.AccountBalance) []rpc.BatchElem {
+	reqs := make([]rpc.BatchElem, 0, len(balances))
+	for _, b := range balances {
+		reqs = append(reqs, rpc.BatchElem{
+			Method: "eth_getBalance",
+			Args:   []any{b.Address, "latest"},
+			Result: new(json.RawMessage),
+		})
+	}
+	return reqs
+}
+
+// applyETHBalances scatters a batch response into the accounts it targeted, where
+// request j maps to balances[j].
+func (r *RPCProvider) applyETHBalances(reqs []rpc.BatchElem, balances []*observer.AccountBalance) {
+	for j, req := range reqs {
+		eth, err := decodeBalanceResult(req)
+		if err != nil {
+			r.logger.Error().Err(err).Any("address", balances[j].Address).Str("token", observer.ETH).Msg("Failed to get balance")
+			continue
+		}
+		balances[j].ETH = eth
+	}
+}
+
+// decodeBalanceResult decodes a single eth_getBalance batch response.
+func decodeBalanceResult(req rpc.BatchElem) (*big.Int, error) {
+	hexStr, err := batchResultHex(req)
+	if err != nil {
+		return nil, err
+	}
+	return hexutil.DecodeBig(hexStr)
+}
+
+// fetchPOLBalances fills the POL (ERC20) balance for each account using batched
+// eth_call balanceOf requests. On any per-account failure the balance is left
+// nil, matching the previous per-account behaviour.
+func (r *RPCProvider) fetchPOLBalances(ctx context.Context, c *ethclient.Client, balances []*observer.AccountBalance) {
+	if r.polTokenAddress == nil {
+		return
+	}
+
+	erc20abi, err := contracts.ERC20MetaData.GetAbi()
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to parse ERC20 ABI for POL balances")
+		return
+	}
+	to := *r.polTokenAddress
+
+	for start := 0; start < len(balances); start += accountBalanceBatchSize {
+		if ctx.Err() != nil {
+			return
+		}
+		batch := balances[start:min(start+accountBalanceBatchSize, len(balances))]
+
+		reqs, targets := r.polBalanceBatch(erc20abi, to, batch)
+		if err := c.Client().BatchCallContext(ctx, reqs); err != nil {
+			r.logger.Warn().Err(err).Msg("Failed to execute batch request for account POL balances")
+			continue
+		}
+		r.applyPOLBalances(erc20abi, reqs, targets)
+	}
+}
+
+// polBalanceBatch builds eth_call balanceOf requests for the given accounts,
+// returning the requests alongside the accounts they target. Accounts whose call
+// data fails to pack are logged and skipped, so reqs[j] always corresponds to
+// targets[j].
+func (r *RPCProvider) polBalanceBatch(erc20abi *ethabi.ABI, to common.Address, balances []*observer.AccountBalance) ([]rpc.BatchElem, []*observer.AccountBalance) {
+	reqs := make([]rpc.BatchElem, 0, len(balances))
+	targets := make([]*observer.AccountBalance, 0, len(balances))
+	for _, b := range balances {
+		data, err := erc20abi.Pack("balanceOf", b.Address)
+		if err != nil {
+			r.logger.Error().Err(err).Any("address", b.Address).Str("token", observer.POL).Msg("Failed to pack balanceOf")
+			continue
+		}
+		targets = append(targets, b)
+		reqs = append(reqs, rpc.BatchElem{
+			Method: "eth_call",
+			Args:   []any{map[string]any{"to": to, "data": hexutil.Encode(data)}, "latest"},
+			Result: new(json.RawMessage),
+		})
+	}
+	return reqs, targets
+}
+
+// applyPOLBalances scatters a batch response into the accounts it targeted, where
+// request j maps to targets[j].
+func (r *RPCProvider) applyPOLBalances(erc20abi *ethabi.ABI, reqs []rpc.BatchElem, targets []*observer.AccountBalance) {
+	for j, req := range reqs {
+		pol, err := decodePOLResult(erc20abi, req)
+		if err != nil {
+			r.logger.Error().Err(err).Any("address", targets[j].Address).Str("token", observer.POL).Msg("Failed to get balance")
+			continue
+		}
+		targets[j].POL = pol
+	}
+}
+
+// decodePOLResult decodes a single eth_call balanceOf batch response.
+func decodePOLResult(erc20abi *ethabi.ABI, req rpc.BatchElem) (*big.Int, error) {
+	hexStr, err := batchResultHex(req)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := hexutil.Decode(hexStr)
+	if err != nil {
+		return nil, err
+	}
+	out, err := erc20abi.Unpack("balanceOf", raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, errors.New("empty balanceOf result")
+	}
+	pol, ok := out[0].(*big.Int)
+	if !ok {
+		return nil, errors.New("unexpected balanceOf result type")
+	}
+	return pol, nil
+}
+
+// batchResultHex extracts the hex-string result from a JSON-RPC batch element,
+// returning the element's error if the call itself failed.
+func batchResultHex(req rpc.BatchElem) (string, error) {
+	if req.Error != nil {
+		return "", req.Error
+	}
+	var hexStr string
+	if err := json.Unmarshal(*req.Result.(*json.RawMessage), &hexStr); err != nil {
+		return "", err
+	}
+	return hexStr, nil
 }
 
 func (r *RPCProvider) refreshAccountTxs(ctx context.Context, c *ethclient.Client) {
