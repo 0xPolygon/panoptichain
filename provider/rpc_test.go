@@ -3,6 +3,7 @@ package provider
 import (
 	"math"
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 
@@ -192,6 +193,57 @@ func TestNewRPCProvider_AccountBalanceBatchSize(t *testing.T) {
 			r := NewRPCProvider(nil, observer.NewEventBus(), cfg)
 			if r.accountBalanceBatchSize != tt.want {
 				t.Errorf("accountBalanceBatchSize = %d, want %d", r.accountBalanceBatchSize, tt.want)
+			}
+		})
+	}
+}
+
+// TestResolveTrackedAccounts covers the balance-tracking precedence: an inline
+// per-account TrackBalances override wins, otherwise an account is tracked
+// unless its tag is listed in exclude_balance_tags.
+func TestResolveTrackedAccounts(t *testing.T) {
+	trueVal, falseVal := true, false
+	logger := NewLogger(nil, "test")
+
+	tests := []struct {
+		name     string
+		accounts []config.Account
+		exclude  []string
+		wantTags []string
+	}{
+		{
+			name:     "no exclusions tracks all",
+			accounts: []config.Account{{Tag: "relayer"}, {Tag: "sequencer"}},
+			wantTags: []string{"relayer", "sequencer"},
+		},
+		{
+			name:     "excluded tag is skipped",
+			accounts: []config.Account{{Tag: "relayer"}, {Tag: "sequencer"}},
+			exclude:  []string{"relayer"},
+			wantTags: []string{"sequencer"},
+		},
+		{
+			name:     "inline true overrides exclusion",
+			accounts: []config.Account{{Tag: "relayer", TrackBalances: &trueVal}},
+			exclude:  []string{"relayer"},
+			wantTags: []string{"relayer"},
+		},
+		{
+			name:     "inline false overrides default",
+			accounts: []config.Account{{Tag: "sequencer", TrackBalances: &falseVal}},
+			wantTags: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveTrackedAccounts(logger, tt.accounts, tt.exclude)
+			var gotTags []string
+			for _, account := range got {
+				gotTags = append(gotTags, account.Tag)
+			}
+			if !slices.Equal(gotTags, tt.wantTags) {
+				t.Errorf("tracked tags = %v, want %v", gotTags, tt.wantTags)
 			}
 		})
 	}

@@ -38,23 +38,26 @@ import (
 
 // RPCProvider is the generic struct for all EVM style JSON RPC services.
 type RPCProvider struct {
-	url                     string
-	network                 network.Network
-	label                   string
-	bus                     *observer.EventBus
-	interval                time.Duration
-	logger                  zerolog.Logger
-	blockNumber             uint64
-	prevBlockNumber         uint64
-	finalizedHeight         uint64
-	blockBuffer             *blockbuffer.BlockBuffer
-	txPool                  *observer.TransactionPool
-	refreshStateTime        *time.Duration
-	contracts               config.Contracts
-	timeToMine              *config.TimeToMine
-	accounts                []config.Account
-	accountBalances         observer.AccountBalances
-	accountTxs              observer.AccountTxs
+	url              string
+	network          network.Network
+	label            string
+	bus              *observer.EventBus
+	interval         time.Duration
+	logger           zerolog.Logger
+	blockNumber      uint64
+	prevBlockNumber  uint64
+	finalizedHeight  uint64
+	blockBuffer      *blockbuffer.BlockBuffer
+	txPool           *observer.TransactionPool
+	refreshStateTime *time.Duration
+	contracts        config.Contracts
+	timeToMine       *config.TimeToMine
+	accounts         []config.Account
+	accountBalances  observer.AccountBalances
+	accountTxs       observer.AccountTxs
+	// trackedAccounts is the subset of accounts whose balances are fetched,
+	// resolved once from ExcludeBalanceTags / TrackBalances at construction.
+	trackedAccounts         []config.Account
 	timeToFinalized         *uint64
 	blockLookBack           uint64
 	accountBalanceBatchSize int
@@ -126,6 +129,9 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 	fetchValidatorBalances := cfg.ValidatorBalances == nil || *cfg.ValidatorBalances
 	fetchMissedProposals := cfg.MissedProposals == nil || *cfg.MissedProposals
 
+	logger := NewLogger(n, cfg.Label)
+	trackedAccounts := resolveTrackedAccounts(logger, cfg.Accounts, cfg.ExcludeBalanceTags)
+
 	return &RPCProvider{
 		url:                     cfg.URL,
 		network:                 n,
@@ -133,7 +139,7 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		bus:                     eb,
 		blockBuffer:             blockbuffer.NewBlockBuffer(128),
 		interval:                GetInterval(cfg.Interval),
-		logger:                  NewLogger(n, cfg.Label),
+		logger:                  logger,
 		refreshStateTime:        new(time.Duration),
 		contracts:               cfg.Contracts,
 		timeToMine:              cfg.TimeToMine,
@@ -149,6 +155,7 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		trustedSequencers:       make(map[uint32]*RPCProvider),
 		trustedSequencerURL:     make(chan string),
 		rollupContracts:         make(map[uint32]common.Address),
+		trackedAccounts:         trackedAccounts,
 		blockLookBack:           blb,
 		accountBalanceBatchSize: balanceBatchSize,
 		hasTxPool:               cfg.TxPool,
@@ -1150,25 +1157,60 @@ func (r *RPCProvider) sendTransaction(ctx context.Context, c *ethclient.Client, 
 }
 
 func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.Client) {
-	if len(r.accounts) == 0 {
+	if len(r.trackedAccounts) == 0 {
 		return
 	}
 
-	// Build one balance per account up front. Batch responses are scattered back
-	// into this slice, which is the single source of truth for both the account
-	// address and its fetched balances.
-	balances := make([]*observer.AccountBalance, len(r.accounts))
-	for i, account := range r.accounts {
-		balances[i] = &observer.AccountBalance{
+	// Build one balance per tracked account up front. Batch responses are
+	// scattered back into this slice, which is the single source of truth for
+	// both the account address and its fetched balances.
+	balances := make([]*observer.AccountBalance, 0, len(r.trackedAccounts))
+	for _, account := range r.trackedAccounts {
+		balances = append(balances, &observer.AccountBalance{
 			Address: common.HexToAddress(account.Address),
 			Tag:     account.Tag,
-		}
+		})
 	}
 
 	r.fetchETHBalances(ctx, c, balances)
 	r.fetchPOLBalances(ctx, c, balances)
 
 	r.accountBalances = append(r.accountBalances, balances...)
+}
+
+// resolveTrackedAccounts returns the subset of accounts whose balances should be
+// fetched. An account's inline TrackBalances override wins; otherwise it is
+// tracked unless its tag is listed in excludeTags. A configured exclude tag that
+// matches no account is logged, since it silently reduces nothing.
+func resolveTrackedAccounts(logger zerolog.Logger, accounts []config.Account, excludeTags []string) []config.Account {
+	exclude := make(map[string]struct{}, len(excludeTags))
+	for _, tag := range excludeTags {
+		exclude[tag] = struct{}{}
+	}
+
+	accountTags := make(map[string]struct{}, len(accounts))
+	for _, account := range accounts {
+		accountTags[account.Tag] = struct{}{}
+	}
+	for _, tag := range excludeTags {
+		if _, ok := accountTags[tag]; !ok {
+			logger.Warn().Str("tag", tag).Msg("exclude_balance_tags entry matches no account tag")
+		}
+	}
+
+	var tracked []config.Account
+	for _, account := range accounts {
+		if account.TrackBalances != nil {
+			if *account.TrackBalances {
+				tracked = append(tracked, account)
+			}
+			continue
+		}
+		if _, excluded := exclude[account.Tag]; !excluded {
+			tracked = append(tracked, account)
+		}
+	}
+	return tracked
 }
 
 // fetchETHBalances fills the ETH balance for each account using batched

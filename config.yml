@@ -221,6 +221,17 @@
     ## some gateways accept; lower it for providers whose gateway times out on
     ## large batches. Must be greater than 0.
     ##
+    ## @param exclude_balance_tags - list of strings - optional
+    ## @env PANOPTICHAIN_PROVIDERS_RPC_0_EXCLUDE_BALANCE_TAGS - list of strings - optional
+    ## Account tags to exclude from balance tracking. Accounts are tracked by
+    ## default; any account whose `tag` is listed here has its balance skipped.
+    ## Use this to avoid balance lookups for large account groups you do not care
+    ## about (e.g. relayer fleets), reducing RPC load. Individual accounts can
+    ## override this via their inline `track_balances` field. Example:
+    ##   exclude_balance_tags:
+    ##     - "polymarket_relayer"
+    ##     - "x402_relayer"
+    ##
     ## @param accounts - list of objects - optional
     ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS - list of objects - optional
     ## Query the balance of specific accounts. Each account has an address and
@@ -233,6 +244,13 @@
       ## @param tag - string - optional
       ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS_0_TAG - string - optional
       ## A tag to label this account in metrics (e.g., "sequencer", "proposer").
+      ##
+      ## @param track_balances - boolean - optional
+      ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS_0_TRACK_BALANCES - boolean - optional
+      ## Inline override of balance tracking for this account. Takes precedence
+      ## over `exclude_balance_tags`: set true to always fetch this account's
+      ## balance, or false to always skip it. When unset, the
+      ## `exclude_balance_tags` list applies.
     ##
     ## @param observers - object - optional - default: global observers
     ## Override the observer set for this specific provider. If omitted, the
