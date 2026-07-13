@@ -1,9 +1,12 @@
 package provider
 
 import (
+	"math"
 	"math/big"
 	"testing"
+	"time"
 
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/contracts"
 	"github.com/0xPolygon/panoptichain/observer"
 )
@@ -160,5 +163,36 @@ func TestSeenCheckpoint_FreshCopy(t *testing.T) {
 	}
 	if !r.checkpointSignatures[false].Seen {
 		t.Error("stored entry was not marked seen")
+	}
+}
+
+// TestNewRPCProvider_AccountBalanceBatchSize verifies the configured batch size
+// is sanitized: unset, zero, or oversized values fall back to the default so the
+// batch loops can never spin forever (size 0) or wrap negative (size > MaxInt).
+func TestNewRPCProvider_AccountBalanceBatchSize(t *testing.T) {
+	def := int(config.DefaultAccountBalanceBatchSize)
+	u := func(v uint64) *uint64 { return &v }
+	interval := time.Second
+
+	tests := []struct {
+		name string
+		cfg  *uint64
+		want int
+	}{
+		{name: "unset uses default", cfg: nil, want: def},
+		{name: "zero falls back to default", cfg: u(0), want: def},
+		{name: "valid value is used", cfg: u(500), want: 500},
+		{name: "value above MaxInt32 falls back to default", cfg: u(math.MaxInt32 + 1), want: def},
+		{name: "MaxUint64 falls back to default", cfg: u(math.MaxUint64), want: def},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.RPC{Name: "test", URL: "http://localhost", Label: "test", Interval: &interval, AccountBalanceBatchSize: tt.cfg}
+			r := NewRPCProvider(nil, observer.NewEventBus(), cfg)
+			if r.accountBalanceBatchSize != tt.want {
+				t.Errorf("accountBalanceBatchSize = %d, want %d", r.accountBalanceBatchSize, tt.want)
+			}
+		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"slices"
 	"strconv"
@@ -37,31 +38,26 @@ import (
 
 // RPCProvider is the generic struct for all EVM style JSON RPC services.
 type RPCProvider struct {
-	url              string
-	network          network.Network
-	label            string
-	bus              *observer.EventBus
-	interval         time.Duration
-	logger           zerolog.Logger
-	blockNumber      uint64
-	prevBlockNumber  uint64
-	finalizedHeight  uint64
-	blockBuffer      *blockbuffer.BlockBuffer
-	txPool           *observer.TransactionPool
-	refreshStateTime *time.Duration
-	contracts        config.Contracts
-	timeToMine       *config.TimeToMine
-	accounts         []config.Account
-	accountBalances  observer.AccountBalances
-	accountTxs       observer.AccountTxs
-	timeToFinalized  *uint64
-	blockLookBack    uint64
-	// accountBalanceBatchSize bounds how many balance lookups go in a single
-	// JSON-RPC batch. Batching collapses what was thousands of serial round-trips
-	// (which starved the block-height read and tripped the "RPC is out of sync"
-	// monitor) into N/batch round-trips. Providers whose gateway times out on
-	// large batches can lower this via config.
-	accountBalanceBatchSize uint64
+	url                     string
+	network                 network.Network
+	label                   string
+	bus                     *observer.EventBus
+	interval                time.Duration
+	logger                  zerolog.Logger
+	blockNumber             uint64
+	prevBlockNumber         uint64
+	finalizedHeight         uint64
+	blockBuffer             *blockbuffer.BlockBuffer
+	txPool                  *observer.TransactionPool
+	refreshStateTime        *time.Duration
+	contracts               config.Contracts
+	timeToMine              *config.TimeToMine
+	accounts                []config.Account
+	accountBalances         observer.AccountBalances
+	accountTxs              observer.AccountTxs
+	timeToFinalized         *uint64
+	blockLookBack           uint64
+	accountBalanceBatchSize int
 	hasTxPool               bool
 	fetchValidatorBalances  bool
 	fetchMissedProposals    bool
@@ -118,9 +114,13 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		blb = *cfg.BlockLookBack
 	}
 
-	balanceBatchSize := config.DefaultAccountBalanceBatchSize
-	if cfg.AccountBalanceBatchSize != nil {
-		balanceBatchSize = *cfg.AccountBalanceBatchSize
+	// Fall back to the default for an unset, zero, or oversized value; zero would
+	// spin the batch loops forever and a value past MaxInt would wrap negative
+	// when used as a slice bound. (Validation catches this for top-level RPCs but
+	// not for rollup overrides, which also flow through here.)
+	balanceBatchSize := int(config.DefaultAccountBalanceBatchSize)
+	if n := cfg.AccountBalanceBatchSize; n != nil && *n > 0 && *n <= math.MaxInt32 {
+		balanceBatchSize = int(*n)
 	}
 
 	fetchValidatorBalances := cfg.ValidatorBalances == nil || *cfg.ValidatorBalances
@@ -1174,12 +1174,11 @@ func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.C
 // fetchETHBalances fills the ETH balance for each account using batched
 // eth_getBalance calls.
 func (r *RPCProvider) fetchETHBalances(ctx context.Context, c *ethclient.Client, balances []*observer.AccountBalance) {
-	size := int(r.accountBalanceBatchSize)
-	for start := 0; start < len(balances); start += size {
+	for start := 0; start < len(balances); start += r.accountBalanceBatchSize {
 		if ctx.Err() != nil {
 			return
 		}
-		batch := balances[start:min(start+size, len(balances))]
+		batch := balances[start:min(start+r.accountBalanceBatchSize, len(balances))]
 
 		reqs := ethBalanceBatch(batch)
 		if err := c.Client().BatchCallContext(ctx, reqs); err != nil {
@@ -1240,12 +1239,11 @@ func (r *RPCProvider) fetchPOLBalances(ctx context.Context, c *ethclient.Client,
 	}
 	to := *r.polTokenAddress
 
-	size := int(r.accountBalanceBatchSize)
-	for start := 0; start < len(balances); start += size {
+	for start := 0; start < len(balances); start += r.accountBalanceBatchSize {
 		if ctx.Err() != nil {
 			return
 		}
-		batch := balances[start:min(start+size, len(balances))]
+		batch := balances[start:min(start+r.accountBalanceBatchSize, len(balances))]
 
 		reqs, targets := r.polBalanceBatch(erc20abi, to, batch)
 		if err := c.Client().BatchCallContext(ctx, reqs); err != nil {
