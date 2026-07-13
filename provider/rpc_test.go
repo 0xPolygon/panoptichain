@@ -196,3 +196,59 @@ func TestNewRPCProvider_AccountBalanceBatchSize(t *testing.T) {
 		})
 	}
 }
+
+// TestShouldTrackBalance covers the balance-tracking precedence: an inline
+// per-account TrackBalances override wins, otherwise an account is tracked
+// unless its tag is in the excludeBalanceTags set.
+func TestShouldTrackBalance(t *testing.T) {
+	trueVal, falseVal := true, false
+
+	tests := []struct {
+		name     string
+		excluded []string
+		account  config.Account
+		want     bool
+	}{
+		{
+			name:    "no exclusions tracks by default",
+			account: config.Account{Tag: "relayer"},
+			want:    true,
+		},
+		{
+			name:     "excluded tag is skipped",
+			excluded: []string{"relayer"},
+			account:  config.Account{Tag: "relayer"},
+			want:     false,
+		},
+		{
+			name:     "non-excluded tag is tracked",
+			excluded: []string{"relayer"},
+			account:  config.Account{Tag: "sequencer"},
+			want:     true,
+		},
+		{
+			name:     "inline true overrides exclusion",
+			excluded: []string{"relayer"},
+			account:  config.Account{Tag: "relayer", TrackBalances: &trueVal},
+			want:     true,
+		},
+		{
+			name:    "inline false overrides default",
+			account: config.Account{Tag: "sequencer", TrackBalances: &falseVal},
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			excludeBalanceTags := make(map[string]struct{}, len(tt.excluded))
+			for _, tag := range tt.excluded {
+				excludeBalanceTags[tag] = struct{}{}
+			}
+			r := &RPCProvider{excludeBalanceTags: excludeBalanceTags}
+			if got := r.shouldTrackBalance(tt.account); got != tt.want {
+				t.Errorf("shouldTrackBalance() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

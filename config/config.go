@@ -46,6 +46,8 @@ type Providers struct {
 type Account struct {
 	Address string `mapstructure:"address" validate:"required"`
 	Tag     string `mapstructure:"tag"`
+	// TrackBalances overrides ExcludeBalanceTags for this account.
+	TrackBalances *bool `mapstructure:"track_balances"`
 }
 
 // RPC defines the various RPC providers that will be monitored.
@@ -57,6 +59,7 @@ type RPC struct {
 	Contracts               Contracts      `mapstructure:"contracts"`
 	TimeToMine              *TimeToMine    `mapstructure:"time_to_mine"`
 	Accounts                []Account      `mapstructure:"accounts"`
+	ExcludeBalanceTags      []string       `mapstructure:"exclude_balance_tags"`
 	BlockLookBack           *uint64        `mapstructure:"block_look_back"`
 	AccountBalanceBatchSize *uint64        `mapstructure:"account_balance_batch_size" validate:"omitempty,gt=0"`
 	TxPool                  bool           `mapstructure:"txpool"`

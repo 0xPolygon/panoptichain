@@ -55,6 +55,7 @@ type RPCProvider struct {
 	accounts                []config.Account
 	accountBalances         observer.AccountBalances
 	accountTxs              observer.AccountTxs
+	excludeBalanceTags      map[string]struct{}
 	timeToFinalized         *uint64
 	blockLookBack           uint64
 	accountBalanceBatchSize int
@@ -126,6 +127,11 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 	fetchValidatorBalances := cfg.ValidatorBalances == nil || *cfg.ValidatorBalances
 	fetchMissedProposals := cfg.MissedProposals == nil || *cfg.MissedProposals
 
+	excludeBalanceTags := make(map[string]struct{}, len(cfg.ExcludeBalanceTags))
+	for _, tag := range cfg.ExcludeBalanceTags {
+		excludeBalanceTags[tag] = struct{}{}
+	}
+
 	return &RPCProvider{
 		url:                     cfg.URL,
 		network:                 n,
@@ -149,6 +155,7 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		trustedSequencers:       make(map[uint32]*RPCProvider),
 		trustedSequencerURL:     make(chan string),
 		rollupContracts:         make(map[uint32]common.Address),
+		excludeBalanceTags:      excludeBalanceTags,
 		blockLookBack:           blb,
 		accountBalanceBatchSize: balanceBatchSize,
 		hasTxPool:               cfg.TxPool,
@@ -1150,25 +1157,39 @@ func (r *RPCProvider) sendTransaction(ctx context.Context, c *ethclient.Client, 
 }
 
 func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.Client) {
-	if len(r.accounts) == 0 {
-		return
-	}
-
-	// Build one balance per account up front. Batch responses are scattered back
-	// into this slice, which is the single source of truth for both the account
-	// address and its fetched balances.
-	balances := make([]*observer.AccountBalance, len(r.accounts))
-	for i, account := range r.accounts {
-		balances[i] = &observer.AccountBalance{
+	// Build one balance per tracked account up front. Batch responses are
+	// scattered back into this slice, which is the single source of truth for
+	// both the account address and its fetched balances.
+	balances := make([]*observer.AccountBalance, 0, len(r.accounts))
+	for _, account := range r.accounts {
+		if !r.shouldTrackBalance(account) {
+			continue
+		}
+		balances = append(balances, &observer.AccountBalance{
 			Address: common.HexToAddress(account.Address),
 			Tag:     account.Tag,
-		}
+		})
+	}
+
+	if len(balances) == 0 {
+		return
 	}
 
 	r.fetchETHBalances(ctx, c, balances)
 	r.fetchPOLBalances(ctx, c, balances)
 
 	r.accountBalances = append(r.accountBalances, balances...)
+}
+
+// shouldTrackBalance reports whether the account's balances should be fetched.
+// An inline TrackBalances override wins; otherwise the account is tracked unless
+// its tag is in the excludeBalanceTags set.
+func (r *RPCProvider) shouldTrackBalance(account config.Account) bool {
+	if account.TrackBalances != nil {
+		return *account.TrackBalances
+	}
+	_, excluded := r.excludeBalanceTags[account.Tag]
+	return !excluded
 }
 
 // fetchETHBalances fills the ETH balance for each account using batched
