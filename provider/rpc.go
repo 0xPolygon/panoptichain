@@ -37,28 +37,34 @@ import (
 
 // RPCProvider is the generic struct for all EVM style JSON RPC services.
 type RPCProvider struct {
-	url                    string
-	network                network.Network
-	label                  string
-	bus                    *observer.EventBus
-	interval               time.Duration
-	logger                 zerolog.Logger
-	blockNumber            uint64
-	prevBlockNumber        uint64
-	finalizedHeight        uint64
-	blockBuffer            *blockbuffer.BlockBuffer
-	txPool                 *observer.TransactionPool
-	refreshStateTime       *time.Duration
-	contracts              config.Contracts
-	timeToMine             *config.TimeToMine
-	accounts               []config.Account
-	accountBalances        observer.AccountBalances
-	accountTxs             observer.AccountTxs
-	timeToFinalized        *uint64
-	blockLookBack          uint64
-	hasTxPool              bool
-	fetchValidatorBalances bool
-	fetchMissedProposals   bool
+	url              string
+	network          network.Network
+	label            string
+	bus              *observer.EventBus
+	interval         time.Duration
+	logger           zerolog.Logger
+	blockNumber      uint64
+	prevBlockNumber  uint64
+	finalizedHeight  uint64
+	blockBuffer      *blockbuffer.BlockBuffer
+	txPool           *observer.TransactionPool
+	refreshStateTime *time.Duration
+	contracts        config.Contracts
+	timeToMine       *config.TimeToMine
+	accounts         []config.Account
+	accountBalances  observer.AccountBalances
+	accountTxs       observer.AccountTxs
+	timeToFinalized  *uint64
+	blockLookBack    uint64
+	// accountBalanceBatchSize bounds how many balance lookups go in a single
+	// JSON-RPC batch. Batching collapses what was thousands of serial round-trips
+	// (which starved the block-height read and tripped the "RPC is out of sync"
+	// monitor) into N/batch round-trips. Providers whose gateway times out on
+	// large batches can lower this via config.
+	accountBalanceBatchSize uint64
+	hasTxPool               bool
+	fetchValidatorBalances  bool
+	fetchMissedProposals    bool
 
 	// PoS
 	stateSync            map[bool]*observer.StateSync
@@ -112,36 +118,42 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		blb = *cfg.BlockLookBack
 	}
 
+	balanceBatchSize := config.DefaultAccountBalanceBatchSize
+	if cfg.AccountBalanceBatchSize != nil {
+		balanceBatchSize = *cfg.AccountBalanceBatchSize
+	}
+
 	fetchValidatorBalances := cfg.ValidatorBalances == nil || *cfg.ValidatorBalances
 	fetchMissedProposals := cfg.MissedProposals == nil || *cfg.MissedProposals
 
 	return &RPCProvider{
-		url:                    cfg.URL,
-		network:                n,
-		label:                  cfg.Label,
-		bus:                    eb,
-		blockBuffer:            blockbuffer.NewBlockBuffer(128),
-		interval:               GetInterval(cfg.Interval),
-		logger:                 NewLogger(n, cfg.Label),
-		refreshStateTime:       new(time.Duration),
-		contracts:              cfg.Contracts,
-		timeToMine:             cfg.TimeToMine,
-		accounts:               cfg.Accounts,
-		accountBalances:        make(observer.AccountBalances, 0),
-		accountTxs:             make(observer.AccountTxs, 0),
-		stateSync:              make(map[bool]*observer.StateSync),
-		checkpointSignatures:   make(map[bool]*observer.CheckpointSignatures),
-		validatorBalances:      make(observer.ValidatorWalletBalances),
-		missedBlockProposal:    make(observer.MissedBlockProposal),
-		bridgeEventTimes:       make(observer.BridgeEventTimes),
-		claimEventTimes:        make(observer.ClaimEventTimes),
-		trustedSequencers:      make(map[uint32]*RPCProvider),
-		trustedSequencerURL:    make(chan string),
-		rollupContracts:        make(map[uint32]common.Address),
-		blockLookBack:          blb,
-		hasTxPool:              cfg.TxPool,
-		fetchValidatorBalances: fetchValidatorBalances,
-		fetchMissedProposals:   fetchMissedProposals,
+		url:                     cfg.URL,
+		network:                 n,
+		label:                   cfg.Label,
+		bus:                     eb,
+		blockBuffer:             blockbuffer.NewBlockBuffer(128),
+		interval:                GetInterval(cfg.Interval),
+		logger:                  NewLogger(n, cfg.Label),
+		refreshStateTime:        new(time.Duration),
+		contracts:               cfg.Contracts,
+		timeToMine:              cfg.TimeToMine,
+		accounts:                cfg.Accounts,
+		accountBalances:         make(observer.AccountBalances, 0),
+		accountTxs:              make(observer.AccountTxs, 0),
+		stateSync:               make(map[bool]*observer.StateSync),
+		checkpointSignatures:    make(map[bool]*observer.CheckpointSignatures),
+		validatorBalances:       make(observer.ValidatorWalletBalances),
+		missedBlockProposal:     make(observer.MissedBlockProposal),
+		bridgeEventTimes:        make(observer.BridgeEventTimes),
+		claimEventTimes:         make(observer.ClaimEventTimes),
+		trustedSequencers:       make(map[uint32]*RPCProvider),
+		trustedSequencerURL:     make(chan string),
+		rollupContracts:         make(map[uint32]common.Address),
+		blockLookBack:           blb,
+		accountBalanceBatchSize: balanceBatchSize,
+		hasTxPool:               cfg.TxPool,
+		fetchValidatorBalances:  fetchValidatorBalances,
+		fetchMissedProposals:    fetchMissedProposals,
 	}
 }
 
@@ -1137,19 +1149,6 @@ func (r *RPCProvider) sendTransaction(ctx context.Context, c *ethclient.Client, 
 	return nil
 }
 
-// accountBalanceBatchSize bounds how many balance lookups go in a single JSON-RPC
-// batch. Fetching one account at a time turned RefreshState into thousands of
-// serial round-trips once large account groups (e.g. the relayer fleets) were
-// attached, which starved the block-height read and made this provider fall
-// behind the "RPC is out of sync" monitor. Batching collapses N accounts into
-// N/batch round-trips.
-//
-// 1000 is the practical maximum: some gateways reject JSON-RPC batches larger
-// than 1000 (verified against the prod endpoint — batches of 1000 succeed for
-// both eth_getBalance and eth_call, 1001+ are rejected). Providers with a lower
-// limit will surface it as a batch error and the cycle continues.
-const accountBalanceBatchSize = 1000
-
 func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.Client) {
 	if len(r.accounts) == 0 {
 		return
@@ -1175,11 +1174,12 @@ func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.C
 // fetchETHBalances fills the ETH balance for each account using batched
 // eth_getBalance calls.
 func (r *RPCProvider) fetchETHBalances(ctx context.Context, c *ethclient.Client, balances []*observer.AccountBalance) {
-	for start := 0; start < len(balances); start += accountBalanceBatchSize {
+	size := int(r.accountBalanceBatchSize)
+	for start := 0; start < len(balances); start += size {
 		if ctx.Err() != nil {
 			return
 		}
-		batch := balances[start:min(start+accountBalanceBatchSize, len(balances))]
+		batch := balances[start:min(start+size, len(balances))]
 
 		reqs := ethBalanceBatch(batch)
 		if err := c.Client().BatchCallContext(ctx, reqs); err != nil {
@@ -1240,11 +1240,12 @@ func (r *RPCProvider) fetchPOLBalances(ctx context.Context, c *ethclient.Client,
 	}
 	to := *r.polTokenAddress
 
-	for start := 0; start < len(balances); start += accountBalanceBatchSize {
+	size := int(r.accountBalanceBatchSize)
+	for start := 0; start < len(balances); start += size {
 		if ctx.Err() != nil {
 			return
 		}
-		batch := balances[start:min(start+accountBalanceBatchSize, len(balances))]
+		batch := balances[start:min(start+size, len(balances))]
 
 		reqs, targets := r.polBalanceBatch(erc20abi, to, batch)
 		if err := c.Client().BatchCallContext(ctx, reqs); err != nil {

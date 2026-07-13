@@ -17,6 +17,12 @@ import (
 const DefaultBlockLookBack uint64 = 1000
 const DefaultMaxSpanLag uint64 = 10
 
+// DefaultAccountBalanceBatchSize is the number of balance lookups packed into a
+// single JSON-RPC batch when a provider does not override it. 1000 is the
+// practical maximum some gateways accept; providers whose gateway times out on
+// large batches should set a lower account_balance_batch_size.
+const DefaultAccountBalanceBatchSize uint64 = 1000
+
 // Runner configures the execution interval of the job system.
 type Runner struct {
 	Interval *time.Duration `mapstructure:"interval" validate:"required"`
@@ -44,18 +50,19 @@ type Account struct {
 
 // RPC defines the various RPC providers that will be monitored.
 type RPC struct {
-	Name              string         `mapstructure:"name" validate:"required"`
-	URL               string         `mapstructure:"url" validate:"url,required"`
-	Label             string         `mapstructure:"label" validate:"required"`
-	Interval          *time.Duration `mapstructure:"interval"`
-	Contracts         Contracts      `mapstructure:"contracts"`
-	TimeToMine        *TimeToMine    `mapstructure:"time_to_mine"`
-	Accounts          []Account      `mapstructure:"accounts"`
-	BlockLookBack     *uint64        `mapstructure:"block_look_back"`
-	TxPool            bool           `mapstructure:"txpool"`
-	Observers         *Observers     `mapstructure:"observers"`
-	ValidatorBalances *bool          `mapstructure:"validator_balances"`
-	MissedProposals   *bool          `mapstructure:"missed_proposals"`
+	Name                    string         `mapstructure:"name" validate:"required"`
+	URL                     string         `mapstructure:"url" validate:"url,required"`
+	Label                   string         `mapstructure:"label" validate:"required"`
+	Interval                *time.Duration `mapstructure:"interval"`
+	Contracts               Contracts      `mapstructure:"contracts"`
+	TimeToMine              *TimeToMine    `mapstructure:"time_to_mine"`
+	Accounts                []Account      `mapstructure:"accounts"`
+	BlockLookBack           *uint64        `mapstructure:"block_look_back"`
+	AccountBalanceBatchSize *uint64        `mapstructure:"account_balance_batch_size" validate:"omitempty,gt=0"`
+	TxPool                  bool           `mapstructure:"txpool"`
+	Observers               *Observers     `mapstructure:"observers"`
+	ValidatorBalances       *bool          `mapstructure:"validator_balances"`
+	MissedProposals         *bool          `mapstructure:"missed_proposals"`
 }
 
 // Contracts maps specific contracts to their addresses. This is used to
