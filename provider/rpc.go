@@ -128,8 +128,8 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 	}
 
 	balanceTimeout := config.DefaultAccountBalanceTimeout
-	if cfg.AccountBalanceTimeout != nil && *cfg.AccountBalanceTimeout > 0 {
-		balanceTimeout = *cfg.AccountBalanceTimeout
+	if t := cfg.AccountBalanceTimeout; t != nil && *t > 0 {
+		balanceTimeout = *t
 	}
 
 	fetchValidatorBalances := cfg.ValidatorBalances == nil || *cfg.ValidatorBalances
@@ -1187,6 +1187,10 @@ func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.C
 
 	r.fetchETHBalances(ctx, c, balances)
 	r.fetchPOLBalances(ctx, c, balances)
+
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		r.logger.Warn().Dur("timeout", r.accountBalanceTimeout).Msg("Account balance fetch timed out; some balances not refreshed this cycle")
+	}
 
 	r.accountBalances = append(r.accountBalances, balances...)
 }

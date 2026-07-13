@@ -227,7 +227,8 @@
     ## time.Duration format (e.g. "10s"). The deadline is applied to the batched
     ## eth_getBalance / eth_call balanceOf requests so a slow or unresponsive
     ## gateway cannot stall the rest of the refresh cycle; balances not fetched in
-    ## time are left for the next cycle. Must be greater than 0.
+    ## time are left for the next cycle. Keep this well under the poll interval,
+    ## otherwise it defeats its own purpose. Must be greater than 0.
     ##
     ## @param exclude_balance_tags - list of strings - optional
     ## @env PANOPTICHAIN_PROVIDERS_RPC_0_EXCLUDE_BALANCE_TAGS - list of strings - optional
