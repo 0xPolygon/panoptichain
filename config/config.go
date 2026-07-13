@@ -23,6 +23,13 @@ const DefaultMaxSpanLag uint64 = 10
 // large batches should set a lower account_balance_batch_size.
 const DefaultAccountBalanceBatchSize uint64 = 1000
 
+// DefaultAccountBalanceTimeout bounds how long the account-balance fetch may run
+// per refresh cycle when a provider does not override it. It stops a slow or
+// unresponsive gateway from stalling the rest of RefreshState. A healthy sweep
+// of ~2000 accounts takes a few seconds, so 10s leaves ample headroom while
+// staying well under a typical poll interval.
+const DefaultAccountBalanceTimeout = 10 * time.Second
+
 // Runner configures the execution interval of the job system.
 type Runner struct {
 	Interval *time.Duration `mapstructure:"interval" validate:"required"`
@@ -62,6 +69,7 @@ type RPC struct {
 	ExcludeBalanceTags      []string       `mapstructure:"exclude_balance_tags"`
 	BlockLookBack           *uint64        `mapstructure:"block_look_back"`
 	AccountBalanceBatchSize *uint64        `mapstructure:"account_balance_batch_size" validate:"omitempty,gt=0"`
+	AccountBalanceTimeout   *time.Duration `mapstructure:"account_balance_timeout" validate:"omitempty,gt=0"`
 	TxPool                  bool           `mapstructure:"txpool"`
 	Observers               *Observers     `mapstructure:"observers"`
 	ValidatorBalances       *bool          `mapstructure:"validator_balances"`

@@ -198,6 +198,33 @@ func TestNewRPCProvider_AccountBalanceBatchSize(t *testing.T) {
 	}
 }
 
+// TestNewRPCProvider_AccountBalanceTimeout verifies the balance-fetch timeout is
+// resolved from config, falling back to the default when unset or non-positive.
+func TestNewRPCProvider_AccountBalanceTimeout(t *testing.T) {
+	interval := time.Second
+	d := func(v time.Duration) *time.Duration { return &v }
+
+	tests := []struct {
+		name string
+		cfg  *time.Duration
+		want time.Duration
+	}{
+		{name: "unset uses default", cfg: nil, want: config.DefaultAccountBalanceTimeout},
+		{name: "zero falls back to default", cfg: d(0), want: config.DefaultAccountBalanceTimeout},
+		{name: "valid value is used", cfg: d(5 * time.Second), want: 5 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.RPC{Name: "test", URL: "http://localhost", Label: "test", Interval: &interval, AccountBalanceTimeout: tt.cfg}
+			r := NewRPCProvider(nil, observer.NewEventBus(), cfg)
+			if r.accountBalanceTimeout != tt.want {
+				t.Errorf("accountBalanceTimeout = %v, want %v", r.accountBalanceTimeout, tt.want)
+			}
+		})
+	}
+}
+
 // TestResolveTrackedAccounts covers the balance-tracking precedence: an inline
 // per-account TrackBalances override wins, otherwise an account is tracked
 // unless its tag is listed in exclude_balance_tags.
