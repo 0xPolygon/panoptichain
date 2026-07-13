@@ -61,6 +61,7 @@ type RPCProvider struct {
 	timeToFinalized         *uint64
 	blockLookBack           uint64
 	accountBalanceBatchSize int
+	accountBalanceTimeout   time.Duration
 	hasTxPool               bool
 	fetchValidatorBalances  bool
 	fetchMissedProposals    bool
@@ -126,6 +127,11 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		balanceBatchSize = int(*n)
 	}
 
+	balanceTimeout := config.DefaultAccountBalanceTimeout
+	if t := cfg.AccountBalanceTimeout; t != nil && *t > 0 {
+		balanceTimeout = *t
+	}
+
 	fetchValidatorBalances := cfg.ValidatorBalances == nil || *cfg.ValidatorBalances
 	fetchMissedProposals := cfg.MissedProposals == nil || *cfg.MissedProposals
 
@@ -158,6 +164,7 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		trackedAccounts:         trackedAccounts,
 		blockLookBack:           blb,
 		accountBalanceBatchSize: balanceBatchSize,
+		accountBalanceTimeout:   balanceTimeout,
 		hasTxPool:               cfg.TxPool,
 		fetchValidatorBalances:  fetchValidatorBalances,
 		fetchMissedProposals:    fetchMissedProposals,
@@ -1172,8 +1179,18 @@ func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.C
 		})
 	}
 
+	// Bound the whole balance fetch so a slow or unresponsive gateway cannot
+	// stall the rest of RefreshState. The batch loops honour this deadline via
+	// their per-iteration ctx.Err() check and the BatchCallContext calls.
+	ctx, cancel := context.WithTimeout(ctx, r.accountBalanceTimeout)
+	defer cancel()
+
 	r.fetchETHBalances(ctx, c, balances)
 	r.fetchPOLBalances(ctx, c, balances)
+
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		r.logger.Warn().Dur("timeout", r.accountBalanceTimeout).Msg("Account balance fetch timed out; some balances not refreshed this cycle")
+	}
 
 	r.accountBalances = append(r.accountBalances, balances...)
 }
