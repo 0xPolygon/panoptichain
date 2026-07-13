@@ -214,6 +214,13 @@
     ## Whether to fetch missed block proposals via bor_getSnapshotProposerSequence.
     ## Only applies to Polygon PoS networks. Set to false to reduce RPC load.
     ##
+    ## @param account_balance_batch_size - integer - optional - default 1000
+    ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNT_BALANCE_BATCH_SIZE - integer - optional - default 1000
+    ## How many account balance lookups are packed into a single JSON-RPC batch
+    ## (eth_getBalance and eth_call balanceOf). 1000 is the practical maximum
+    ## some gateways accept; lower it for providers whose gateway times out on
+    ## large batches. Must be greater than 0.
+    ##
     ## @param accounts - list of objects - optional
     ## @env PANOPTICHAIN_PROVIDERS_RPC_0_ACCOUNTS - list of objects - optional
     ## Query the balance of specific accounts. Each account has an address and
