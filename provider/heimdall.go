@@ -358,19 +358,29 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 	processed := start - 1
 	for i := start; i <= currentCount; i++ {
 		if ctx.Err() != nil {
-			h.logger.Warn().Err(ctx.Err()).Int64("from", i).Int64("to", currentCount).Msg("Milestone refresh deadline reached; resuming next cycle")
+			h.logger.Warn().
+				Err(ctx.Err()).
+				Int64("from", i).
+				Int64("to", currentCount).
+				Msg("Milestone refresh deadline reached; resuming next cycle")
 			break
 		}
 
 		path, err := url.JoinPath(h.heimdallURL, "milestones", strconv.FormatInt(i, 10))
 		if err != nil {
-			h.logger.Error().Err(err).Int64("milestone", i).Msg("Failed to build Heimdall milestone path; resuming next cycle")
+			h.logger.Error().
+				Err(err).
+				Int64("milestone", i).
+				Msg("Failed to build Heimdall milestone path; resuming next cycle")
 			break
 		}
 
 		var v2 observer.HeimdallMilestoneV2
 		if err = api.GetJSON(ctx, path, &v2); err != nil {
-			h.logger.Warn().Err(err).Int64("milestone", i).Msg("Failed to get Heimdall milestone; resuming next cycle")
+			h.logger.Warn().
+				Err(err).
+				Int64("milestone", i).
+				Msg("Failed to get Heimdall milestone; resuming next cycle")
 			break
 		}
 
@@ -417,7 +427,9 @@ func (h *HeimdallProvider) getLatestMilestone(ctx context.Context) (*observer.He
 		return nil, currentCount, err
 	}
 	if err := api.GetJSON(ctx, latestPath, &v2); err != nil {
-		h.logger.Warn().Err(err).Msg("milestones/latest unavailable; falling back to fetch by count")
+		h.logger.Warn().
+			Err(err).
+			Msg("milestones/latest unavailable; falling back to fetch by count")
 
 		byCount, err := url.JoinPath(h.heimdallURL, "milestones", strconv.FormatInt(currentCount, 10))
 		if err != nil {
@@ -543,20 +555,28 @@ func (h *HeimdallProvider) refreshMissedBlockProposal(ctx context.Context) error
 		if ctx.Err() != nil {
 			// Deadline reached mid-scan; stop rather than hammering failing
 			// requests. The remaining blocks are a hole this cycle.
-			h.logger.Warn().Err(ctx.Err()).Uint64("from", i).Uint64("to", h.blockNumber).Msg("Missed-block-proposal scan deadline reached; skipping remaining")
+			h.logger.Warn().
+				Err(ctx.Err()).
+				Uint64("from", i).
+				Uint64("to", h.blockNumber).
+				Msg("Missed-block-proposal scan deadline reached; skipping remaining")
 			break
 		}
 
 		block := h.getBlock(ctx, i)
 		if block == nil {
-			h.logger.Debug().Uint64("height", i).Msg("Failed to get current block")
+			h.logger.Debug().
+				Uint64("height", i).
+				Msg("Failed to get current block")
 			continue
 		}
 		proposer := block.ProposerAddress()
 
 		v := h.getValidators(ctx, i-1)
 		if v == nil {
-			h.logger.Debug().Uint64("height", i).Msg("Failed to get validators")
+			h.logger.Debug().
+				Uint64("height", i).
+				Msg("Failed to get validators")
 			continue
 		}
 		validators := v.Validators()
@@ -786,13 +806,20 @@ func (h *HeimdallProvider) refreshMissedVotes(ctx context.Context) {
 		if ctx.Err() != nil {
 			// Deadline reached mid-scan; stop rather than hammering failing
 			// requests. The remaining blocks are a hole this cycle.
-			h.logger.Warn().Err(ctx.Err()).Uint64("from", height).Uint64("to", h.blockNumber).Msg("Missed-votes scan deadline reached; skipping remaining")
+			h.logger.Warn().
+				Err(ctx.Err()).
+				Uint64("from", height).
+				Uint64("to", h.blockNumber).
+				Msg("Missed-votes scan deadline reached; skipping remaining")
 			break
 		}
 
 		mv, err := h.getMissedVotes(ctx, height)
 		if err != nil {
-			h.logger.Warn().Err(err).Uint64("height", height).Msg("Failed to detect missed votes")
+			h.logger.Warn().
+				Err(err).
+				Uint64("height", height).
+				Msg("Failed to detect missed votes")
 			continue
 		}
 		if mv != nil {
