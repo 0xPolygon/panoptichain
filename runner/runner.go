@@ -4,14 +4,12 @@ package runner
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/log"
 	"github.com/0xPolygon/panoptichain/network"
 	"github.com/0xPolygon/panoptichain/observer"
 	"github.com/0xPolygon/panoptichain/provider"
-	"github.com/0xPolygon/panoptichain/util"
 )
 
 var providers []provider.Provider
@@ -25,50 +23,15 @@ func Start(ctx context.Context) {
 	for _, p := range providers {
 		wg.Go(func() {
 			// Exit the loop once the root context is cancelled so shutdown
-			// doesn't leave the goroutine hot-spinning (runCycle returns
+			// doesn't leave the goroutine hot-spinning (RunCycle returns
 			// immediately on a cancelled context).
 			for ctx.Err() == nil {
-				runCycle(ctx, p)
+				provider.RunCycle(ctx, p)
 			}
 		})
 	}
 
 	wg.Wait()
-}
-
-// runCycle runs a single refresh/publish cycle for a provider and blocks until
-// the next scheduled tick.
-func runCycle(ctx context.Context, p provider.Provider) {
-	interval := p.PollingInterval()
-	start := time.Now()
-
-	// Bound each cycle so a hung upstream request can't pin a provider forever.
-	// This is a recovery net, not a scheduling knob: cancelling mid-cycle can
-	// drop in-progress work, so keep it generous (interval*4, floored at 30s)
-	// and let it fire only on real stalls. The overrun warning below is the
-	// non-destructive signal for "slower than the interval". Every request path
-	// honours this context (ethclient and api.GetJSON both take it).
-	cycleCtx, cancel := context.WithTimeout(ctx, util.RefreshTimeout(interval))
-	if err := p.RefreshState(cycleCtx); err != nil {
-		log.Error().Err(err).Send()
-	}
-	cancel()
-
-	if err := p.PublishEvents(ctx); err != nil {
-		log.Error().Err(err).Send()
-	}
-
-	// If a cycle runs longer than its polling interval, BlockFor will not pause,
-	// so cycles run back-to-back and the provider falls behind schedule. Surface
-	// it rather than letting it hide.
-	if elapsed := time.Since(start); elapsed >= interval {
-		log.Warn().
-			Dur("elapsed", elapsed).
-			Dur("interval", interval).
-			Msg("Provider refresh cycle overran its polling interval")
-	}
-
-	util.BlockFor(ctx, interval)
 }
 
 // Init configures all the providers and observers of the system.

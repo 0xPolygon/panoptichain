@@ -99,9 +99,9 @@ func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	// truncated cycle only drops backlog accounting, never the freshness gauge.
 	h.logger.Debug().Msg("Refreshing Heimdall state")
 
-	h.refreshBlockBuffer(ctx)
+	anchorTime := h.refreshBlockBuffer(ctx)
 	h.refreshValidatorSet(ctx)
-	h.refreshMilestone(ctx)
+	h.refreshMilestone(ctx, anchorTime)
 	h.refreshCheckpoint(ctx)
 	h.refreshBufferedCheckpoint(ctx)
 	h.refreshMissedCheckpointProposal(ctx)
@@ -215,16 +215,19 @@ func (h *HeimdallProvider) PollingInterval() time.Duration {
 	return h.interval
 }
 
-func (h *HeimdallProvider) refreshBlockBuffer(ctx context.Context) {
+// refreshBlockBuffer refreshes the block buffer and returns the latest block's
+// timestamp (0 if unavailable) so callers can reuse it as a vote-height anchor
+// without refetching the tip block.
+func (h *HeimdallProvider) refreshBlockBuffer(ctx context.Context) uint64 {
 	h.prevBlockNumber = h.blockNumber
 	block := h.getBlock(ctx, 0)
 	if block == nil {
-		return
+		return 0
 	}
 
 	bn := block.Number()
 	if bn == nil {
-		return
+		return 0
 	}
 	h.blockNumber = bn.Uint64()
 
@@ -232,6 +235,13 @@ func (h *HeimdallProvider) refreshBlockBuffer(ctx context.Context) {
 	if h.prevBlockNumber != 0 && h.prevBlockNumber != h.blockNumber {
 		h.fillRange(ctx, h.prevBlockNumber)
 	}
+
+	anchorTime, err := block.Time()
+	if err != nil {
+		return 0
+	}
+
+	return anchorTime
 }
 
 func (h *HeimdallProvider) getBlock(ctx context.Context, height uint64) *observer.HeimdallBlock {
@@ -324,7 +334,7 @@ func (h *HeimdallProvider) fillRange(ctx context.Context, start uint64) {
 	}
 }
 
-func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
+func (h *HeimdallProvider) refreshMilestone(ctx context.Context, anchorTime uint64) error {
 	h.milestones = nil
 
 	// Always fetch the tip milestone first; it drives the freshness gauges
@@ -357,18 +367,6 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 	}
 
 	voteCache := make(map[uint64]*observer.HeimdallMilestoneVotes)
-
-	// Anchor for milestone vote-height estimates: the latest block's time,
-	// fetched once per cycle here rather than once per milestone. Only needed
-	// when we can attribute votes (validator map present).
-	var anchorTime uint64
-	if h.validatorIDMap != nil {
-		if block := h.getBlock(ctx, 0); block != nil {
-			if t, err := block.Time(); err == nil {
-				anchorTime = t
-			}
-		}
-	}
 
 	// Walk milestones one at a time, advancing the cursor only over those we
 	// actually process. The per-cycle deadline bounds the work; a catch-up

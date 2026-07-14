@@ -1828,29 +1828,9 @@ func runProvider(ctx context.Context, p *RPCProvider) {
 		case url := <-p.trustedSequencerURL:
 			p.url = url
 		default:
-			interval := p.PollingInterval()
-			start := time.Now()
-
-			// Bound each cycle so a hung sub-provider upstream can't pin this
-			// goroutine, mirroring runner.runCycle for top-level providers.
-			cycleCtx, cancel := context.WithTimeout(ctx, util.RefreshTimeout(interval))
-			if err := p.RefreshState(cycleCtx); err != nil {
-				p.logger.Error().Err(err).Send()
-			}
-			cancel()
-
-			if err := p.PublishEvents(ctx); err != nil {
-				p.logger.Error().Err(err).Send()
-			}
-
-			if elapsed := time.Since(start); elapsed >= interval {
-				p.logger.Warn().
-					Dur("elapsed", elapsed).
-					Dur("interval", interval).
-					Msg("Provider refresh cycle overran its polling interval")
-			}
-
-			util.BlockFor(ctx, interval)
+			// Reuse the same bounded cycle as top-level providers so a hung
+			// sub-provider upstream can't pin this goroutine.
+			RunCycle(ctx, p)
 		}
 	}
 }

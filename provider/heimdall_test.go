@@ -240,7 +240,7 @@ func TestRefreshMilestone_ResumesAfterDeadline(t *testing.T) {
 		prevMilestoneCount: 5,
 	}
 
-	if err := h.refreshMilestone(ctx); err != nil {
+	if err := h.refreshMilestone(ctx, 0); err != nil {
 		t.Fatalf("refreshMilestone() error: %v", err)
 	}
 
@@ -282,7 +282,7 @@ func TestRefreshMilestone_SkipsUnfetchableMilestone(t *testing.T) {
 		prevMilestoneCount: 5,
 	}
 
-	if err := h.refreshMilestone(context.Background()); err != nil {
+	if err := h.refreshMilestone(context.Background(), 0); err != nil {
 		t.Fatalf("refreshMilestone() error: %v", err)
 	}
 
