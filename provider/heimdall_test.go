@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/0xPolygon/panoptichain/config"
@@ -213,23 +214,22 @@ func TestRefreshMilestone_ResumesAfterDeadline(t *testing.T) {
 	defer cancel()
 
 	const tip = 15
-	served := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/milestones/count":
+		switch {
+		case r.URL.Path == "/milestones/count":
 			json.NewEncoder(w).Encode(observer.HeimdallMilestoneCount{Count: tip})
-		case "/milestones/latest":
-			// Zero-value tip: getLatestMilestone ignores it for freshness, but
-			// the backfill below still proceeds off the count.
-			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{})
-		default: // per-milestone backfill: 6, 7, 8, 9, ...
-			served++
-			if served == 4 { // milestone 9
-				cancel()
-				http.Error(w, "deadline", http.StatusInternalServerError)
-				return
-			}
-			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{})
+		case r.URL.Path == "/milestones/latest":
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{
+				Milestone: observer.HeimdallMilestone{Timestamp: 1000},
+			})
+		case strings.HasSuffix(r.URL.Path, "/milestones/9"):
+			// Simulate the cycle deadline tripping mid-fetch.
+			cancel()
+			http.Error(w, "deadline", http.StatusInternalServerError)
+		default: // per-milestone backfill
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{
+				Milestone: observer.HeimdallMilestone{Timestamp: 1000},
+			})
 		}
 	}))
 	defer server.Close()
@@ -250,6 +250,48 @@ func TestRefreshMilestone_ResumesAfterDeadline(t *testing.T) {
 	}
 	if len(h.milestones) != 3 {
 		t.Errorf("expected 3 milestones processed (6,7,8), got %d", len(h.milestones))
+	}
+}
+
+func TestRefreshMilestone_SkipsUnfetchableMilestone(t *testing.T) {
+	// Milestone 8 always fails (e.g. pruned/404) without a cancelled context. It
+	// must be skipped so the milestones behind it still process and the cursor
+	// reaches the tip, rather than stalling the whole backlog every cycle.
+	const tip = 10
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/milestones/count":
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneCount{Count: tip})
+		case r.URL.Path == "/milestones/latest":
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{
+				Milestone: observer.HeimdallMilestone{Timestamp: 1000},
+			})
+		case strings.HasSuffix(r.URL.Path, "/milestones/8"):
+			http.Error(w, "not found", http.StatusNotFound)
+		default:
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{
+				Milestone: observer.HeimdallMilestone{Timestamp: 1000},
+			})
+		}
+	}))
+	defer server.Close()
+
+	h := &HeimdallProvider{
+		heimdallURL:        server.URL,
+		logger:             NewLogger(nil, "test"),
+		prevMilestoneCount: 5,
+	}
+
+	if err := h.refreshMilestone(context.Background()); err != nil {
+		t.Fatalf("refreshMilestone() error: %v", err)
+	}
+
+	// 8 is skipped, but the cursor still reaches the tip and 6, 7, 9, 10 process.
+	if h.prevMilestoneCount != tip {
+		t.Errorf("expected cursor to reach tip %d, got %d", tip, h.prevMilestoneCount)
+	}
+	if len(h.milestones) != 4 {
+		t.Errorf("expected 4 milestones processed (6,7,9,10), got %d", len(h.milestones))
 	}
 }
 

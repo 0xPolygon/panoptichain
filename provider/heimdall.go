@@ -338,8 +338,10 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 		h.latestMilestone = latest
 	}
 
+	// Keep the cursor monotonic: a load-balanced node briefly reporting a lower
+	// count must not rewind it, or already-counted milestones get re-published
+	// and double-counted when the count recovers.
 	if currentCount <= h.prevMilestoneCount {
-		h.prevMilestoneCount = currentCount
 		return nil
 	}
 
@@ -352,9 +354,10 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 	voteCache := make(map[uint64]*observer.HeimdallMilestoneVotes)
 
 	// Walk milestones one at a time, advancing the cursor only over those we
-	// actually process. The per-cycle deadline bounds the work; a truncated
-	// catch-up resumes from where it stopped next cycle, so nothing is skipped.
-	// Vote scanning runs for every milestone (the deadline, not a cap, bounds it).
+	// actually process. The per-cycle deadline bounds the work; a catch-up
+	// truncated by the deadline resumes from where it stopped next cycle. A
+	// milestone that fails to fetch on its own (pruned/404/malformed) is skipped
+	// so it can't stall every later milestone behind it.
 	processed := start - 1
 	for i := start; i <= currentCount; i++ {
 		if ctx.Err() != nil {
@@ -366,30 +369,27 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 			break
 		}
 
-		path, err := url.JoinPath(h.heimdallURL, "milestones", strconv.FormatInt(i, 10))
+		milestone, err := h.getMilestone(ctx, i, latest, currentCount)
 		if err != nil {
-			h.logger.Error().
-				Err(err).
-				Int64("milestone", i).
-				Msg("Failed to build Heimdall milestone path; resuming next cycle")
-			break
-		}
+			// Deadline hit mid-fetch: resume from here next cycle. Any other
+			// error is specific to this milestone, so skip past it.
+			if ctx.Err() != nil {
+				h.logger.Warn().
+					Err(err).
+					Int64("milestone", i).
+					Msg("Milestone refresh deadline reached; resuming next cycle")
+				break
+			}
 
-		var v2 observer.HeimdallMilestoneV2
-		if err = api.GetJSON(ctx, path, &v2); err != nil {
 			h.logger.Warn().
 				Err(err).
 				Int64("milestone", i).
-				Msg("Failed to get Heimdall milestone; resuming next cycle")
-			break
+				Msg("Failed to get Heimdall milestone; skipping")
+			processed = i
+			continue
 		}
 
-		milestone := &v2.Milestone
-		milestone.Count = i
-
-		if h.validatorIDMap != nil {
-			milestone.Votes = h.findMilestoneVotes(ctx, milestone, voteCache)
-		}
+		milestone.Votes = h.findMilestoneVotes(ctx, milestone, voteCache)
 
 		h.milestones = append(h.milestones, milestone)
 		processed = i
@@ -397,6 +397,30 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 
 	h.prevMilestoneCount = processed
 	return nil
+}
+
+// getMilestone returns milestone i. The tip (i == currentCount) is reused from
+// latest when available so the backfill loop doesn't refetch a milestone
+// getLatestMilestone already fetched this cycle.
+func (h *HeimdallProvider) getMilestone(ctx context.Context, i int64, latest *observer.HeimdallMilestone, currentCount int64) (*observer.HeimdallMilestone, error) {
+	if i == currentCount && latest != nil {
+		return latest, nil
+	}
+
+	path, err := url.JoinPath(h.heimdallURL, "milestones", strconv.FormatInt(i, 10))
+	if err != nil {
+		return nil, err
+	}
+
+	var v2 observer.HeimdallMilestoneV2
+	if err := api.GetJSON(ctx, path, &v2); err != nil {
+		return nil, err
+	}
+
+	milestone := &v2.Milestone
+	milestone.Count = i
+
+	return milestone, nil
 }
 
 // getLatestMilestone fetches the current tip milestone along with the total
@@ -419,17 +443,23 @@ func (h *HeimdallProvider) getLatestMilestone(ctx context.Context) (*observer.He
 	}
 
 	// Prefer the dedicated latest endpoint, but fall back to fetching the tip by
-	// count so a provider that doesn't serve /milestones/latest still keeps the
-	// freshness gauges alive.
+	// count when it errors or returns an empty/zero-value body (e.g. a 200 with
+	// an unexpected shape), so a provider that doesn't serve a usable
+	// /milestones/latest still keeps the freshness gauges alive.
 	var v2 observer.HeimdallMilestoneV2
 	latestPath, err := url.JoinPath(h.heimdallURL, "milestones", "latest")
 	if err != nil {
 		return nil, currentCount, err
 	}
-	if err := api.GetJSON(ctx, latestPath, &v2); err != nil {
-		h.logger.Warn().
-			Err(err).
-			Msg("milestones/latest unavailable; falling back to fetch by count")
+	if err := api.GetJSON(ctx, latestPath, &v2); err != nil || v2.Milestone.Timestamp == 0 {
+		if err != nil {
+			h.logger.Warn().
+				Err(err).
+				Msg("milestones/latest unavailable; falling back to fetch by count")
+		} else {
+			h.logger.Warn().
+				Msg("milestones/latest returned an empty body; falling back to fetch by count")
+		}
 
 		byCount, err := url.JoinPath(h.heimdallURL, "milestones", strconv.FormatInt(currentCount, 10))
 		if err != nil {
@@ -442,8 +472,8 @@ func (h *HeimdallProvider) getLatestMilestone(ctx context.Context) (*observer.He
 
 	milestone := &v2.Milestone
 	if milestone.Timestamp == 0 {
-		// Empty/zero-value response; don't drive the freshness gauge (time.Since
-		// of a zero timestamp) from it. Backfill by count still proceeds.
+		// Still empty after the fallback; don't drive the freshness gauge
+		// (time.Since of a zero timestamp) from it. Backfill by count still proceeds.
 		return nil, currentCount, nil
 	}
 	milestone.Count = currentCount
