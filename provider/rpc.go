@@ -1808,7 +1808,10 @@ func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *
 	provider, ok := r.trustedSequencers[rollupID]
 	if !ok {
 		r.trustedSequencers[rollupID] = NewRPCProvider(network, r.bus, rollup.RPC)
-		go runProvider(ctx, r.trustedSequencers[rollupID])
+		// This is a long-lived loop, so it must not capture the caller's
+		// per-cycle context (which is cancelled when the parent cycle returns);
+		// give it a context tied to the process lifetime instead.
+		go runProvider(context.Background(), r.trustedSequencers[rollupID])
 		return nil
 	}
 
@@ -1820,7 +1823,7 @@ func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *
 }
 
 func runProvider(ctx context.Context, p *RPCProvider) {
-	for {
+	for ctx.Err() == nil {
 		select {
 		case url := <-p.trustedSequencerURL:
 			p.url = url
