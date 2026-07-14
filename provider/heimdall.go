@@ -43,12 +43,6 @@ type HeimdallProvider struct {
 	blockBuffer         *blockbuffer.BlockBuffer
 	missedBlockProposal observer.HeimdallMissedBlockProposal
 
-	// Blocks skipped this cycle because a per-block range scan was cut short by
-	// the refresh deadline (or an individual block/vote fetch failed), leaving a
-	// hole in the corresponding per-block metrics.
-	skippedMissedBlockProposals int64
-	skippedMissedVotes          int64
-
 	checkpoint                *observer.HeimdallCheckpoint
 	checkpointProposers       *orderedmap.OrderedMap[string, struct{}]
 	missedCheckpointProposers []string
@@ -169,17 +163,6 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.HeimdallMissedBlockProposal, m)
 	}
 
-	// Surface any blocks a per-block range scan skipped this cycle (deadline or
-	// per-block fetch failure) so the holes are visible in block_scan_skipped.
-	h.bus.Publish(ctx, topics.BlockScanSkipped, observer.NewMessage(h.network, h.label, &observer.HeimdallBlockScanSkipped{
-		Scan:  "missed_block_proposal",
-		Count: h.skippedMissedBlockProposals,
-	}))
-	h.bus.Publish(ctx, topics.BlockScanSkipped, observer.NewMessage(h.network, h.label, &observer.HeimdallBlockScanSkipped{
-		Scan:  "missed_votes",
-		Count: h.skippedMissedVotes,
-	}))
-
 	if h.checkpoint != nil {
 		m := observer.NewMessage(h.network, h.label, h.checkpoint)
 		h.bus.Publish(ctx, topics.Checkpoint, m)
@@ -194,9 +177,7 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 	// the per-milestone backlog stream below, so freshness never lags a slow
 	// catch-up.
 	if h.latestMilestone != nil {
-		latest := observer.NewMessage(h.network, h.label, &observer.HeimdallLatestMilestone{
-			HeimdallMilestone: h.latestMilestone,
-		})
+		latest := observer.NewMessage(h.network, h.label, h.latestMilestone)
 		h.bus.Publish(ctx, topics.MilestoneLatest, latest)
 	}
 
@@ -558,19 +539,16 @@ func (h *HeimdallProvider) refreshMissedCheckpointProposal(ctx context.Context) 
 
 func (h *HeimdallProvider) refreshMissedBlockProposal(ctx context.Context) error {
 	missedBlockProposal := make(observer.HeimdallMissedBlockProposal)
-	h.skippedMissedBlockProposals = 0
 	for i := h.prevBlockNumber + 1; i <= h.blockNumber && h.prevBlockNumber != 0; i++ {
 		if ctx.Err() != nil {
-			// Deadline reached mid-scan; the remaining blocks are a hole this
-			// cycle. Count them so block_scan_skipped surfaces the gap.
-			h.skippedMissedBlockProposals += int64(h.blockNumber - i + 1)
+			// Deadline reached mid-scan; stop rather than hammering failing
+			// requests. The remaining blocks are a hole this cycle.
 			h.logger.Warn().Err(ctx.Err()).Uint64("from", i).Uint64("to", h.blockNumber).Msg("Missed-block-proposal scan deadline reached; skipping remaining")
 			break
 		}
 
 		block := h.getBlock(ctx, i)
 		if block == nil {
-			h.skippedMissedBlockProposals++
 			h.logger.Debug().Uint64("height", i).Msg("Failed to get current block")
 			continue
 		}
@@ -578,7 +556,6 @@ func (h *HeimdallProvider) refreshMissedBlockProposal(ctx context.Context) error
 
 		v := h.getValidators(ctx, i-1)
 		if v == nil {
-			h.skippedMissedBlockProposals++
 			h.logger.Debug().Uint64("height", i).Msg("Failed to get validators")
 			continue
 		}
@@ -802,22 +779,19 @@ func (h *HeimdallProvider) refreshMissedVotes(ctx context.Context) {
 	}
 
 	h.missedVotes = nil
-	h.skippedMissedVotes = 0
 
 	h.logger.Debug().Msg("Refreshing missed consensus votes")
 
 	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
 		if ctx.Err() != nil {
-			// Deadline reached mid-scan; the remaining blocks are a hole this
-			// cycle. Count them so block_scan_skipped surfaces the gap.
-			h.skippedMissedVotes += int64(h.blockNumber - height + 1)
+			// Deadline reached mid-scan; stop rather than hammering failing
+			// requests. The remaining blocks are a hole this cycle.
 			h.logger.Warn().Err(ctx.Err()).Uint64("from", height).Uint64("to", h.blockNumber).Msg("Missed-votes scan deadline reached; skipping remaining")
 			break
 		}
 
 		mv, err := h.getMissedVotes(ctx, height)
 		if err != nil {
-			h.skippedMissedVotes++
 			h.logger.Warn().Err(err).Uint64("height", height).Msg("Failed to detect missed votes")
 			continue
 		}

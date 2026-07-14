@@ -49,6 +49,5 @@ const (
 	ZkEVMBatches                                       // observer.ZkEVMBatches
 	StakingEvents                                      // *observer.StakingEvents
 	BufferedCheckpoint                                 // *observer.HeimdallCheckpoint (nil if no buffered checkpoint)
-	MilestoneLatest                                    // *observer.HeimdallLatestMilestone (tip milestone, drives freshness gauges)
-	BlockScanSkipped                                   // *observer.HeimdallBlockScanSkipped (blocks skipped when a range scan is cut short)
+	MilestoneLatest                                    // *observer.HeimdallMilestone (tip milestone, drives freshness gauges)
 )

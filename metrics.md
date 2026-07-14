@@ -471,19 +471,6 @@ Variable Labels:
 - network
 - provider
 
-## HeimdallBlockScanSkippedObserver
-
-
-### panoptichain_heimdall_block_scan_skipped
-Blocks skipped when a per-block range scan is cut short by the refresh deadline
-
-Metric Type: CounterVec
-
-Variable Labels:
-- network
-- provider
-- scan
-
 ## HeimdallBufferedCheckpointObserver
 
 
@@ -640,42 +627,6 @@ Variable Labels:
 ## MilestoneObserver
 
 
-### panoptichain_heimdall_time_since_last_milestone
-The time since last milestone
-
-Metric Type: GaugeVec
-
-Variable Labels:
-- network
-- provider
-
-### panoptichain_heimdall_milestone_count
-The milestone count
-
-Metric Type: GaugeVec
-
-Variable Labels:
-- network
-- provider
-
-### panoptichain_heimdall_milestone_start_block
-The milestone start block
-
-Metric Type: GaugeVec
-
-Variable Labels:
-- network
-- provider
-
-### panoptichain_heimdall_milestone_end_block
-The milestone end block
-
-Metric Type: GaugeVec
-
-Variable Labels:
-- network
-- provider
-
 ### panoptichain_heimdall_milestone_observed
 The number of milestones observed
 
@@ -739,6 +690,45 @@ Variable Labels:
 
 ### panoptichain_heimdall_milestone_voting_power
 Percentage of voting power that proposed milestone
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+## MilestoneLatestObserver
+
+
+### panoptichain_heimdall_time_since_last_milestone
+The time since last milestone
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_milestone_count
+The milestone count
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_milestone_start_block
+The milestone start block
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_milestone_end_block
+The milestone end block
 
 Metric Type: GaugeVec
 

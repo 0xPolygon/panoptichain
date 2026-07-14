@@ -255,19 +255,7 @@ type HeimdallMilestoneV2 struct {
 	Milestone HeimdallMilestone `json:"milestone"`
 }
 
-// HeimdallLatestMilestone carries the current tip milestone. It is published
-// every cycle (independent of the per-milestone backlog stream) so the
-// freshness gauges reflect the true latest milestone and can never lag behind a
-// slow catch-up.
-type HeimdallLatestMilestone struct {
-	*HeimdallMilestone
-}
-
 type MilestoneObserver struct {
-	time       *prometheus.GaugeVec
-	count      *prometheus.GaugeVec
-	startBlock *prometheus.GaugeVec
-	endBlock   *prometheus.GaugeVec
 	observed   *prometheus.CounterVec
 	proposed   *prometheus.CounterVec
 	blockRange *prometheus.HistogramVec
@@ -279,27 +267,12 @@ type MilestoneObserver struct {
 	votingPower         *prometheus.GaugeVec
 }
 
+// Notify drives count/vote accounting from the per-milestone backlog stream. It
+// gaps during catch-up (see refreshMilestone), which is acceptable.
 func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 	network := m.Network().GetName()
 	provider := m.Provider()
 
-	// The tip milestone drives the freshness gauges. It is published every
-	// cycle before the backlog is drained, so these gauges always reflect the
-	// latest milestone and never lag behind a slow catch-up.
-	if latest, ok := m.Data().(*HeimdallLatestMilestone); ok {
-		if latest.HeimdallMilestone == nil || latest.Timestamp == 0 {
-			return
-		}
-		seconds := time.Since(time.Unix(latest.Timestamp, 0)).Seconds()
-		o.time.WithLabelValues(network, provider).Set(seconds)
-		o.count.WithLabelValues(network, provider).Set(float64(latest.Count))
-		o.startBlock.WithLabelValues(network, provider).Set(float64(latest.StartBlock))
-		o.endBlock.WithLabelValues(network, provider).Set(float64(latest.EndBlock))
-		return
-	}
-
-	// The per-milestone stream drives count/vote accounting. It gaps during
-	// catch-up (see refreshMilestone), which is acceptable.
 	logger := NewLogger(o, m)
 	milestone := m.Data().(*HeimdallMilestone)
 
@@ -347,12 +320,7 @@ func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 
 func (o *MilestoneObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.Milestone, o)
-	eb.Subscribe(topics.MilestoneLatest, o)
 
-	o.time = metrics.NewGauge(metrics.Heimdall, "time_since_last_milestone", "The time since last milestone")
-	o.count = metrics.NewGauge(metrics.Heimdall, "milestone_count", "The milestone count")
-	o.startBlock = metrics.NewGauge(metrics.Heimdall, "milestone_start_block", "The milestone start block")
-	o.endBlock = metrics.NewGauge(metrics.Heimdall, "milestone_end_block", "The milestone end block")
 	o.observed = metrics.NewCounter(metrics.Heimdall, "milestone_observed", "The number of milestones observed")
 	o.proposed = metrics.NewCounter(metrics.Heimdall, "milestone_proposed", "Milestones proposed by validator", "proposer")
 	o.blockRange = metrics.NewHistogram(
@@ -394,10 +362,6 @@ func (o *MilestoneObserver) Register(eb *EventBus) {
 
 func (o *MilestoneObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		o.time,
-		o.count,
-		o.startBlock,
-		o.endBlock,
 		o.observed,
 		o.proposed,
 		o.blockRange,
@@ -405,6 +369,50 @@ func (o *MilestoneObserver) GetCollectors() []prometheus.Collector {
 		o.voteMissed,
 		o.voteSignedButMissed,
 		o.votingPower,
+	}
+}
+
+// MilestoneLatestObserver drives the milestone freshness gauges from the tip
+// milestone, which is published every cycle independent of the backlog stream so
+// the gauges never lag behind a slow catch-up.
+type MilestoneLatestObserver struct {
+	time       *prometheus.GaugeVec
+	count      *prometheus.GaugeVec
+	startBlock *prometheus.GaugeVec
+	endBlock   *prometheus.GaugeVec
+}
+
+func (o *MilestoneLatestObserver) Notify(ctx context.Context, m Message) {
+	latest := m.Data().(*HeimdallMilestone)
+	if latest == nil || latest.Timestamp == 0 {
+		return
+	}
+
+	network := m.Network().GetName()
+	provider := m.Provider()
+
+	seconds := time.Since(time.Unix(latest.Timestamp, 0)).Seconds()
+	o.time.WithLabelValues(network, provider).Set(seconds)
+	o.count.WithLabelValues(network, provider).Set(float64(latest.Count))
+	o.startBlock.WithLabelValues(network, provider).Set(float64(latest.StartBlock))
+	o.endBlock.WithLabelValues(network, provider).Set(float64(latest.EndBlock))
+}
+
+func (o *MilestoneLatestObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.MilestoneLatest, o)
+
+	o.time = metrics.NewGauge(metrics.Heimdall, "time_since_last_milestone", "The time since last milestone")
+	o.count = metrics.NewGauge(metrics.Heimdall, "milestone_count", "The milestone count")
+	o.startBlock = metrics.NewGauge(metrics.Heimdall, "milestone_start_block", "The milestone start block")
+	o.endBlock = metrics.NewGauge(metrics.Heimdall, "milestone_end_block", "The milestone end block")
+}
+
+func (o *MilestoneLatestObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
+		o.time,
+		o.count,
+		o.startBlock,
+		o.endBlock,
 	}
 }
 
@@ -775,48 +783,6 @@ func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
 
 func (o *HeimdallMissedVoteObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.consensus}
-}
-
-// HeimdallBlockScanSkipped reports how many blocks a per-block range scan
-// skipped this cycle because its deadline was reached before it finished. Scan
-// names the scan that was cut short (e.g. "missed_block_proposal",
-// "missed_votes"). A nonzero count means the corresponding per-block metrics
-// have a hole for those blocks this cycle.
-type HeimdallBlockScanSkipped struct {
-	Scan  string
-	Count int64
-}
-
-// HeimdallBlockScanSkippedObserver counts blocks skipped when a per-block range
-// scan is cut short by the refresh deadline.
-type HeimdallBlockScanSkippedObserver struct {
-	skipped *prometheus.CounterVec
-}
-
-func (o *HeimdallBlockScanSkippedObserver) Register(eb *EventBus) {
-	eb.Subscribe(topics.BlockScanSkipped, o)
-
-	o.skipped = metrics.NewCounter(
-		metrics.Heimdall,
-		"block_scan_skipped",
-		"Blocks skipped when a per-block range scan is cut short by the refresh deadline",
-		"scan",
-	)
-}
-
-func (o *HeimdallBlockScanSkippedObserver) Notify(ctx context.Context, m Message) {
-	skipped := m.Data().(*HeimdallBlockScanSkipped)
-	if skipped.Count <= 0 {
-		return
-	}
-
-	network := m.Network().GetName()
-	provider := m.Provider()
-	o.skipped.WithLabelValues(network, provider, skipped.Scan).Add(float64(skipped.Count))
-}
-
-func (o *HeimdallBlockScanSkippedObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.skipped}
 }
 
 // HeimdallBufferedCheckpointObserver tracks buffered checkpoint metrics.
