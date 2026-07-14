@@ -205,6 +205,51 @@ func TestRefreshSpan_WalksGapToLatest(t *testing.T) {
 	}
 }
 
+func TestRefreshMilestone_ResumesAfterDeadline(t *testing.T) {
+	// Backfill 6..15; the context is cancelled while fetching milestone 9, so the
+	// cursor must resume at the last one processed (8) rather than jumping to the
+	// tip (15) and silently skipping 9..15.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const tip = 15
+	served := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/milestones/count":
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneCount{Count: tip})
+		case "/milestones/latest":
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{})
+		default: // per-milestone backfill: 6, 7, 8, 9, ...
+			served++
+			if served == 4 { // milestone 9
+				cancel()
+				http.Error(w, "deadline", http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{})
+		}
+	}))
+	defer server.Close()
+
+	h := &HeimdallProvider{
+		heimdallURL:        server.URL,
+		logger:             NewLogger(nil, "test"),
+		prevMilestoneCount: 5,
+	}
+
+	if err := h.refreshMilestone(ctx); err != nil {
+		t.Fatalf("refreshMilestone() error: %v", err)
+	}
+
+	if h.prevMilestoneCount != 8 {
+		t.Errorf("expected cursor to resume at 8, got %d", h.prevMilestoneCount)
+	}
+	if len(h.milestones) != 3 {
+		t.Errorf("expected 3 milestones processed (6,7,8), got %d", len(h.milestones))
+	}
+}
+
 func TestFetchSpan_RejectsZeroValueSpan(t *testing.T) {
 	// Server returns a zero-value span (simulating error envelope decoding to zero struct)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

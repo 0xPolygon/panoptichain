@@ -380,9 +380,14 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 	scanVotes := h.validatorIDMap != nil && currentCount-start+1 <= maxMilestonesForVoteScan
 	voteCache := make(map[uint64]*voteEntry)
 
+	// Track how far the catch-up actually got. On a deadline the cursor only
+	// advances over milestones we processed, so the rest resume next cycle
+	// instead of being silently skipped (they are not counted as skipped, since
+	// they will still be observed).
+	processed := start - 1
 	for i := start; i <= currentCount; i++ {
 		if ctx.Err() != nil {
-			h.logger.Warn().Err(ctx.Err()).Int64("milestone", i).Msg("Milestone refresh deadline reached; stopping catch-up")
+			h.logger.Warn().Err(ctx.Err()).Int64("milestone", i).Msg("Milestone refresh deadline reached; resuming next cycle")
 			break
 		}
 
@@ -394,6 +399,12 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 
 		var v2 observer.HeimdallMilestoneV2
 		if err = api.GetJSON(ctx, path, &v2); err != nil {
+			// A cancelled context surfaces as a fetch error too; treat it as a
+			// deadline (resume next cycle) rather than skipping this milestone.
+			if ctx.Err() != nil {
+				h.logger.Warn().Err(ctx.Err()).Int64("milestone", i).Msg("Milestone refresh deadline reached; resuming next cycle")
+				break
+			}
 			h.logger.Error().Err(err).Int64("milestone", i).Msg("Failed to get Heimdall milestone")
 			continue
 		}
@@ -406,9 +417,10 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 		}
 
 		h.milestones = append(h.milestones, milestone)
+		processed = i
 	}
 
-	h.prevMilestoneCount = currentCount
+	h.prevMilestoneCount = processed
 	return nil
 }
 
