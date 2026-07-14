@@ -191,13 +191,17 @@ func TestRefreshSpan_WalksGapToLatest(t *testing.T) {
 		}
 	}
 
-	// A subsequent refresh with no new span leaves Curr unchanged.
+	// A subsequent refresh with no new span leaves Curr unchanged and publishes
+	// nothing (so the observer can't re-count the same overlap on idle cycles).
 	prevCurr := h.spans.Curr
 	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 	if h.spans.Curr != prevCurr {
 		t.Error("expected no change when already at latest span")
+	}
+	if len(h.spanUpdates) != 0 {
+		t.Errorf("expected no span updates on an idle cycle, got %d", len(h.spanUpdates))
 	}
 }
 

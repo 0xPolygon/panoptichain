@@ -1115,8 +1115,12 @@ func (r *RPCProvider) refreshTimeToMine(ctx context.Context, c *ethclient.Client
 	// Generally, all messages sent to topics should be done in the PublishEvents
 	// method. This is the exception because of its asynchronous nature. This
 	// implementation reduces complexity by not needing to manage shared variables.
+	//
+	// This goroutine outlives the refresh cycle (waiting for the tx to be mined
+	// can take minutes), so it is detached from the cycle context — which the
+	// runner cancels once RefreshState returns — and given its own deadline.
 	go func() {
-		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
 		_, err := bind.WaitMined(ctx, c, signedTx)

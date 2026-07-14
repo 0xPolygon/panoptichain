@@ -86,7 +86,10 @@ func Validators(n network.Network) ([]Validator, error) {
 		return nil, errors.New("no validators for this network")
 	}
 
-	validators, err := GetValidators(*path)
+	// This is the cached path; its callers are not context-aware, so use a
+	// background context (the request is still bounded by the shared client's
+	// timeout).
+	validators, err := GetValidators(context.Background(), *path)
 	if err != nil {
 		return nil, err
 	}
@@ -99,18 +102,14 @@ func Validators(n network.Network) ([]Validator, error) {
 	return validators, nil
 }
 
-func GetValidators(basePath string) ([]Validator, error) {
+func GetValidators(ctx context.Context, basePath string) ([]Validator, error) {
 	path, err := url.JoinPath(basePath, "stake", "validators-set")
 	if err != nil {
 		return nil, err
 	}
 
 	var body ValidatorSet
-	// This validator set is cached for an hour, so it rarely hits the network.
-	// A background context is used as a deliberate seam: the callers of
-	// GetValidators are not yet context-aware, so there is no caller context to
-	// thread through here.
-	if err := GetJSON(context.Background(), path, &body); err != nil {
+	if err := GetJSON(ctx, path, &body); err != nil {
 		return nil, err
 	}
 

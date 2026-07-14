@@ -101,7 +101,7 @@ func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	h.logger.Debug().Msg("Refreshing Heimdall state")
 
 	h.refreshBlockBuffer(ctx)
-	h.refreshValidatorSet()
+	h.refreshValidatorSet(ctx)
 	h.refreshMilestone(ctx)
 	h.refreshCheckpoint(ctx)
 	h.refreshBufferedCheckpoint(ctx)
@@ -593,29 +593,30 @@ func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
 	// Set current span on startup
 	if h.spans.Curr == nil {
 		h.spans.Curr = latest
-		h.spanUpdates = append(h.spanUpdates, &observer.HeimdallSpans{Curr: latest})
+		h.recordSpanUpdate()
 		return nil
 	}
 
-	// No new span: republish the current one so the gauge stays fresh.
+	// No new span: nothing to publish. The span gauges retain their last value,
+	// so republishing would only make the observer re-count the same overlap
+	// every idle cycle.
 	if latest.ID <= h.spans.Curr.ID {
-		h.spanUpdates = append(h.spanUpdates, &observer.HeimdallSpans{Prev: h.spans.Prev, Curr: h.spans.Curr})
 		return nil
 	}
 
 	// If we've fallen too far behind, jump straight to the latest span rather
 	// than walking every intermediate one.
-	if latest.ID-h.spans.Curr.ID > h.maxSpanLag {
+	if lag := latest.ID - h.spans.Curr.ID; lag > h.maxSpanLag {
 		h.logger.Warn().
 			Uint64("current_span_id", h.spans.Curr.ID).
 			Uint64("latest_span_id", latest.ID).
-			Uint64("lag", latest.ID-h.spans.Curr.ID).
+			Uint64("lag", lag).
 			Uint64("max_span_lag", h.maxSpanLag).
 			Msg("Span lag exceeds maximum, jumping to latest")
 
 		h.spans.Prev = h.spans.Curr
 		h.spans.Curr = latest
-		h.spanUpdates = append(h.spanUpdates, &observer.HeimdallSpans{Prev: h.spans.Prev, Curr: h.spans.Curr})
+		h.recordSpanUpdate()
 		return nil
 	}
 
@@ -634,10 +635,17 @@ func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
 
 		h.spans.Prev = h.spans.Curr
 		h.spans.Curr = span
-		h.spanUpdates = append(h.spanUpdates, &observer.HeimdallSpans{Prev: h.spans.Prev, Curr: h.spans.Curr})
+		h.recordSpanUpdate()
 	}
 
 	return nil
+}
+
+// recordSpanUpdate snapshots the current Prev/Curr span pair for publishing this
+// cycle. Each call captures the pointers as they stand, so a walk over several
+// spans records every consecutive pair in order.
+func (h *HeimdallProvider) recordSpanUpdate() {
+	h.spanUpdates = append(h.spanUpdates, &observer.HeimdallSpans{Prev: h.spans.Prev, Curr: h.spans.Curr})
 }
 
 func (h *HeimdallProvider) getLatestSpan(ctx context.Context) (*observer.HeimdallSpan, error) {
@@ -672,8 +680,8 @@ func (h *HeimdallProvider) fetchSpan(ctx context.Context, spanID string) (*obser
 	return span, nil
 }
 
-func (h *HeimdallProvider) refreshValidatorSet() error {
-	validators, err := api.GetValidators(h.heimdallURL)
+func (h *HeimdallProvider) refreshValidatorSet(ctx context.Context) error {
+	validators, err := api.GetValidators(ctx, h.heimdallURL)
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to get validator set")
 		return err

@@ -28,10 +28,13 @@ func Start(ctx context.Context) {
 				interval := p.PollingInterval()
 				start := time.Now()
 
-				// Bound each refresh cycle so a slow or hung upstream request
-				// cannot pin a provider indefinitely. Every request path honours
-				// this context (ethclient and api.GetJSON both take it), so the
-				// cycle is cancelled once the deadline passes.
+				// Bound each cycle so a hung upstream request can't pin a provider
+				// forever. This is a recovery net, not a scheduling knob: cancelling
+				// mid-cycle can drop in-progress work, so keep it generous
+				// (interval*4, floored at 30s) and let it fire only on real stalls.
+				// The overrun warning below is the non-destructive signal for
+				// "slower than the interval". Every request path honours this
+				// context (ethclient and api.GetJSON both take it).
 				cycleCtx, cancel := context.WithTimeout(ctx, refreshTimeout(interval))
 				if err := p.RefreshState(cycleCtx); err != nil {
 					log.Error().Err(err).Send()
@@ -60,10 +63,11 @@ func Start(ctx context.Context) {
 	wg.Wait()
 }
 
-// refreshTimeout bounds a single refresh cycle. A hung upstream request must not
-// pin a provider forever, so the cycle is capped at interval*4 (floored at 30s)
-// — loose enough for a slow-but-healthy cycle, tight enough to recover from a
-// stalled endpoint.
+// refreshTimeout is the hard ceiling on a single refresh cycle — a recovery net
+// for a hung upstream, not a scheduling bound. It is deliberately generous
+// (interval*4, floored at 30s) so it only trips on a genuine stall; a cycle
+// merely running slower than its interval is surfaced by the overrun warning
+// instead, since cancelling mid-cycle can drop in-progress work.
 func refreshTimeout(interval time.Duration) time.Duration {
 	const minTimeout = 30 * time.Second
 	if t := interval * 4; t > minTimeout {
