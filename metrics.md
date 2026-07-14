@@ -1,4 +1,3 @@
-2026/07/14 12:57:07 INFO Starting export of observers
 
 ## AccountBalancesObserver
 
