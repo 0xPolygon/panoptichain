@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	ethabi "github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -36,28 +38,33 @@ import (
 
 // RPCProvider is the generic struct for all EVM style JSON RPC services.
 type RPCProvider struct {
-	url                    string
-	network                network.Network
-	label                  string
-	bus                    *observer.EventBus
-	interval               time.Duration
-	logger                 zerolog.Logger
-	blockNumber            uint64
-	prevBlockNumber        uint64
-	finalizedHeight        uint64
-	blockBuffer            *blockbuffer.BlockBuffer
-	txPool                 *observer.TransactionPool
-	refreshStateTime       *time.Duration
-	contracts              config.Contracts
-	timeToMine             *config.TimeToMine
-	accounts               []config.Account
-	accountBalances        observer.AccountBalances
-	accountTxs             observer.AccountTxs
-	timeToFinalized        *uint64
-	blockLookBack          uint64
-	hasTxPool              bool
-	fetchValidatorBalances bool
-	fetchMissedProposals   bool
+	url              string
+	network          network.Network
+	label            string
+	bus              *observer.EventBus
+	interval         time.Duration
+	logger           zerolog.Logger
+	blockNumber      uint64
+	prevBlockNumber  uint64
+	finalizedHeight  uint64
+	blockBuffer      *blockbuffer.BlockBuffer
+	txPool           *observer.TransactionPool
+	refreshStateTime *time.Duration
+	contracts        config.Contracts
+	timeToMine       *config.TimeToMine
+	accounts         []config.Account
+	accountBalances  observer.AccountBalances
+	accountTxs       observer.AccountTxs
+	// trackedAccounts is the subset of accounts whose balances are fetched,
+	// resolved once from ExcludeBalanceTags / TrackBalances at construction.
+	trackedAccounts         []config.Account
+	timeToFinalized         *uint64
+	blockLookBack           uint64
+	accountBalanceBatchSize int
+	accountBalanceTimeout   time.Duration
+	hasTxPool               bool
+	fetchValidatorBalances  bool
+	fetchMissedProposals    bool
 
 	// PoS
 	stateSync            map[bool]*observer.StateSync
@@ -111,36 +118,56 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		blb = *cfg.BlockLookBack
 	}
 
+	// Fall back to the default for an unset, zero, or oversized value; zero would
+	// spin the batch loops forever and a value past MaxInt would wrap negative
+	// when used as a slice bound. (Validation catches this for top-level RPCs but
+	// not for rollup overrides, which also flow through here.)
+	balanceBatchSize := int(config.DefaultAccountBalanceBatchSize)
+	if n := cfg.AccountBalanceBatchSize; n != nil && *n > 0 && *n <= math.MaxInt32 {
+		balanceBatchSize = int(*n)
+	}
+
+	balanceTimeout := config.DefaultAccountBalanceTimeout
+	if t := cfg.AccountBalanceTimeout; t != nil && *t > 0 {
+		balanceTimeout = *t
+	}
+
 	fetchValidatorBalances := cfg.ValidatorBalances == nil || *cfg.ValidatorBalances
 	fetchMissedProposals := cfg.MissedProposals == nil || *cfg.MissedProposals
 
+	logger := NewLogger(n, cfg.Label)
+	trackedAccounts := resolveTrackedAccounts(logger, cfg.Accounts, cfg.ExcludeBalanceTags)
+
 	return &RPCProvider{
-		url:                    cfg.URL,
-		network:                n,
-		label:                  cfg.Label,
-		bus:                    eb,
-		blockBuffer:            blockbuffer.NewBlockBuffer(128),
-		interval:               GetInterval(cfg.Interval),
-		logger:                 NewLogger(n, cfg.Label),
-		refreshStateTime:       new(time.Duration),
-		contracts:              cfg.Contracts,
-		timeToMine:             cfg.TimeToMine,
-		accounts:               cfg.Accounts,
-		accountBalances:        make(observer.AccountBalances, 0),
-		accountTxs:             make(observer.AccountTxs, 0),
-		stateSync:              make(map[bool]*observer.StateSync),
-		checkpointSignatures:   make(map[bool]*observer.CheckpointSignatures),
-		validatorBalances:      make(observer.ValidatorWalletBalances),
-		missedBlockProposal:    make(observer.MissedBlockProposal),
-		bridgeEventTimes:       make(observer.BridgeEventTimes),
-		claimEventTimes:        make(observer.ClaimEventTimes),
-		trustedSequencers:      make(map[uint32]*RPCProvider),
-		trustedSequencerURL:    make(chan string),
-		rollupContracts:        make(map[uint32]common.Address),
-		blockLookBack:          blb,
-		hasTxPool:              cfg.TxPool,
-		fetchValidatorBalances: fetchValidatorBalances,
-		fetchMissedProposals:   fetchMissedProposals,
+		url:                     cfg.URL,
+		network:                 n,
+		label:                   cfg.Label,
+		bus:                     eb,
+		blockBuffer:             blockbuffer.NewBlockBuffer(128),
+		interval:                GetInterval(cfg.Interval),
+		logger:                  logger,
+		refreshStateTime:        new(time.Duration),
+		contracts:               cfg.Contracts,
+		timeToMine:              cfg.TimeToMine,
+		accounts:                cfg.Accounts,
+		accountBalances:         make(observer.AccountBalances, 0),
+		accountTxs:              make(observer.AccountTxs, 0),
+		stateSync:               make(map[bool]*observer.StateSync),
+		checkpointSignatures:    make(map[bool]*observer.CheckpointSignatures),
+		validatorBalances:       make(observer.ValidatorWalletBalances),
+		missedBlockProposal:     make(observer.MissedBlockProposal),
+		bridgeEventTimes:        make(observer.BridgeEventTimes),
+		claimEventTimes:         make(observer.ClaimEventTimes),
+		trustedSequencers:       make(map[uint32]*RPCProvider),
+		trustedSequencerURL:     make(chan string),
+		rollupContracts:         make(map[uint32]common.Address),
+		trackedAccounts:         trackedAccounts,
+		blockLookBack:           blb,
+		accountBalanceBatchSize: balanceBatchSize,
+		accountBalanceTimeout:   balanceTimeout,
+		hasTxPool:               cfg.TxPool,
+		fetchValidatorBalances:  fetchValidatorBalances,
+		fetchMissedProposals:    fetchMissedProposals,
 	}
 }
 
@@ -1137,30 +1164,226 @@ func (r *RPCProvider) sendTransaction(ctx context.Context, c *ethclient.Client, 
 }
 
 func (r *RPCProvider) refreshAccountBalances(ctx context.Context, c *ethclient.Client) {
-	co := &bind.CallOpts{Context: ctx}
-
-	for _, account := range r.accounts {
-		address := common.HexToAddress(account.Address)
-
-		ab := &observer.AccountBalance{
-			Address: address,
-			Tag:     account.Tag,
-		}
-
-		eth, err := c.BalanceAt(ctx, address, nil)
-		if err != nil || eth == nil {
-			r.logger.Error().Err(err).
-				Any("address", address).
-				Str("token", observer.ETH).
-				Msg("Failed to get balance")
-		} else {
-			ab.ETH = eth
-		}
-
-		ab.POL = r.getPOL(c, address, co, nil)
-
-		r.accountBalances = append(r.accountBalances, ab)
+	if len(r.trackedAccounts) == 0 {
+		return
 	}
+
+	// Build one balance per tracked account up front. Batch responses are
+	// scattered back into this slice, which is the single source of truth for
+	// both the account address and its fetched balances.
+	balances := make([]*observer.AccountBalance, 0, len(r.trackedAccounts))
+	for _, account := range r.trackedAccounts {
+		balances = append(balances, &observer.AccountBalance{
+			Address: common.HexToAddress(account.Address),
+			Tag:     account.Tag,
+		})
+	}
+
+	// Bound the whole balance fetch so a slow or unresponsive gateway cannot
+	// stall the rest of RefreshState. The batch loops honour this deadline via
+	// their per-iteration ctx.Err() check and the BatchCallContext calls.
+	ctx, cancel := context.WithTimeout(ctx, r.accountBalanceTimeout)
+	defer cancel()
+
+	r.fetchETHBalances(ctx, c, balances)
+	r.fetchPOLBalances(ctx, c, balances)
+
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		r.logger.Warn().Dur("timeout", r.accountBalanceTimeout).Msg("Account balance fetch timed out; some balances not refreshed this cycle")
+	}
+
+	r.accountBalances = append(r.accountBalances, balances...)
+}
+
+// resolveTrackedAccounts returns the subset of accounts whose balances should be
+// fetched. An account's inline TrackBalances override wins; otherwise it is
+// tracked unless its tag is listed in excludeTags. A configured exclude tag that
+// matches no account is logged, since it silently reduces nothing.
+func resolveTrackedAccounts(logger zerolog.Logger, accounts []config.Account, excludeTags []string) []config.Account {
+	exclude := make(map[string]struct{}, len(excludeTags))
+	for _, tag := range excludeTags {
+		exclude[tag] = struct{}{}
+	}
+
+	accountTags := make(map[string]struct{}, len(accounts))
+	for _, account := range accounts {
+		accountTags[account.Tag] = struct{}{}
+	}
+	for _, tag := range excludeTags {
+		if _, ok := accountTags[tag]; !ok {
+			logger.Warn().Str("tag", tag).Msg("exclude_balance_tags entry matches no account tag")
+		}
+	}
+
+	var tracked []config.Account
+	for _, account := range accounts {
+		if account.TrackBalances != nil {
+			if *account.TrackBalances {
+				tracked = append(tracked, account)
+			}
+			continue
+		}
+		if _, excluded := exclude[account.Tag]; !excluded {
+			tracked = append(tracked, account)
+		}
+	}
+	return tracked
+}
+
+// fetchETHBalances fills the ETH balance for each account using batched
+// eth_getBalance calls.
+func (r *RPCProvider) fetchETHBalances(ctx context.Context, c *ethclient.Client, balances []*observer.AccountBalance) {
+	for start := 0; start < len(balances); start += r.accountBalanceBatchSize {
+		if ctx.Err() != nil {
+			return
+		}
+		batch := balances[start:min(start+r.accountBalanceBatchSize, len(balances))]
+
+		reqs := ethBalanceBatch(batch)
+		if err := c.Client().BatchCallContext(ctx, reqs); err != nil {
+			r.logger.Warn().Err(err).Msg("Failed to execute batch request for account ETH balances")
+			continue
+		}
+		r.applyETHBalances(reqs, batch)
+	}
+}
+
+// ethBalanceBatch builds an eth_getBalance batch request, one element per account.
+func ethBalanceBatch(balances []*observer.AccountBalance) []rpc.BatchElem {
+	reqs := make([]rpc.BatchElem, 0, len(balances))
+	for _, b := range balances {
+		reqs = append(reqs, rpc.BatchElem{
+			Method: "eth_getBalance",
+			Args:   []any{b.Address, "latest"},
+			Result: new(json.RawMessage),
+		})
+	}
+	return reqs
+}
+
+// applyETHBalances scatters a batch response into the accounts it targeted, where
+// request j maps to balances[j].
+func (r *RPCProvider) applyETHBalances(reqs []rpc.BatchElem, balances []*observer.AccountBalance) {
+	for j, req := range reqs {
+		eth, err := decodeBalanceResult(req)
+		if err != nil {
+			r.logger.Error().Err(err).Any("address", balances[j].Address).Str("token", observer.ETH).Msg("Failed to get balance")
+			continue
+		}
+		balances[j].ETH = eth
+	}
+}
+
+// decodeBalanceResult decodes a single eth_getBalance batch response.
+func decodeBalanceResult(req rpc.BatchElem) (*big.Int, error) {
+	hexStr, err := batchResultHex(req)
+	if err != nil {
+		return nil, err
+	}
+	return hexutil.DecodeBig(hexStr)
+}
+
+// fetchPOLBalances fills the POL (ERC20) balance for each account using batched
+// eth_call balanceOf requests. On any per-account failure the balance is left
+// nil, matching the previous per-account behaviour.
+func (r *RPCProvider) fetchPOLBalances(ctx context.Context, c *ethclient.Client, balances []*observer.AccountBalance) {
+	if r.polTokenAddress == nil {
+		return
+	}
+
+	erc20abi, err := contracts.ERC20MetaData.GetAbi()
+	if err != nil {
+		r.logger.Error().Err(err).Msg("Failed to parse ERC20 ABI for POL balances")
+		return
+	}
+	to := *r.polTokenAddress
+
+	for start := 0; start < len(balances); start += r.accountBalanceBatchSize {
+		if ctx.Err() != nil {
+			return
+		}
+		batch := balances[start:min(start+r.accountBalanceBatchSize, len(balances))]
+
+		reqs, targets := r.polBalanceBatch(erc20abi, to, batch)
+		if err := c.Client().BatchCallContext(ctx, reqs); err != nil {
+			r.logger.Warn().Err(err).Msg("Failed to execute batch request for account POL balances")
+			continue
+		}
+		r.applyPOLBalances(erc20abi, reqs, targets)
+	}
+}
+
+// polBalanceBatch builds eth_call balanceOf requests for the given accounts,
+// returning the requests alongside the accounts they target. Accounts whose call
+// data fails to pack are logged and skipped, so reqs[j] always corresponds to
+// targets[j].
+func (r *RPCProvider) polBalanceBatch(erc20abi *ethabi.ABI, to common.Address, balances []*observer.AccountBalance) ([]rpc.BatchElem, []*observer.AccountBalance) {
+	reqs := make([]rpc.BatchElem, 0, len(balances))
+	targets := make([]*observer.AccountBalance, 0, len(balances))
+	for _, b := range balances {
+		data, err := erc20abi.Pack("balanceOf", b.Address)
+		if err != nil {
+			r.logger.Error().Err(err).Any("address", b.Address).Str("token", observer.POL).Msg("Failed to pack balanceOf")
+			continue
+		}
+		targets = append(targets, b)
+		reqs = append(reqs, rpc.BatchElem{
+			Method: "eth_call",
+			Args:   []any{map[string]any{"to": to, "data": hexutil.Encode(data)}, "latest"},
+			Result: new(json.RawMessage),
+		})
+	}
+	return reqs, targets
+}
+
+// applyPOLBalances scatters a batch response into the accounts it targeted, where
+// request j maps to targets[j].
+func (r *RPCProvider) applyPOLBalances(erc20abi *ethabi.ABI, reqs []rpc.BatchElem, targets []*observer.AccountBalance) {
+	for j, req := range reqs {
+		pol, err := decodePOLResult(erc20abi, req)
+		if err != nil {
+			r.logger.Error().Err(err).Any("address", targets[j].Address).Str("token", observer.POL).Msg("Failed to get balance")
+			continue
+		}
+		targets[j].POL = pol
+	}
+}
+
+// decodePOLResult decodes a single eth_call balanceOf batch response.
+func decodePOLResult(erc20abi *ethabi.ABI, req rpc.BatchElem) (*big.Int, error) {
+	hexStr, err := batchResultHex(req)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := hexutil.Decode(hexStr)
+	if err != nil {
+		return nil, err
+	}
+	out, err := erc20abi.Unpack("balanceOf", raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, errors.New("empty balanceOf result")
+	}
+	pol, ok := out[0].(*big.Int)
+	if !ok {
+		return nil, errors.New("unexpected balanceOf result type")
+	}
+	return pol, nil
+}
+
+// batchResultHex extracts the hex-string result from a JSON-RPC batch element,
+// returning the element's error if the call itself failed.
+func batchResultHex(req rpc.BatchElem) (string, error) {
+	if req.Error != nil {
+		return "", req.Error
+	}
+	var hexStr string
+	if err := json.Unmarshal(*req.Result.(*json.RawMessage), &hexStr); err != nil {
+		return "", err
+	}
+	return hexStr, nil
 }
 
 func (r *RPCProvider) refreshAccountTxs(ctx context.Context, c *ethclient.Client) {

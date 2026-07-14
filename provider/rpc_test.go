@@ -1,9 +1,13 @@
 package provider
 
 import (
+	"math"
 	"math/big"
+	"slices"
 	"testing"
+	"time"
 
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/contracts"
 	"github.com/0xPolygon/panoptichain/observer"
 )
@@ -160,5 +164,114 @@ func TestSeenCheckpoint_FreshCopy(t *testing.T) {
 	}
 	if !r.checkpointSignatures[false].Seen {
 		t.Error("stored entry was not marked seen")
+	}
+}
+
+// TestNewRPCProvider_AccountBalanceBatchSize verifies the configured batch size
+// is sanitized: unset, zero, or oversized values fall back to the default so the
+// batch loops can never spin forever (size 0) or wrap negative (size > MaxInt).
+func TestNewRPCProvider_AccountBalanceBatchSize(t *testing.T) {
+	def := int(config.DefaultAccountBalanceBatchSize)
+	u := func(v uint64) *uint64 { return &v }
+	interval := time.Second
+
+	tests := []struct {
+		name string
+		cfg  *uint64
+		want int
+	}{
+		{name: "unset uses default", cfg: nil, want: def},
+		{name: "zero falls back to default", cfg: u(0), want: def},
+		{name: "valid value is used", cfg: u(500), want: 500},
+		{name: "value above MaxInt32 falls back to default", cfg: u(math.MaxInt32 + 1), want: def},
+		{name: "MaxUint64 falls back to default", cfg: u(math.MaxUint64), want: def},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.RPC{Name: "test", URL: "http://localhost", Label: "test", Interval: &interval, AccountBalanceBatchSize: tt.cfg}
+			r := NewRPCProvider(nil, observer.NewEventBus(), cfg)
+			if r.accountBalanceBatchSize != tt.want {
+				t.Errorf("accountBalanceBatchSize = %d, want %d", r.accountBalanceBatchSize, tt.want)
+			}
+		})
+	}
+}
+
+// TestNewRPCProvider_AccountBalanceTimeout verifies the balance-fetch timeout is
+// resolved from config, falling back to the default when unset or non-positive.
+func TestNewRPCProvider_AccountBalanceTimeout(t *testing.T) {
+	interval := time.Second
+	d := func(v time.Duration) *time.Duration { return &v }
+
+	tests := []struct {
+		name string
+		cfg  *time.Duration
+		want time.Duration
+	}{
+		{name: "unset uses default", cfg: nil, want: config.DefaultAccountBalanceTimeout},
+		{name: "zero falls back to default", cfg: d(0), want: config.DefaultAccountBalanceTimeout},
+		{name: "valid value is used", cfg: d(5 * time.Second), want: 5 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.RPC{Name: "test", URL: "http://localhost", Label: "test", Interval: &interval, AccountBalanceTimeout: tt.cfg}
+			r := NewRPCProvider(nil, observer.NewEventBus(), cfg)
+			if r.accountBalanceTimeout != tt.want {
+				t.Errorf("accountBalanceTimeout = %v, want %v", r.accountBalanceTimeout, tt.want)
+			}
+		})
+	}
+}
+
+// TestResolveTrackedAccounts covers the balance-tracking precedence: an inline
+// per-account TrackBalances override wins, otherwise an account is tracked
+// unless its tag is listed in exclude_balance_tags.
+func TestResolveTrackedAccounts(t *testing.T) {
+	trueVal, falseVal := true, false
+	logger := NewLogger(nil, "test")
+
+	tests := []struct {
+		name     string
+		accounts []config.Account
+		exclude  []string
+		wantTags []string
+	}{
+		{
+			name:     "no exclusions tracks all",
+			accounts: []config.Account{{Tag: "relayer"}, {Tag: "sequencer"}},
+			wantTags: []string{"relayer", "sequencer"},
+		},
+		{
+			name:     "excluded tag is skipped",
+			accounts: []config.Account{{Tag: "relayer"}, {Tag: "sequencer"}},
+			exclude:  []string{"relayer"},
+			wantTags: []string{"sequencer"},
+		},
+		{
+			name:     "inline true overrides exclusion",
+			accounts: []config.Account{{Tag: "relayer", TrackBalances: &trueVal}},
+			exclude:  []string{"relayer"},
+			wantTags: []string{"relayer"},
+		},
+		{
+			name:     "inline false overrides default",
+			accounts: []config.Account{{Tag: "sequencer", TrackBalances: &falseVal}},
+			wantTags: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveTrackedAccounts(logger, tt.accounts, tt.exclude)
+			var gotTags []string
+			for _, account := range got {
+				gotTags = append(gotTags, account.Tag)
+			}
+			if !slices.Equal(gotTags, tt.wantTags) {
+				t.Errorf("tracked tags = %v, want %v", gotTags, tt.wantTags)
+			}
+		})
 	}
 }
