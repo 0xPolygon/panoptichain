@@ -24,7 +24,10 @@ func Start(ctx context.Context) {
 
 	for _, p := range providers {
 		wg.Go(func() {
-			for {
+			// Exit the loop once the root context is cancelled so shutdown
+			// doesn't leave the goroutine hot-spinning (runCycle returns
+			// immediately on a cancelled context).
+			for ctx.Err() == nil {
 				runCycle(ctx, p)
 			}
 		})

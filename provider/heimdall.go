@@ -43,6 +43,10 @@ type HeimdallProvider struct {
 	blockBuffer         *blockbuffer.BlockBuffer
 	missedBlockProposal observer.HeimdallMissedBlockProposal
 
+	// currentBlockTime memoizes the latest block's timestamp for the current
+	// refresh cycle so height estimates don't refetch it once per milestone.
+	currentBlockTime uint64
+
 	checkpoint                *observer.HeimdallCheckpoint
 	checkpointProposers       *orderedmap.OrderedMap[string, struct{}]
 	missedCheckpointProposers []string
@@ -334,9 +338,6 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 		h.logger.Error().Err(err).Msg("Failed to get latest Heimdall milestone")
 		return err
 	}
-	if latest != nil {
-		h.latestMilestone = latest
-	}
 
 	// Keep the cursor monotonic: a load-balanced node briefly reporting a lower
 	// count must not rewind it, or already-counted milestones get re-published
@@ -344,6 +345,19 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 	if currentCount <= h.prevMilestoneCount {
 		return nil
 	}
+
+	// Advance the freshness tip only on forward progress, so a stale lower tip
+	// can't rewind the freshness gauges either. When there is no new milestone
+	// the previous tip is still republished each cycle, so
+	// time_since_last_milestone keeps climbing.
+	if latest != nil {
+		h.latestMilestone = latest
+	}
+
+	// The latest-block time used for height estimates is a per-cycle snapshot;
+	// reset it so this cycle's backfill fetches it at most once (see
+	// getBlockHeight).
+	h.currentBlockTime = 0
 
 	// On first poll, baseline to the tip; otherwise backfill new milestones.
 	start := h.prevMilestoneCount + 1
@@ -681,8 +695,22 @@ func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
 		if id != latest.ID {
 			span, err = h.getSpan(ctx, id)
 			if err != nil {
-				h.logger.Warn().Uint64("span_id", id).Err(err).Msg("Failed to fetch span")
-				return err
+				if ctx.Err() != nil {
+					// Deadline reached mid-walk; resume from here next cycle.
+					h.logger.Warn().
+						Uint64("span_id", id).
+						Err(err).
+						Msg("Span walk deadline reached; resuming next cycle")
+					return nil
+				}
+
+				// Skip a span that fails on its own (pruned/404/transient) so one
+				// bad span can't freeze span progress until the lag-jump kicks in.
+				h.logger.Warn().
+					Uint64("span_id", id).
+					Err(err).
+					Msg("Failed to fetch span; skipping")
+				continue
 			}
 		}
 
@@ -966,14 +994,22 @@ func (h *HeimdallProvider) getBlockHeight(ctx context.Context, target int64) uin
 		return 0
 	}
 
-	block := h.getBlock(ctx, 0)
-	if block == nil {
-		return 0
-	}
+	// The latest block's time is a per-cycle snapshot; fetch it at most once per
+	// refresh cycle instead of once per milestone during a backlog catch-up.
+	curr := h.currentBlockTime
+	if curr == 0 {
+		block := h.getBlock(ctx, 0)
+		if block == nil {
+			return 0
+		}
 
-	curr, err := block.Time()
-	if err != nil {
-		return 0
+		t, err := block.Time()
+		if err != nil {
+			return 0
+		}
+
+		curr = t
+		h.currentBlockTime = curr
 	}
 
 	// Estimate based on ~2 second block time
