@@ -43,10 +43,6 @@ type HeimdallProvider struct {
 	blockBuffer         *blockbuffer.BlockBuffer
 	missedBlockProposal observer.HeimdallMissedBlockProposal
 
-	// currentBlockTime memoizes the latest block's timestamp for the current
-	// refresh cycle so height estimates don't refetch it once per milestone.
-	currentBlockTime uint64
-
 	checkpoint                *observer.HeimdallCheckpoint
 	checkpointProposers       *orderedmap.OrderedMap[string, struct{}]
 	missedCheckpointProposers []string
@@ -221,11 +217,6 @@ func (h *HeimdallProvider) PollingInterval() time.Duration {
 
 func (h *HeimdallProvider) refreshBlockBuffer(ctx context.Context) {
 	h.prevBlockNumber = h.blockNumber
-
-	// Reset the per-cycle tip-block-time snapshot; it is repopulated below from
-	// the block we fetch here so getBlockHeight doesn't refetch the same tip.
-	h.currentBlockTime = 0
-
 	block := h.getBlock(ctx, 0)
 	if block == nil {
 		return
@@ -236,12 +227,6 @@ func (h *HeimdallProvider) refreshBlockBuffer(ctx context.Context) {
 		return
 	}
 	h.blockNumber = bn.Uint64()
-
-	// Cache the tip block's time so getBlockHeight (milestone vote-height
-	// estimates) can reuse it instead of fetching the tip block again.
-	if t, err := block.Time(); err == nil {
-		h.currentBlockTime = t
-	}
 
 	h.logger.Debug().Uint64("block_number", h.blockNumber).Msg("Refreshing Heimdall state")
 	if h.prevBlockNumber != 0 && h.prevBlockNumber != h.blockNumber {
@@ -373,6 +358,18 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 
 	voteCache := make(map[uint64]*observer.HeimdallMilestoneVotes)
 
+	// Anchor for milestone vote-height estimates: the latest block's time,
+	// fetched once per cycle here rather than once per milestone. Only needed
+	// when we can attribute votes (validator map present).
+	var anchorTime uint64
+	if h.validatorIDMap != nil {
+		if block := h.getBlock(ctx, 0); block != nil {
+			if t, err := block.Time(); err == nil {
+				anchorTime = t
+			}
+		}
+	}
+
 	// Walk milestones one at a time, advancing the cursor only over those we
 	// actually process. The per-cycle deadline bounds the work; a catch-up
 	// truncated by the deadline resumes from where it stopped next cycle. A
@@ -409,7 +406,7 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 			continue
 		}
 
-		milestone.Votes = h.findMilestoneVotes(ctx, milestone, voteCache)
+		milestone.Votes = h.findMilestoneVotes(ctx, milestone, anchorTime, voteCache)
 
 		h.milestones = append(h.milestones, milestone)
 		processed = i
@@ -993,33 +990,16 @@ func (h *HeimdallProvider) getMilestoneFromVoteExtension(vote *observer.Heimdall
 	vote.MilestoneEnd = mp.StartBlockNumber + uint64(len(mp.BlockHashes)) - 1
 }
 
-// getBlockHeight estimates the Heimdall block height for a given timestamp.
-// Assumes ~2 second block time.
-func (h *HeimdallProvider) getBlockHeight(ctx context.Context, target int64) uint64 {
-	if h.blockNumber == 0 {
+// getBlockHeight estimates the Heimdall block height for a given timestamp,
+// anchored on the latest block's number and time (anchorTime). Assumes ~2
+// second block time.
+func (h *HeimdallProvider) getBlockHeight(target int64, anchorTime uint64) uint64 {
+	if h.blockNumber == 0 || anchorTime == 0 {
 		return 0
 	}
 
-	// The latest block's time is a per-cycle snapshot; fetch it at most once per
-	// refresh cycle instead of once per milestone during a backlog catch-up.
-	curr := h.currentBlockTime
-	if curr == 0 {
-		block := h.getBlock(ctx, 0)
-		if block == nil {
-			return 0
-		}
-
-		t, err := block.Time()
-		if err != nil {
-			return 0
-		}
-
-		curr = t
-		h.currentBlockTime = curr
-	}
-
 	// Estimate based on ~2 second block time
-	diff := (int64(curr) - target) / 2
+	diff := (int64(anchorTime) - target) / 2
 	if diff < 0 {
 		return 0
 	}
@@ -1036,12 +1016,12 @@ func (h *HeimdallProvider) getBlockHeight(ctx context.Context, target int64) uin
 // Returns the first matching vote block, or nil if not found. The cache
 // memoizes successful per-height lookups across milestones within the same
 // cycle; failed fetches are not cached so a later milestone can retry them.
-func (h *HeimdallProvider) findMilestoneVotes(ctx context.Context, milestone *observer.HeimdallMilestone, cache map[uint64]*observer.HeimdallMilestoneVotes) *observer.HeimdallMilestoneVotes {
+func (h *HeimdallProvider) findMilestoneVotes(ctx context.Context, milestone *observer.HeimdallMilestone, anchorTime uint64, cache map[uint64]*observer.HeimdallMilestoneVotes) *observer.HeimdallMilestoneVotes {
 	if h.validatorIDMap == nil {
 		return nil
 	}
 
-	height := h.getBlockHeight(ctx, milestone.Timestamp)
+	height := h.getBlockHeight(milestone.Timestamp, anchorTime)
 	if height == 0 {
 		return nil
 	}
