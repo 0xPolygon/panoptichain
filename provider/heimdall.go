@@ -43,6 +43,12 @@ type HeimdallProvider struct {
 	blockBuffer         *blockbuffer.BlockBuffer
 	missedBlockProposal observer.HeimdallMissedBlockProposal
 
+	// Blocks skipped this cycle because a per-block range scan was cut short by
+	// the refresh deadline (or an individual block/vote fetch failed), leaving a
+	// hole in the corresponding per-block metrics.
+	skippedMissedBlockProposals int64
+	skippedMissedVotes          int64
+
 	checkpoint                *observer.HeimdallCheckpoint
 	checkpointProposers       *orderedmap.OrderedMap[string, struct{}]
 	missedCheckpointProposers []string
@@ -50,7 +56,6 @@ type HeimdallProvider struct {
 	milestones         []*observer.HeimdallMilestone
 	prevMilestoneCount int64
 	latestMilestone    *observer.HeimdallMilestone
-	skippedMilestones  int64
 
 	spans *observer.HeimdallSpans
 	// spanUpdates holds the Prev/Curr snapshots to publish this cycle. refreshSpan
@@ -164,6 +169,17 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.HeimdallMissedBlockProposal, m)
 	}
 
+	// Surface any blocks a per-block range scan skipped this cycle (deadline or
+	// per-block fetch failure) so the holes are visible in block_scan_skipped.
+	h.bus.Publish(ctx, topics.BlockScanSkipped, observer.NewMessage(h.network, h.label, &observer.HeimdallBlockScanSkipped{
+		Scan:  "missed_block_proposal",
+		Count: h.skippedMissedBlockProposals,
+	}))
+	h.bus.Publish(ctx, topics.BlockScanSkipped, observer.NewMessage(h.network, h.label, &observer.HeimdallBlockScanSkipped{
+		Scan:  "missed_votes",
+		Count: h.skippedMissedVotes,
+	}))
+
 	if h.checkpoint != nil {
 		m := observer.NewMessage(h.network, h.label, h.checkpoint)
 		h.bus.Publish(ctx, topics.Checkpoint, m)
@@ -180,7 +196,6 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 	if h.latestMilestone != nil {
 		latest := observer.NewMessage(h.network, h.label, &observer.HeimdallLatestMilestone{
 			HeimdallMilestone: h.latestMilestone,
-			Skipped:           h.skippedMilestones,
 		})
 		h.bus.Publish(ctx, topics.MilestoneLatest, latest)
 	}
@@ -328,21 +343,8 @@ func (h *HeimdallProvider) fillRange(ctx context.Context, start uint64) {
 	}
 }
 
-// maxMilestonesPerPoll bounds how many milestones the per-milestone (count/vote)
-// stream drains in a single cycle. Freshness is handled separately via the tip
-// milestone, so this only bounds backlog accounting work; older milestones are
-// dropped (and counted in milestone_skipped) rather than delaying the cycle.
-const maxMilestonesPerPoll = 50
-
-// maxMilestonesForVoteScan is the backlog size at or below which per-milestone
-// vote-extension scans (findMilestoneVotes, up to ~11 requests each) run. When
-// further behind, vote/proposer accounting is skipped so the cycle keeps pace;
-// freshness is unaffected.
-const maxMilestonesForVoteScan = 3
-
 func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 	h.milestones = nil
-	h.skippedMilestones = 0
 
 	// Always fetch the tip milestone first; it drives the freshness gauges
 	// regardless of how far behind the per-milestone backfill below is.
@@ -351,7 +353,9 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 		h.logger.Error().Err(err).Msg("Failed to get latest Heimdall milestone")
 		return err
 	}
-	h.latestMilestone = latest
+	if latest != nil {
+		h.latestMilestone = latest
+	}
 
 	if currentCount <= h.prevMilestoneCount {
 		h.prevMilestoneCount = currentCount
@@ -364,64 +368,43 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 		start = currentCount
 	}
 
-	// Bound the catch-up so a large backlog can't turn into thousands of
-	// sequential fetches. The newest milestones are always kept.
-	if currentCount-start+1 > maxMilestonesPerPoll {
-		h.skippedMilestones = currentCount - start + 1 - maxMilestonesPerPoll
-		h.logger.Warn().
-			Int64("skipped", h.skippedMilestones).
-			Int64("from", start).
-			Int64("to", currentCount).
-			Msg("Milestone backlog exceeds cap; skipping older milestones")
-		start = currentCount - maxMilestonesPerPoll + 1
-	}
+	voteCache := make(map[uint64]*observer.HeimdallMilestoneVotes)
 
-	// Only pay the per-milestone vote-extension scan cost when nearly caught up.
-	scanVotes := h.validatorIDMap != nil && currentCount-start+1 <= maxMilestonesForVoteScan
-	voteCache := make(map[uint64]*voteEntry)
-
-	// We don't resume a truncated catch-up: the cursor jumps to the tip below so
-	// we stay fresh. Any milestone we skip (deadline or fetch error) is counted
-	// into skippedMilestones so the gap shows up in milestone_skipped rather than
-	// vanishing silently.
+	// Walk milestones one at a time, advancing the cursor only over those we
+	// actually process. The per-cycle deadline bounds the work; a truncated
+	// catch-up resumes from where it stopped next cycle, so nothing is skipped.
+	// Vote scanning runs for every milestone (the deadline, not a cap, bounds it).
+	processed := start - 1
 	for i := start; i <= currentCount; i++ {
 		if ctx.Err() != nil {
-			h.skippedMilestones += currentCount - i + 1
-			h.logger.Warn().Err(ctx.Err()).Int64("from", i).Int64("to", currentCount).Msg("Milestone refresh deadline reached; skipping remaining")
+			h.logger.Warn().Err(ctx.Err()).Int64("from", i).Int64("to", currentCount).Msg("Milestone refresh deadline reached; resuming next cycle")
 			break
 		}
 
 		path, err := url.JoinPath(h.heimdallURL, "milestones", strconv.FormatInt(i, 10))
 		if err != nil {
-			h.skippedMilestones++
-			h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone path")
-			continue
+			h.logger.Error().Err(err).Int64("milestone", i).Msg("Failed to build Heimdall milestone path; resuming next cycle")
+			break
 		}
 
 		var v2 observer.HeimdallMilestoneV2
 		if err = api.GetJSON(ctx, path, &v2); err != nil {
-			// A cancelled context surfaces as a fetch error too; skip the rest.
-			if ctx.Err() != nil {
-				h.skippedMilestones += currentCount - i + 1
-				h.logger.Warn().Err(ctx.Err()).Int64("from", i).Int64("to", currentCount).Msg("Milestone refresh deadline reached; skipping remaining")
-				break
-			}
-			h.skippedMilestones++
-			h.logger.Error().Err(err).Int64("milestone", i).Msg("Failed to get Heimdall milestone")
-			continue
+			h.logger.Warn().Err(err).Int64("milestone", i).Msg("Failed to get Heimdall milestone; resuming next cycle")
+			break
 		}
 
 		milestone := &v2.Milestone
 		milestone.Count = i
 
-		if scanVotes {
+		if h.validatorIDMap != nil {
 			milestone.Votes = h.findMilestoneVotes(ctx, milestone, voteCache)
 		}
 
 		h.milestones = append(h.milestones, milestone)
+		processed = i
 	}
 
-	h.prevMilestoneCount = currentCount
+	h.prevMilestoneCount = processed
 	return nil
 }
 
@@ -439,18 +422,37 @@ func (h *HeimdallProvider) getLatestMilestone(ctx context.Context) (*observer.He
 		return nil, 0, err
 	}
 	currentCount := int64(count.Count)
+	if currentCount <= 0 {
+		// Fresh chain with no milestones yet; nothing to report.
+		return nil, 0, nil
+	}
 
+	// Prefer the dedicated latest endpoint, but fall back to fetching the tip by
+	// count so a provider that doesn't serve /milestones/latest still keeps the
+	// freshness gauges alive.
+	var v2 observer.HeimdallMilestoneV2
 	latestPath, err := url.JoinPath(h.heimdallURL, "milestones", "latest")
 	if err != nil {
 		return nil, currentCount, err
 	}
-
-	var v2 observer.HeimdallMilestoneV2
 	if err := api.GetJSON(ctx, latestPath, &v2); err != nil {
-		return nil, currentCount, err
+		h.logger.Warn().Err(err).Msg("milestones/latest unavailable; falling back to fetch by count")
+
+		byCount, err := url.JoinPath(h.heimdallURL, "milestones", strconv.FormatInt(currentCount, 10))
+		if err != nil {
+			return nil, currentCount, err
+		}
+		if err := api.GetJSON(ctx, byCount, &v2); err != nil {
+			return nil, currentCount, err
+		}
 	}
 
 	milestone := &v2.Milestone
+	if milestone.Timestamp == 0 {
+		// Empty/zero-value response; don't drive the freshness gauge (time.Since
+		// of a zero timestamp) from it. Backfill by count still proceeds.
+		return nil, currentCount, nil
+	}
 	milestone.Count = currentCount
 
 	return milestone, currentCount, nil
@@ -556,17 +558,28 @@ func (h *HeimdallProvider) refreshMissedCheckpointProposal(ctx context.Context) 
 
 func (h *HeimdallProvider) refreshMissedBlockProposal(ctx context.Context) error {
 	missedBlockProposal := make(observer.HeimdallMissedBlockProposal)
+	h.skippedMissedBlockProposals = 0
 	for i := h.prevBlockNumber + 1; i <= h.blockNumber && h.prevBlockNumber != 0; i++ {
+		if ctx.Err() != nil {
+			// Deadline reached mid-scan; the remaining blocks are a hole this
+			// cycle. Count them so block_scan_skipped surfaces the gap.
+			h.skippedMissedBlockProposals += int64(h.blockNumber - i + 1)
+			h.logger.Warn().Err(ctx.Err()).Uint64("from", i).Uint64("to", h.blockNumber).Msg("Missed-block-proposal scan deadline reached; skipping remaining")
+			break
+		}
+
 		block := h.getBlock(ctx, i)
 		if block == nil {
-			h.logger.Debug().Msg("Failed to get current block")
+			h.skippedMissedBlockProposals++
+			h.logger.Debug().Uint64("height", i).Msg("Failed to get current block")
 			continue
 		}
 		proposer := block.ProposerAddress()
 
 		v := h.getValidators(ctx, i-1)
 		if v == nil {
-			h.logger.Debug().Msg("Failed to get validators")
+			h.skippedMissedBlockProposals++
+			h.logger.Debug().Uint64("height", i).Msg("Failed to get validators")
 			continue
 		}
 		validators := v.Validators()
@@ -789,12 +802,22 @@ func (h *HeimdallProvider) refreshMissedVotes(ctx context.Context) {
 	}
 
 	h.missedVotes = nil
+	h.skippedMissedVotes = 0
 
 	h.logger.Debug().Msg("Refreshing missed consensus votes")
 
 	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
+		if ctx.Err() != nil {
+			// Deadline reached mid-scan; the remaining blocks are a hole this
+			// cycle. Count them so block_scan_skipped surfaces the gap.
+			h.skippedMissedVotes += int64(h.blockNumber - height + 1)
+			h.logger.Warn().Err(ctx.Err()).Uint64("from", height).Uint64("to", h.blockNumber).Msg("Missed-votes scan deadline reached; skipping remaining")
+			break
+		}
+
 		mv, err := h.getMissedVotes(ctx, height)
 		if err != nil {
+			h.skippedMissedVotes++
 			h.logger.Warn().Err(err).Uint64("height", height).Msg("Failed to detect missed votes")
 			continue
 		}
@@ -935,19 +958,12 @@ func (h *HeimdallProvider) getBlockHeight(ctx context.Context, target int64) uin
 	return h.blockNumber - uint64(diff)
 }
 
-// voteEntry memoizes a getMilestoneVotes result (including errors) for a height
-// within a single refresh cycle. Adjacent milestones scan overlapping windows,
-// so caching avoids refetching the same blocks and vote extensions.
-type voteEntry struct {
-	votes *observer.HeimdallMilestoneVotes
-	err   error
-}
-
 // findMilestoneVotes searches for votes matching this milestone's range.
 // Uses the milestone timestamp to estimate the finalization block.
 // Returns the first matching vote block, or nil if not found. The cache
-// memoizes per-height lookups across milestones within the same cycle.
-func (h *HeimdallProvider) findMilestoneVotes(ctx context.Context, milestone *observer.HeimdallMilestone, cache map[uint64]*voteEntry) *observer.HeimdallMilestoneVotes {
+// memoizes successful per-height lookups across milestones within the same
+// cycle; failed fetches are not cached so a later milestone can retry them.
+func (h *HeimdallProvider) findMilestoneVotes(ctx context.Context, milestone *observer.HeimdallMilestone, cache map[uint64]*observer.HeimdallMilestoneVotes) *observer.HeimdallMilestoneVotes {
 	if h.validatorIDMap == nil {
 		return nil
 	}
@@ -963,18 +979,18 @@ func (h *HeimdallProvider) findMilestoneVotes(ctx context.Context, milestone *ob
 	end := min(h.blockNumber, height+window)
 
 	for i := start; i <= end; i++ {
-		entry, ok := cache[i]
+		mv, ok := cache[i]
 		if !ok {
 			votes, err := h.getMilestoneVotes(ctx, i)
-			entry = &voteEntry{votes: votes, err: err}
-			cache[i] = entry
-		}
-		if entry.err != nil {
-			continue
+			if err != nil {
+				// Don't cache the error; a later milestone can retry this height.
+				continue
+			}
+			mv = votes
+			cache[i] = mv
 		}
 
-		mv := entry.votes
-		if mv.MilestoneVoters == 0 {
+		if mv == nil || mv.MilestoneVoters == 0 {
 			continue
 		}
 

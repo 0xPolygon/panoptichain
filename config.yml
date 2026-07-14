@@ -654,6 +654,7 @@
   #   - "hash_divergence"
   #   - "heimdall_block"
   #   - "heimdall_block_interval"
+  #   - "heimdall_block_scan_skipped"
   #   - "heimdall_checkpoint"
   #   - "heimdall_missed_block_proposal"
   #   - "heimdall_missed_checkpoint_proposal"

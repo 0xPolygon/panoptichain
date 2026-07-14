@@ -1,3 +1,4 @@
+2026/07/14 12:57:07 INFO Starting export of observers
 
 ## AccountBalancesObserver
 
@@ -471,6 +472,19 @@ Variable Labels:
 - network
 - provider
 
+## HeimdallBlockScanSkippedObserver
+
+
+### panoptichain_heimdall_block_scan_skipped
+Blocks skipped when a per-block range scan is cut short by the refresh deadline
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- scan
+
 ## HeimdallBufferedCheckpointObserver
 
 
@@ -658,15 +672,6 @@ Variable Labels:
 The milestone end block
 
 Metric Type: GaugeVec
-
-Variable Labels:
-- network
-- provider
-
-### panoptichain_heimdall_milestone_skipped
-The number of milestones skipped during catch-up
-
-Metric Type: CounterVec
 
 Variable Labels:
 - network

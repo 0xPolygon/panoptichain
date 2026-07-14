@@ -205,10 +205,10 @@ func TestRefreshSpan_WalksGapToLatest(t *testing.T) {
 	}
 }
 
-func TestRefreshMilestone_SkipsRemainingOnDeadline(t *testing.T) {
-	// Backfill 6..15; the context is cancelled while fetching milestone 9. We
-	// don't resume — the cursor jumps to the tip (15) — but the un-fetched
-	// milestones (9..15) are counted in skippedMilestones instead of vanishing.
+func TestRefreshMilestone_ResumesAfterDeadline(t *testing.T) {
+	// Backfill 6..15; the context is cancelled while fetching milestone 9. The
+	// cursor advances only over the milestones we actually processed (6,7,8), so
+	// the truncated catch-up resumes from 9 next cycle rather than skipping a gap.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -219,6 +219,8 @@ func TestRefreshMilestone_SkipsRemainingOnDeadline(t *testing.T) {
 		case "/milestones/count":
 			json.NewEncoder(w).Encode(observer.HeimdallMilestoneCount{Count: tip})
 		case "/milestones/latest":
+			// Zero-value tip: getLatestMilestone ignores it for freshness, but
+			// the backfill below still proceeds off the count.
 			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{})
 		default: // per-milestone backfill: 6, 7, 8, 9, ...
 			served++
@@ -242,15 +244,12 @@ func TestRefreshMilestone_SkipsRemainingOnDeadline(t *testing.T) {
 		t.Fatalf("refreshMilestone() error: %v", err)
 	}
 
-	if h.prevMilestoneCount != tip {
-		t.Errorf("expected cursor to jump to tip %d, got %d", tip, h.prevMilestoneCount)
+	// Cursor resumes at the last processed milestone (8), not the tip.
+	if h.prevMilestoneCount != 8 {
+		t.Errorf("expected cursor to resume at 8, got %d", h.prevMilestoneCount)
 	}
 	if len(h.milestones) != 3 {
 		t.Errorf("expected 3 milestones processed (6,7,8), got %d", len(h.milestones))
-	}
-	// 9..15 were skipped and must be accounted for.
-	if h.skippedMilestones != 7 {
-		t.Errorf("expected 7 skipped milestones (9..15), got %d", h.skippedMilestones)
 	}
 }
 
