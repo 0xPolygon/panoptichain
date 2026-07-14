@@ -48,7 +48,7 @@ func runCycle(ctx context.Context, p provider.Provider) {
 	// and let it fire only on real stalls. The overrun warning below is the
 	// non-destructive signal for "slower than the interval". Every request path
 	// honours this context (ethclient and api.GetJSON both take it).
-	cycleCtx, cancel := context.WithTimeout(ctx, refreshTimeout(interval))
+	cycleCtx, cancel := context.WithTimeout(ctx, util.RefreshTimeout(interval))
 	if err := p.RefreshState(cycleCtx); err != nil {
 		log.Error().Err(err).Send()
 	}
@@ -69,19 +69,6 @@ func runCycle(ctx context.Context, p provider.Provider) {
 	}
 
 	util.BlockFor(ctx, interval)
-}
-
-// refreshTimeout is the hard ceiling on a single refresh cycle — a recovery net
-// for a hung upstream, not a scheduling bound. It is deliberately generous
-// (interval*4, floored at 30s) so it only trips on a genuine stall; a cycle
-// merely running slower than its interval is surfaced by the overrun warning
-// instead, since cancelling mid-cycle can drop in-progress work.
-func refreshTimeout(interval time.Duration) time.Duration {
-	const minTimeout = 30 * time.Second
-	if t := interval * 4; t > minTimeout {
-		return t
-	}
-	return minTimeout
 }
 
 // Init configures all the providers and observers of the system.

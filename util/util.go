@@ -25,3 +25,16 @@ func BlockFor(ctx context.Context, duration time.Duration) {
 		return
 	}
 }
+
+// RefreshTimeout is the hard ceiling on a single provider refresh cycle — a
+// recovery net for a hung upstream, not a scheduling bound. It is deliberately
+// generous (interval*4, floored at 30s) so it only trips on a genuine stall; a
+// cycle merely running slower than its interval is surfaced by the overrun
+// warning instead, since cancelling mid-cycle can drop in-progress work.
+func RefreshTimeout(interval time.Duration) time.Duration {
+	const minTimeout = 30 * time.Second
+	if t := interval * 4; t > minTimeout {
+		return t
+	}
+	return minTimeout
+}

@@ -34,7 +34,14 @@ func newSharedClient() *http.Client {
 	// Clone the default transport so we inherit proxy, TLS, and HTTP/2
 	// defaults, then raise the idle-connection pool limits (the default
 	// MaxIdleConnsPerHost of 2 would defeat pooling for our per-host bursts).
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Fall back to a plain client if something replaced DefaultTransport with a
+	// non-*http.Transport, rather than panicking at package init.
+	dt, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return &http.Client{Timeout: 10 * time.Second}
+	}
+
+	transport := dt.Clone()
 	transport.MaxIdleConns = 100
 	transport.MaxIdleConnsPerHost = 10
 	transport.IdleConnTimeout = 90 * time.Second
@@ -67,7 +74,13 @@ func GetJSON(ctx context.Context, url string, target any) error {
 	if err != nil {
 		return err
 	}
-	defer r.Body.Close()
+	// Drain any unread bytes (a trailing newline the decoder leaves, or an
+	// undecoded error body) before closing so the connection returns to the
+	// idle pool instead of being discarded.
+	defer func() {
+		_, _ = io.Copy(io.Discard, r.Body)
+		r.Body.Close()
+	}()
 
 	if r.StatusCode < 200 || r.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 256))

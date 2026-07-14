@@ -221,6 +221,11 @@ func (h *HeimdallProvider) PollingInterval() time.Duration {
 
 func (h *HeimdallProvider) refreshBlockBuffer(ctx context.Context) {
 	h.prevBlockNumber = h.blockNumber
+
+	// Reset the per-cycle tip-block-time snapshot; it is repopulated below from
+	// the block we fetch here so getBlockHeight doesn't refetch the same tip.
+	h.currentBlockTime = 0
+
 	block := h.getBlock(ctx, 0)
 	if block == nil {
 		return
@@ -231,6 +236,12 @@ func (h *HeimdallProvider) refreshBlockBuffer(ctx context.Context) {
 		return
 	}
 	h.blockNumber = bn.Uint64()
+
+	// Cache the tip block's time so getBlockHeight (milestone vote-height
+	// estimates) can reuse it instead of fetching the tip block again.
+	if t, err := block.Time(); err == nil {
+		h.currentBlockTime = t
+	}
 
 	h.logger.Debug().Uint64("block_number", h.blockNumber).Msg("Refreshing Heimdall state")
 	if h.prevBlockNumber != 0 && h.prevBlockNumber != h.blockNumber {
@@ -353,11 +364,6 @@ func (h *HeimdallProvider) refreshMilestone(ctx context.Context) error {
 	if latest != nil {
 		h.latestMilestone = latest
 	}
-
-	// The latest-block time used for height estimates is a per-cycle snapshot;
-	// reset it so this cycle's backfill fetches it at most once (see
-	// getBlockHeight).
-	h.currentBlockTime = 0
 
 	// On first poll, baseline to the tip; otherwise backfill new milestones.
 	start := h.prevMilestoneCount + 1
