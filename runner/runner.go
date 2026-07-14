@@ -4,6 +4,7 @@ package runner
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/log"
@@ -24,20 +25,51 @@ func Start(ctx context.Context) {
 	for _, p := range providers {
 		wg.Go(func() {
 			for {
-				if err := p.RefreshState(ctx); err != nil {
+				interval := p.PollingInterval()
+				start := time.Now()
+
+				// Bound each refresh cycle so a slow or hung upstream request
+				// cannot pin a provider indefinitely. Every request path honours
+				// this context (ethclient and api.GetJSON both take it), so the
+				// cycle is cancelled once the deadline passes.
+				cycleCtx, cancel := context.WithTimeout(ctx, refreshTimeout(interval))
+				if err := p.RefreshState(cycleCtx); err != nil {
 					log.Error().Err(err).Send()
 				}
+				cancel()
 
 				if err := p.PublishEvents(ctx); err != nil {
 					log.Error().Err(err).Send()
 				}
 
-				util.BlockFor(ctx, p.PollingInterval())
+				// If a cycle runs longer than its polling interval, BlockFor will
+				// not pause, so cycles run back-to-back and the provider falls
+				// behind schedule. Surface it rather than letting it hide.
+				if elapsed := time.Since(start); elapsed >= interval {
+					log.Warn().
+						Dur("elapsed", elapsed).
+						Dur("interval", interval).
+						Msg("Provider refresh cycle overran its polling interval")
+				}
+
+				util.BlockFor(ctx, interval)
 			}
 		})
 	}
 
 	wg.Wait()
+}
+
+// refreshTimeout bounds a single refresh cycle. A hung upstream request must not
+// pin a provider forever, so the cycle is capped at interval*4 (floored at 30s)
+// — loose enough for a slow-but-healthy cycle, tight enough to recover from a
+// stalled endpoint.
+func refreshTimeout(interval time.Duration) time.Duration {
+	const minTimeout = 30 * time.Second
+	if t := interval * 4; t > minTimeout {
+		return t
+	}
+	return minTimeout
 }
 
 // Init configures all the providers and observers of the system.

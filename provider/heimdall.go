@@ -53,6 +53,10 @@ type HeimdallProvider struct {
 	skippedMilestones  int64
 
 	spans *observer.HeimdallSpans
+	// spanUpdates holds the Prev/Curr snapshots to publish this cycle. refreshSpan
+	// walks every span from the last known one up to the latest, so each
+	// consecutive pair is published and overlap detection sees the full sequence.
+	spanUpdates []*observer.HeimdallSpans
 
 	validatorSets *observer.HeimdallValidatorSets
 
@@ -90,13 +94,10 @@ func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.He
 func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	defer timer(h.refreshStateTime)()
 
-	// Bound the whole cycle so a slow/degraded upstream can't make a single
-	// RefreshState run unbounded (api.GetJSON now honours this context). The
+	// The runner bounds this cycle with a deadline and api.GetJSON honours it, so
+	// a slow/degraded upstream cannot make RefreshState run unbounded. The
 	// freshness milestone is fetched first inside refreshMilestone, so a
 	// truncated cycle only drops backlog accounting, never the freshness gauge.
-	ctx, cancel := context.WithTimeout(ctx, h.refreshTimeout())
-	defer cancel()
-
 	h.logger.Debug().Msg("Refreshing Heimdall state")
 
 	h.refreshBlockBuffer(ctx)
@@ -189,8 +190,8 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.Milestone, m)
 	}
 
-	if h.spans != nil {
-		m := observer.NewMessage(h.network, h.label, h.spans)
+	for _, s := range h.spanUpdates {
+		m := observer.NewMessage(h.network, h.label, s)
 		h.bus.Publish(ctx, topics.Span, m)
 	}
 
@@ -216,18 +217,6 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 
 func (h *HeimdallProvider) PollingInterval() time.Duration {
 	return h.interval
-}
-
-// refreshTimeout bounds a single RefreshState cycle so a hung upstream cannot
-// stall the provider's loop indefinitely. Derived from the polling interval
-// with a floor; freshness is captured before the bounded work, so a truncated
-// cycle never affects the freshness gauges.
-func (h *HeimdallProvider) refreshTimeout() time.Duration {
-	const minTimeout = 30 * time.Second
-	if t := h.interval * 4; t > minTimeout {
-		return t
-	}
-	return minTimeout
 }
 
 func (h *HeimdallProvider) refreshBlockBuffer(ctx context.Context) {
@@ -593,6 +582,8 @@ func (h *HeimdallProvider) refreshMissedBlockProposal(ctx context.Context) error
 }
 
 func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
+	h.spanUpdates = nil
+
 	// Always fetch the latest span
 	latest, err := h.getLatestSpan(ctx)
 	if err != nil {
@@ -602,39 +593,50 @@ func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
 	// Set current span on startup
 	if h.spans.Curr == nil {
 		h.spans.Curr = latest
+		h.spanUpdates = append(h.spanUpdates, &observer.HeimdallSpans{Curr: latest})
 		return nil
 	}
 
-	// No new span available
-	if latest.ID == h.spans.Curr.ID {
+	// No new span: republish the current one so the gauge stays fresh.
+	if latest.ID <= h.spans.Curr.ID {
+		h.spanUpdates = append(h.spanUpdates, &observer.HeimdallSpans{Prev: h.spans.Prev, Curr: h.spans.Curr})
 		return nil
 	}
 
-	// Check if lag exceeds maximum threshold
-	lag := latest.ID - h.spans.Curr.ID
-	if lag > h.maxSpanLag {
+	// If we've fallen too far behind, jump straight to the latest span rather
+	// than walking every intermediate one.
+	if latest.ID-h.spans.Curr.ID > h.maxSpanLag {
 		h.logger.Warn().
 			Uint64("current_span_id", h.spans.Curr.ID).
 			Uint64("latest_span_id", latest.ID).
-			Uint64("lag", lag).
+			Uint64("lag", latest.ID-h.spans.Curr.ID).
 			Uint64("max_span_lag", h.maxSpanLag).
 			Msg("Span lag exceeds maximum, jumping to latest")
 
 		h.spans.Prev = h.spans.Curr
 		h.spans.Curr = latest
+		h.spanUpdates = append(h.spanUpdates, &observer.HeimdallSpans{Prev: h.spans.Prev, Curr: h.spans.Curr})
 		return nil
 	}
 
-	// Fetch next span sequentially to ensure overlap detection works
-	next := h.spans.Curr.ID + 1
-	span, err := h.getSpan(ctx, next)
-	if err != nil {
-		h.logger.Warn().Uint64("span_id", next).Err(err).Msg("Failed to fetch span")
-		return err
+	// Walk every new span up to the latest so overlap detection sees each
+	// consecutive pair (mirrors refreshMilestone). Each step is published as its
+	// own Prev/Curr snapshot; the final one carries the latest span forward.
+	for id := h.spans.Curr.ID + 1; id <= latest.ID; id++ {
+		span := latest
+		if id != latest.ID {
+			span, err = h.getSpan(ctx, id)
+			if err != nil {
+				h.logger.Warn().Uint64("span_id", id).Err(err).Msg("Failed to fetch span")
+				return err
+			}
+		}
+
+		h.spans.Prev = h.spans.Curr
+		h.spans.Curr = span
+		h.spanUpdates = append(h.spanUpdates, &observer.HeimdallSpans{Prev: h.spans.Prev, Curr: h.spans.Curr})
 	}
 
-	h.spans.Prev = h.spans.Curr
-	h.spans.Curr = span
 	return nil
 }
 
