@@ -114,6 +114,10 @@ func (a *AggchainProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
+func (a *AggchainProvider) Logger() zerolog.Logger {
+	return a.logger
+}
+
 func (a *AggchainProvider) PollingInterval() time.Duration {
 	return a.interval
 }

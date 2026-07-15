@@ -94,6 +94,10 @@ func (e *ExchangeRatesProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
+func (e *ExchangeRatesProvider) Logger() zerolog.Logger {
+	return e.logger
+}
+
 func (e *ExchangeRatesProvider) PollingInterval() time.Duration {
 	return e.interval
 }

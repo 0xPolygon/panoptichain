@@ -135,6 +135,10 @@ func (h *HashDivergenceProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
+func (h *HashDivergenceProvider) Logger() zerolog.Logger {
+	return h.logger
+}
+
 func (h *HashDivergenceProvider) PollingInterval() time.Duration {
 	return h.interval
 }

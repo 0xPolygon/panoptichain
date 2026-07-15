@@ -119,6 +119,10 @@ func (r *SuccinctProverNetworkProvider) PublishEvents(ctx context.Context) error
 	return nil
 }
 
+func (r *SuccinctProverNetworkProvider) Logger() zerolog.Logger {
+	return r.logger
+}
+
 func (r *SuccinctProverNetworkProvider) PollingInterval() time.Duration {
 	return r.interval
 }

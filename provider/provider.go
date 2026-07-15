@@ -32,6 +32,11 @@ type Provider interface {
 	// PollingInterval returns how often the provider should refresh it state and
 	// publish events in seconds.
 	PollingInterval() time.Duration
+
+	// Logger returns the provider's contextual logger (tagged with network and
+	// provider label) so cross-cutting log lines such as the cycle-overrun
+	// warning are attributable to a specific provider.
+	Logger() zerolog.Logger
 }
 
 // RunCycle runs a single bounded refresh/publish cycle for a provider and blocks
@@ -40,21 +45,22 @@ type Provider interface {
 // cycle that overruns its interval falls behind schedule (cycles run closer to
 // back-to-back); the overrun warning surfaces that.
 func RunCycle(ctx context.Context, p Provider) {
+	logger := p.Logger()
 	interval := p.PollingInterval()
 	start := time.Now()
 
 	cycleCtx, cancel := context.WithTimeout(ctx, util.RefreshTimeout(interval))
 	if err := p.RefreshState(cycleCtx); err != nil {
-		log.Error().Err(err).Send()
+		logger.Error().Err(err).Send()
 	}
 	cancel()
 
 	if err := p.PublishEvents(ctx); err != nil {
-		log.Error().Err(err).Send()
+		logger.Error().Err(err).Send()
 	}
 
 	if elapsed := time.Since(start); elapsed >= interval {
-		log.Warn().
+		logger.Warn().
 			Dur("elapsed", elapsed).
 			Dur("interval", interval).
 			Msg("Provider refresh cycle overran its polling interval")
