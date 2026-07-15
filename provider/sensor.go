@@ -143,6 +143,10 @@ func (s *SensorNetworkProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
+func (s *SensorNetworkProvider) Logger() zerolog.Logger {
+	return s.logger
+}
+
 func (s *SensorNetworkProvider) PollingInterval() time.Duration {
 	return s.interval
 }

@@ -211,6 +211,10 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
+func (h *HeimdallProvider) Logger() zerolog.Logger {
+	return h.logger
+}
+
 func (h *HeimdallProvider) PollingInterval() time.Duration {
 	return h.interval
 }

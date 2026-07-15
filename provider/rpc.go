@@ -367,6 +367,10 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 	return nil
 }
 
+func (r *RPCProvider) Logger() zerolog.Logger {
+	return r.logger
+}
+
 func (r *RPCProvider) PollingInterval() time.Duration {
 	return r.interval
 }

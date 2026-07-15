@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/rs/zerolog"
+
 	"github.com/0xPolygon/panoptichain/api"
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/network"
@@ -24,6 +26,7 @@ type GrafanaProvider struct {
 	url              string
 	response         *observer.GrafanaResponse
 	refreshStateTime *time.Duration
+	logger           zerolog.Logger
 }
 
 func NewGrafanaProvider(n network.Network, eb *observer.EventBus, cfg config.Grafana) *GrafanaProvider {
@@ -34,6 +37,7 @@ func NewGrafanaProvider(n network.Network, eb *observer.EventBus, cfg config.Gra
 		interval:         GetInterval(cfg.Interval),
 		url:              cfg.URL,
 		refreshStateTime: new(time.Duration),
+		logger:           NewLogger(n, cfg.Label),
 	}
 }
 
@@ -75,6 +79,10 @@ func (g *GrafanaProvider) PublishEvents(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (g *GrafanaProvider) Logger() zerolog.Logger {
+	return g.logger
 }
 
 func (g *GrafanaProvider) PollingInterval() time.Duration {
