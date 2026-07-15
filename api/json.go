@@ -76,9 +76,10 @@ func GetJSON(ctx context.Context, url string, target any) error {
 	}
 	// Drain any unread bytes (a trailing newline the decoder leaves, or an
 	// undecoded error body) before closing so the connection returns to the
-	// idle pool instead of being discarded.
+	// idle pool instead of being discarded. Cap the drain so a degraded upstream
+	// returning a huge body can't tie up the hot path reading it in full.
 	defer func() {
-		_, _ = io.Copy(io.Discard, r.Body)
+		_, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 64*1024))
 		r.Body.Close()
 	}()
 

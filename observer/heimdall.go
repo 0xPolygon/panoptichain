@@ -278,7 +278,12 @@ func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 
 	o.observed.WithLabelValues(network, provider).Inc()
 	o.proposed.WithLabelValues(network, provider, milestone.Proposer).Inc()
-	o.blockRange.WithLabelValues(network, provider).Observe(float64(milestone.EndBlock - milestone.StartBlock))
+
+	// Guard the unsigned subtraction: a malformed milestone with EndBlock <
+	// StartBlock would otherwise underflow to a huge value and skew the histogram.
+	if milestone.EndBlock >= milestone.StartBlock {
+		o.blockRange.WithLabelValues(network, provider).Observe(float64(milestone.EndBlock - milestone.StartBlock))
+	}
 
 	// Process vote metrics if votes are attached
 	votes := milestone.Votes

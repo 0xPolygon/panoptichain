@@ -36,8 +36,9 @@ type Provider interface {
 
 // RunCycle runs a single bounded refresh/publish cycle for a provider and blocks
 // until the next scheduled tick. The cycle is bounded by util.RefreshTimeout so a
-// hung upstream can't pin the caller; if the cycle runs longer than its interval
-// an overrun warning fires, since BlockFor won't pause in that case.
+// hung upstream can't pin the caller. BlockFor aligns to the interval grid, so a
+// cycle that overruns its interval falls behind schedule (cycles run closer to
+// back-to-back); the overrun warning surfaces that.
 func RunCycle(ctx context.Context, p Provider) {
 	interval := p.PollingInterval()
 	start := time.Now()

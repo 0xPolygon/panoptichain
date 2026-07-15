@@ -265,6 +265,36 @@ func (h *HeimdallProvider) getBlock(ctx context.Context, height uint64) *observe
 	return &block
 }
 
+// bufferedBlock returns block i from the in-cycle block buffer (populated by
+// fillRange), fetching it over HTTP only on a cache miss.
+func (h *HeimdallProvider) bufferedBlock(ctx context.Context, i uint64) *observer.HeimdallBlock {
+	if b, err := h.blockBuffer.GetBlock(i); err == nil {
+		if block, ok := b.(*observer.HeimdallBlock); ok {
+			return block
+		}
+	}
+
+	return h.getBlock(ctx, i)
+}
+
+// scanDeadlineReached reports whether the cycle deadline has been hit mid-scan,
+// logging the skipped [from, to] block range. Used by the per-block range scans,
+// whose skipped blocks are a hole this cycle.
+func (h *HeimdallProvider) scanDeadlineReached(ctx context.Context, from, to uint64, scan string) bool {
+	if ctx.Err() == nil {
+		return false
+	}
+
+	h.logger.Warn().
+		Err(ctx.Err()).
+		Uint64("from", from).
+		Uint64("to", to).
+		Str("scan", scan).
+		Msg("Scan deadline reached; skipping remaining")
+
+	return true
+}
+
 func (h *HeimdallProvider) getValidators(ctx context.Context, height uint64) *observer.HeimdallValidators {
 	path, err := url.JoinPath(h.tendermintURL, "validators")
 	if err != nil {
@@ -337,25 +367,28 @@ func (h *HeimdallProvider) fillRange(ctx context.Context, start uint64) {
 func (h *HeimdallProvider) refreshMilestone(ctx context.Context, anchorTime uint64) error {
 	h.milestones = nil
 
-	// Always fetch the tip milestone first; it drives the freshness gauges
-	// regardless of how far behind the per-milestone backfill below is.
-	latest, currentCount, err := h.getLatestMilestone(ctx)
+	// Fetch the (cheap) count first. Keep the cursor monotonic: a load-balanced
+	// node briefly reporting a lower count must not rewind it, or already-counted
+	// milestones get re-published and double-counted when the count recovers. On
+	// an idle cycle (no new milestone) the cached tip is republished for
+	// freshness, so there's no need to fetch the tip body again.
+	currentCount, err := h.getMilestoneCount(ctx)
 	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to get latest Heimdall milestone")
+		h.logger.Error().Err(err).Msg("Failed to get Heimdall milestone count")
 		return err
 	}
 
-	// Keep the cursor monotonic: a load-balanced node briefly reporting a lower
-	// count must not rewind it, or already-counted milestones get re-published
-	// and double-counted when the count recovers.
 	if currentCount <= h.prevMilestoneCount {
 		return nil
 	}
 
-	// Advance the freshness tip only on forward progress, so a stale lower tip
-	// can't rewind the freshness gauges either. When there is no new milestone
-	// the previous tip is still republished each cycle, so
-	// time_since_last_milestone keeps climbing.
+	// Forward progress: fetch the tip for the freshness gauges. Because we only
+	// get here on progress, a stale lower tip can't rewind them.
+	latest, err := h.getLatestMilestone(ctx, currentCount)
+	if err != nil {
+		h.logger.Error().Err(err).Msg("Failed to get latest Heimdall milestone")
+		return err
+	}
 	if latest != nil {
 		h.latestMilestone = latest
 	}
@@ -438,33 +471,32 @@ func (h *HeimdallProvider) getMilestone(ctx context.Context, i int64, latest *ob
 	return milestone, nil
 }
 
-// getLatestMilestone fetches the current tip milestone along with the total
-// milestone count. The milestone's Count is set to the total so downstream
-// freshness gauges report the tip index.
-func (h *HeimdallProvider) getLatestMilestone(ctx context.Context) (*observer.HeimdallMilestone, int64, error) {
+// getMilestoneCount fetches the total milestone count.
+func (h *HeimdallProvider) getMilestoneCount(ctx context.Context) (int64, error) {
 	countPath, err := url.JoinPath(h.heimdallURL, "milestones", "count")
 	if err != nil {
-		return nil, 0, err
+		return 0, err
 	}
 
 	var count observer.HeimdallMilestoneCount
 	if err := api.GetJSON(ctx, countPath, &count); err != nil {
-		return nil, 0, err
-	}
-	currentCount := int64(count.Count)
-	if currentCount <= 0 {
-		// Fresh chain with no milestones yet; nothing to report.
-		return nil, 0, nil
+		return 0, err
 	}
 
-	// Prefer the dedicated latest endpoint, but fall back to fetching the tip by
-	// count when it errors or returns an empty/zero-value body (e.g. a 200 with
-	// an unexpected shape), so a provider that doesn't serve a usable
-	// /milestones/latest still keeps the freshness gauges alive.
+	return int64(count.Count), nil
+}
+
+// getLatestMilestone fetches the tip milestone for the given count and stamps
+// its Count so downstream freshness gauges report the tip index. It prefers the
+// dedicated /milestones/latest endpoint but falls back to fetching by count when
+// that errors or returns an empty/zero-value body (e.g. a 200 with an unexpected
+// shape), so a provider that doesn't serve a usable /milestones/latest still
+// keeps the freshness gauges alive. Returns nil when no usable tip is available.
+func (h *HeimdallProvider) getLatestMilestone(ctx context.Context, currentCount int64) (*observer.HeimdallMilestone, error) {
 	var v2 observer.HeimdallMilestoneV2
 	latestPath, err := url.JoinPath(h.heimdallURL, "milestones", "latest")
 	if err != nil {
-		return nil, currentCount, err
+		return nil, err
 	}
 	if err := api.GetJSON(ctx, latestPath, &v2); err != nil || v2.Milestone.Timestamp == 0 {
 		if err != nil {
@@ -478,10 +510,10 @@ func (h *HeimdallProvider) getLatestMilestone(ctx context.Context) (*observer.He
 
 		byCount, err := url.JoinPath(h.heimdallURL, "milestones", strconv.FormatInt(currentCount, 10))
 		if err != nil {
-			return nil, currentCount, err
+			return nil, err
 		}
 		if err := api.GetJSON(ctx, byCount, &v2); err != nil {
-			return nil, currentCount, err
+			return nil, err
 		}
 	}
 
@@ -489,11 +521,11 @@ func (h *HeimdallProvider) getLatestMilestone(ctx context.Context) (*observer.He
 	if milestone.Timestamp == 0 {
 		// Still empty after the fallback; don't drive the freshness gauge
 		// (time.Since of a zero timestamp) from it. Backfill by count still proceeds.
-		return nil, currentCount, nil
+		return nil, nil
 	}
 	milestone.Count = currentCount
 
-	return milestone, currentCount, nil
+	return milestone, nil
 }
 
 func (h *HeimdallProvider) refreshCheckpoint(ctx context.Context) error {
@@ -597,18 +629,11 @@ func (h *HeimdallProvider) refreshMissedCheckpointProposal(ctx context.Context) 
 func (h *HeimdallProvider) refreshMissedBlockProposal(ctx context.Context) error {
 	missedBlockProposal := make(observer.HeimdallMissedBlockProposal)
 	for i := h.prevBlockNumber + 1; i <= h.blockNumber && h.prevBlockNumber != 0; i++ {
-		if ctx.Err() != nil {
-			// Deadline reached mid-scan; stop rather than hammering failing
-			// requests. The remaining blocks are a hole this cycle.
-			h.logger.Warn().
-				Err(ctx.Err()).
-				Uint64("from", i).
-				Uint64("to", h.blockNumber).
-				Msg("Missed-block-proposal scan deadline reached; skipping remaining")
+		if h.scanDeadlineReached(ctx, i, h.blockNumber, "missed_block_proposal") {
 			break
 		}
 
-		block := h.getBlock(ctx, i)
+		block := h.bufferedBlock(ctx, i)
 		if block == nil {
 			h.logger.Debug().
 				Uint64("height", i).
@@ -862,14 +887,7 @@ func (h *HeimdallProvider) refreshMissedVotes(ctx context.Context) {
 	h.logger.Debug().Msg("Refreshing missed consensus votes")
 
 	for height := h.prevBlockNumber + 1; height <= h.blockNumber && h.prevBlockNumber != 0; height++ {
-		if ctx.Err() != nil {
-			// Deadline reached mid-scan; stop rather than hammering failing
-			// requests. The remaining blocks are a hole this cycle.
-			h.logger.Warn().
-				Err(ctx.Err()).
-				Uint64("from", height).
-				Uint64("to", h.blockNumber).
-				Msg("Missed-votes scan deadline reached; skipping remaining")
+		if h.scanDeadlineReached(ctx, height, h.blockNumber, "missed_votes") {
 			break
 		}
 
@@ -890,7 +908,7 @@ func (h *HeimdallProvider) refreshMissedVotes(ctx context.Context) {
 // getExtendedCommitInfo fetches and decodes the ExtendedCommitInfo from txs[0]
 // of a Heimdall block. Vote extensions from block H-1 are stored in block H's txs[0].
 func (h *HeimdallProvider) getExtendedCommitInfo(ctx context.Context, height uint64) (*heimdall.ExtendedCommitInfo, error) {
-	block := h.getBlock(ctx, height)
+	block := h.bufferedBlock(ctx, height)
 	if block == nil {
 		return nil, fmt.Errorf("failed to get block at height %d", height)
 	}
