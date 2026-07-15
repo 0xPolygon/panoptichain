@@ -1,10 +1,12 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/0xPolygon/panoptichain/config"
@@ -62,7 +64,7 @@ func TestRefreshSpan_Bootstrap(t *testing.T) {
 
 	h := newProvider(server.URL, nil)
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -87,7 +89,7 @@ func TestRefreshSpan_Sequential(t *testing.T) {
 
 	h := newProvider(server.URL, newSpan(100, 1000, 1099))
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -115,7 +117,7 @@ func TestRefreshSpan_NextSpanNotAvailable(t *testing.T) {
 	h := newProvider(server.URL, newSpan(100, 1000, 1099))
 	originalCurr := h.spans.Curr
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -138,7 +140,7 @@ func TestRefreshSpan_DetectsOverlappingSpans(t *testing.T) {
 
 	h := newProvider(server.URL, newSpan(100, 1000, 1099))
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -152,9 +154,10 @@ func TestRefreshSpan_DetectsOverlappingSpans(t *testing.T) {
 	}
 }
 
-func TestRefreshSpan_GapFillsOneAtATime(t *testing.T) {
-	// When latest span is ahead by multiple IDs, we should only advance one at a time
-	// to ensure each span transition is published to the observer for overlap detection
+func TestRefreshSpan_WalksGapToLatest(t *testing.T) {
+	// When the latest span is ahead by multiple IDs, a single refresh walks the
+	// whole gap up to the latest, publishing each consecutive pair so overlap
+	// detection sees the full sequence.
 	server := newSpanServer(t, map[string]*observer.HeimdallSpan{
 		"/bor/spans/latest": newSpan(103, 1300, 1399),
 		"/bor/spans/101":    newSpan(101, 1100, 1199),
@@ -165,46 +168,130 @@ func TestRefreshSpan_GapFillsOneAtATime(t *testing.T) {
 
 	h := newProvider(server.URL, newSpan(100, 1000, 1099))
 
-	// First call: should advance from 100 to 101 only
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
-	}
-	if h.spans.Curr.ID != 101 {
-		t.Errorf("first call: expected span ID 101, got %d", h.spans.Curr.ID)
-	}
-	if h.spans.Prev.ID != 100 {
-		t.Errorf("first call: expected prev span ID 100, got %d", h.spans.Prev.ID)
 	}
 
-	// Second call: should advance from 101 to 102
-	if err := h.refreshSpan(); err != nil {
-		t.Fatalf("refreshSpan() error: %v", err)
-	}
-	if h.spans.Curr.ID != 102 {
-		t.Errorf("second call: expected span ID 102, got %d", h.spans.Curr.ID)
-	}
-	if h.spans.Prev.ID != 101 {
-		t.Errorf("second call: expected prev span ID 101, got %d", h.spans.Prev.ID)
-	}
-
-	// Third call: should advance from 102 to 103
-	if err := h.refreshSpan(); err != nil {
-		t.Fatalf("refreshSpan() error: %v", err)
-	}
+	// One refresh advances all the way to the latest span.
 	if h.spans.Curr.ID != 103 {
-		t.Errorf("third call: expected span ID 103, got %d", h.spans.Curr.ID)
+		t.Errorf("expected walk to latest span 103, got %d", h.spans.Curr.ID)
 	}
-	if h.spans.Prev.ID != 102 {
-		t.Errorf("third call: expected prev span ID 102, got %d", h.spans.Prev.ID)
+	if h.spans.Prev == nil || h.spans.Prev.ID != 102 {
+		t.Errorf("expected Prev to be 102, got %v", h.spans.Prev)
 	}
 
-	// Fourth call: should not advance (already at latest)
+	// Every consecutive pair is published: 100->101, 101->102, 102->103.
+	wantPrev := []uint64{100, 101, 102}
+	wantCurr := []uint64{101, 102, 103}
+	if len(h.spanUpdates) != len(wantCurr) {
+		t.Fatalf("expected %d published span pairs, got %d", len(wantCurr), len(h.spanUpdates))
+	}
+	for i, s := range h.spanUpdates {
+		if s.Prev == nil || s.Prev.ID != wantPrev[i] || s.Curr == nil || s.Curr.ID != wantCurr[i] {
+			t.Errorf("pair %d: got Prev/Curr %v/%v, want %d/%d", i, s.Prev, s.Curr, wantPrev[i], wantCurr[i])
+		}
+	}
+
+	// A subsequent refresh with no new span leaves Curr unchanged and publishes
+	// nothing (so the observer can't re-count the same overlap on idle cycles).
 	prevCurr := h.spans.Curr
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 	if h.spans.Curr != prevCurr {
-		t.Error("fourth call: expected no change when already at latest span")
+		t.Error("expected no change when already at latest span")
+	}
+	if len(h.spanUpdates) != 0 {
+		t.Errorf("expected no span updates on an idle cycle, got %d", len(h.spanUpdates))
+	}
+}
+
+func TestRefreshMilestone_ResumesAfterDeadline(t *testing.T) {
+	// Backfill 6..15; the context is cancelled while fetching milestone 9. The
+	// cursor advances only over the milestones we actually processed (6,7,8), so
+	// the truncated catch-up resumes from 9 next cycle rather than skipping a gap.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const tip = 15
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/milestones/count":
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneCount{Count: tip})
+		case r.URL.Path == "/milestones/latest":
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{
+				Milestone: observer.HeimdallMilestone{Timestamp: 1000},
+			})
+		case strings.HasSuffix(r.URL.Path, "/milestones/9"):
+			// Simulate the cycle deadline tripping mid-fetch.
+			cancel()
+			http.Error(w, "deadline", http.StatusInternalServerError)
+		default: // per-milestone backfill
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{
+				Milestone: observer.HeimdallMilestone{Timestamp: 1000},
+			})
+		}
+	}))
+	defer server.Close()
+
+	h := &HeimdallProvider{
+		heimdallURL:        server.URL,
+		logger:             NewLogger(nil, "test"),
+		prevMilestoneCount: 5,
+	}
+
+	if err := h.refreshMilestone(ctx, 0); err != nil {
+		t.Fatalf("refreshMilestone() error: %v", err)
+	}
+
+	// Cursor resumes at the last processed milestone (8), not the tip.
+	if h.prevMilestoneCount != 8 {
+		t.Errorf("expected cursor to resume at 8, got %d", h.prevMilestoneCount)
+	}
+	if len(h.milestones) != 3 {
+		t.Errorf("expected 3 milestones processed (6,7,8), got %d", len(h.milestones))
+	}
+}
+
+func TestRefreshMilestone_SkipsUnfetchableMilestone(t *testing.T) {
+	// Milestone 8 always fails (e.g. pruned/404) without a cancelled context. It
+	// must be skipped so the milestones behind it still process and the cursor
+	// reaches the tip, rather than stalling the whole backlog every cycle.
+	const tip = 10
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/milestones/count":
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneCount{Count: tip})
+		case r.URL.Path == "/milestones/latest":
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{
+				Milestone: observer.HeimdallMilestone{Timestamp: 1000},
+			})
+		case strings.HasSuffix(r.URL.Path, "/milestones/8"):
+			http.Error(w, "not found", http.StatusNotFound)
+		default:
+			json.NewEncoder(w).Encode(observer.HeimdallMilestoneV2{
+				Milestone: observer.HeimdallMilestone{Timestamp: 1000},
+			})
+		}
+	}))
+	defer server.Close()
+
+	h := &HeimdallProvider{
+		heimdallURL:        server.URL,
+		logger:             NewLogger(nil, "test"),
+		prevMilestoneCount: 5,
+	}
+
+	if err := h.refreshMilestone(context.Background(), 0); err != nil {
+		t.Fatalf("refreshMilestone() error: %v", err)
+	}
+
+	// 8 is skipped, but the cursor still reaches the tip and 6, 7, 9, 10 process.
+	if h.prevMilestoneCount != tip {
+		t.Errorf("expected cursor to reach tip %d, got %d", tip, h.prevMilestoneCount)
+	}
+	if len(h.milestones) != 4 {
+		t.Errorf("expected 4 milestones processed (6,7,9,10), got %d", len(h.milestones))
 	}
 }
 
@@ -218,7 +305,7 @@ func TestFetchSpan_RejectsZeroValueSpan(t *testing.T) {
 	defer server.Close()
 
 	h := newProvider(server.URL, nil)
-	_, err := h.fetchSpan("latest")
+	_, err := h.fetchSpan(context.Background(), "latest")
 
 	if err == nil {
 		t.Fatal("expected error for zero-value span, got nil")
@@ -238,7 +325,7 @@ func TestFetchSpan_AcceptsValidSpanZero(t *testing.T) {
 	defer server.Close()
 
 	h := newProvider(server.URL, nil)
-	span, err := h.fetchSpan("0")
+	span, err := h.fetchSpan(context.Background(), "0")
 
 	if err != nil {
 		t.Fatalf("expected no error for valid span 0, got: %v", err)
@@ -263,7 +350,7 @@ func TestRefreshSpan_ExcessiveLagJumpsToLatest(t *testing.T) {
 	// With maxSpanLag = 5, should jump to latest
 	h := newProviderWithMaxLag(server.URL, newSpan(100, 10000, 10099), 5)
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
@@ -275,49 +362,53 @@ func TestRefreshSpan_ExcessiveLagJumpsToLatest(t *testing.T) {
 	}
 }
 
-func TestRefreshSpan_WithinLagWalksSequentially(t *testing.T) {
-	// When lag is within maxSpanLag, should walk sequentially
+func TestRefreshSpan_WithinLagWalksToLatest(t *testing.T) {
+	// When lag is within maxSpanLag, a refresh walks every span up to the latest.
 	server := newSpanServer(t, map[string]*observer.HeimdallSpan{
 		"/bor/spans/latest": newSpan(105, 10500, 10599),
 		"/bor/spans/101":    newSpan(101, 10100, 10199),
+		"/bor/spans/102":    newSpan(102, 10200, 10299),
+		"/bor/spans/103":    newSpan(103, 10300, 10399),
+		"/bor/spans/104":    newSpan(104, 10400, 10499),
 	})
 	defer server.Close()
 
-	// Current span is 100, latest is 105, lag = 5
-	// With maxSpanLag = 10, should walk sequentially
+	// Current span is 100, latest is 105, lag = 5, maxSpanLag = 10.
 	h := newProviderWithMaxLag(server.URL, newSpan(100, 10000, 10099), 10)
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
-	// Should advance to 101, not jump to 105
-	if h.spans.Curr.ID != 101 {
-		t.Errorf("expected sequential walk to span 101, got %d", h.spans.Curr.ID)
+	if h.spans.Curr.ID != 105 {
+		t.Errorf("expected walk to latest span 105, got %d", h.spans.Curr.ID)
 	}
-	if h.spans.Prev == nil || h.spans.Prev.ID != 100 {
-		t.Errorf("expected Prev to be 100, got %v", h.spans.Prev)
+	if h.spans.Prev == nil || h.spans.Prev.ID != 104 {
+		t.Errorf("expected Prev to be 104, got %v", h.spans.Prev)
+	}
+	if len(h.spanUpdates) != 5 {
+		t.Errorf("expected 5 published span pairs, got %d", len(h.spanUpdates))
 	}
 }
 
-func TestRefreshSpan_ExactLagThresholdWalksSequentially(t *testing.T) {
-	// When lag equals maxSpanLag exactly, should still walk sequentially
+func TestRefreshSpan_ExactLagThresholdWalksToLatest(t *testing.T) {
+	// When lag equals maxSpanLag exactly it walks (lag is not > maxSpanLag).
 	server := newSpanServer(t, map[string]*observer.HeimdallSpan{
-		"/bor/spans/latest": newSpan(110, 11000, 11099),
+		"/bor/spans/latest": newSpan(103, 10300, 10399),
 		"/bor/spans/101":    newSpan(101, 10100, 10199),
+		"/bor/spans/102":    newSpan(102, 10200, 10299),
+		"/bor/spans/103":    newSpan(103, 10300, 10399),
 	})
 	defer server.Close()
 
-	// Current span is 100, latest is 110, lag = 10
-	// With maxSpanLag = 10, should walk sequentially (lag is not > maxSpanLag)
-	h := newProviderWithMaxLag(server.URL, newSpan(100, 10000, 10099), 10)
+	// Current span is 100, latest is 103, lag = 3 == maxSpanLag.
+	h := newProviderWithMaxLag(server.URL, newSpan(100, 10000, 10099), 3)
 
-	if err := h.refreshSpan(); err != nil {
+	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
-	// Should advance to 101, not jump to 110
-	if h.spans.Curr.ID != 101 {
-		t.Errorf("expected sequential walk to span 101, got %d", h.spans.Curr.ID)
+	if h.spans.Curr.ID != 103 {
+		t.Errorf("expected walk to latest span 103, got %d", h.spans.Curr.ID)
 	}
 }

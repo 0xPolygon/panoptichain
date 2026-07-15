@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"sync"
@@ -85,7 +86,10 @@ func Validators(n network.Network) ([]Validator, error) {
 		return nil, errors.New("no validators for this network")
 	}
 
-	validators, err := GetValidators(*path)
+	// This is the cached path; its callers are not context-aware, so use a
+	// background context (the request is still bounded by the shared client's
+	// timeout).
+	validators, err := GetValidators(context.Background(), *path)
 	if err != nil {
 		return nil, err
 	}
@@ -98,14 +102,14 @@ func Validators(n network.Network) ([]Validator, error) {
 	return validators, nil
 }
 
-func GetValidators(basePath string) ([]Validator, error) {
+func GetValidators(ctx context.Context, basePath string) ([]Validator, error) {
 	path, err := url.JoinPath(basePath, "stake", "validators-set")
 	if err != nil {
 		return nil, err
 	}
 
 	var body ValidatorSet
-	if err := GetJSON(path, &body); err != nil {
+	if err := GetJSON(ctx, path, &body); err != nil {
 		return nil, err
 	}
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +21,7 @@ func TestGetJSON_Success(t *testing.T) {
 		Value int    `json:"value"`
 	}
 
-	err := GetJSON(server.URL, &result)
+	err := GetJSON(context.Background(), server.URL, &result)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -75,7 +76,7 @@ func TestGetJSON_HTTPError(t *testing.T) {
 			defer server.Close()
 
 			var result struct{}
-			err := GetJSON(server.URL, &result)
+			err := GetJSON(context.Background(), server.URL, &result)
 
 			if err == nil {
 				t.Fatal("expected error, got nil")
@@ -100,7 +101,7 @@ func TestGetJSON_HTTPError(t *testing.T) {
 func TestGetJSON_NetworkError(t *testing.T) {
 	// Use an invalid URL to simulate a network error
 	var result struct{}
-	err := GetJSON("http://localhost:1", &result)
+	err := GetJSON(context.Background(), "http://localhost:1", &result)
 
 	if err == nil {
 		t.Fatal("expected error, got nil")

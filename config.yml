@@ -660,6 +660,7 @@
   #   - "heimdall_signature_count"
   #   - "heimdall_validator_set_change"
   #   - "milestone"
+  #   - "milestone_latest"
   #   - "missed_block_proposal"
   #   - "refresh_state_time"
   #   - "reorg"

@@ -10,7 +10,6 @@ import (
 	"github.com/0xPolygon/panoptichain/network"
 	"github.com/0xPolygon/panoptichain/observer"
 	"github.com/0xPolygon/panoptichain/provider"
-	"github.com/0xPolygon/panoptichain/util"
 )
 
 var providers []provider.Provider
@@ -23,16 +22,11 @@ func Start(ctx context.Context) {
 
 	for _, p := range providers {
 		wg.Go(func() {
-			for {
-				if err := p.RefreshState(ctx); err != nil {
-					log.Error().Err(err).Send()
-				}
-
-				if err := p.PublishEvents(ctx); err != nil {
-					log.Error().Err(err).Send()
-				}
-
-				util.BlockFor(ctx, p.PollingInterval())
+			// Exit the loop once the root context is cancelled so shutdown
+			// doesn't leave the goroutine hot-spinning (RunCycle returns
+			// immediately on a cancelled context).
+			for ctx.Err() == nil {
+				provider.RunCycle(ctx, p)
 			}
 		})
 	}

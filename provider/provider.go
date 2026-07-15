@@ -11,6 +11,7 @@ import (
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/log"
 	"github.com/0xPolygon/panoptichain/network"
+	"github.com/0xPolygon/panoptichain/util"
 )
 
 // Provider must be implemented by any system that's monitoring the
@@ -31,6 +32,35 @@ type Provider interface {
 	// PollingInterval returns how often the provider should refresh it state and
 	// publish events in seconds.
 	PollingInterval() time.Duration
+}
+
+// RunCycle runs a single bounded refresh/publish cycle for a provider and blocks
+// until the next scheduled tick. The cycle is bounded by util.RefreshTimeout so a
+// hung upstream can't pin the caller. BlockFor aligns to the interval grid, so a
+// cycle that overruns its interval falls behind schedule (cycles run closer to
+// back-to-back); the overrun warning surfaces that.
+func RunCycle(ctx context.Context, p Provider) {
+	interval := p.PollingInterval()
+	start := time.Now()
+
+	cycleCtx, cancel := context.WithTimeout(ctx, util.RefreshTimeout(interval))
+	if err := p.RefreshState(cycleCtx); err != nil {
+		log.Error().Err(err).Send()
+	}
+	cancel()
+
+	if err := p.PublishEvents(ctx); err != nil {
+		log.Error().Err(err).Send()
+	}
+
+	if elapsed := time.Since(start); elapsed >= interval {
+		log.Warn().
+			Dur("elapsed", elapsed).
+			Dur("interval", interval).
+			Msg("Provider refresh cycle overran its polling interval")
+	}
+
+	util.BlockFor(ctx, interval)
 }
 
 func timer(duration *time.Duration) func() {

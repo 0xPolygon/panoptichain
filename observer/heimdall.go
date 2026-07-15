@@ -256,10 +256,6 @@ type HeimdallMilestoneV2 struct {
 }
 
 type MilestoneObserver struct {
-	time       *prometheus.GaugeVec
-	count      *prometheus.GaugeVec
-	startBlock *prometheus.GaugeVec
-	endBlock   *prometheus.GaugeVec
 	observed   *prometheus.CounterVec
 	proposed   *prometheus.CounterVec
 	blockRange *prometheus.HistogramVec
@@ -271,22 +267,23 @@ type MilestoneObserver struct {
 	votingPower         *prometheus.GaugeVec
 }
 
+// Notify drives count/vote accounting from the per-milestone backlog stream. It
+// gaps during catch-up (see refreshMilestone), which is acceptable.
 func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
-	logger := NewLogger(o, m)
-	milestone := m.Data().(*HeimdallMilestone)
 	network := m.Network().GetName()
 	provider := m.Provider()
 
-	seconds := time.Since(time.Unix(milestone.Timestamp, 0)).Seconds()
-
-	o.count.WithLabelValues(network, provider).Set(float64(milestone.Count))
-	o.time.WithLabelValues(network, provider).Set(float64(seconds))
-	o.startBlock.WithLabelValues(network, provider).Set(float64(milestone.StartBlock))
-	o.endBlock.WithLabelValues(network, provider).Set(float64(milestone.EndBlock))
+	logger := NewLogger(o, m)
+	milestone := m.Data().(*HeimdallMilestone)
 
 	o.observed.WithLabelValues(network, provider).Inc()
 	o.proposed.WithLabelValues(network, provider, milestone.Proposer).Inc()
-	o.blockRange.WithLabelValues(network, provider).Observe(float64(milestone.EndBlock - milestone.StartBlock))
+
+	// Guard the unsigned subtraction: a malformed milestone with EndBlock <
+	// StartBlock would otherwise underflow to a huge value and skew the histogram.
+	if milestone.EndBlock >= milestone.StartBlock {
+		o.blockRange.WithLabelValues(network, provider).Observe(float64(milestone.EndBlock - milestone.StartBlock))
+	}
 
 	// Process vote metrics if votes are attached
 	votes := milestone.Votes
@@ -329,10 +326,6 @@ func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 func (o *MilestoneObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.Milestone, o)
 
-	o.time = metrics.NewGauge(metrics.Heimdall, "time_since_last_milestone", "The time since last milestone")
-	o.count = metrics.NewGauge(metrics.Heimdall, "milestone_count", "The milestone count")
-	o.startBlock = metrics.NewGauge(metrics.Heimdall, "milestone_start_block", "The milestone start block")
-	o.endBlock = metrics.NewGauge(metrics.Heimdall, "milestone_end_block", "The milestone end block")
 	o.observed = metrics.NewCounter(metrics.Heimdall, "milestone_observed", "The number of milestones observed")
 	o.proposed = metrics.NewCounter(metrics.Heimdall, "milestone_proposed", "Milestones proposed by validator", "proposer")
 	o.blockRange = metrics.NewHistogram(
@@ -374,10 +367,6 @@ func (o *MilestoneObserver) Register(eb *EventBus) {
 
 func (o *MilestoneObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		o.time,
-		o.count,
-		o.startBlock,
-		o.endBlock,
 		o.observed,
 		o.proposed,
 		o.blockRange,
@@ -385,6 +374,50 @@ func (o *MilestoneObserver) GetCollectors() []prometheus.Collector {
 		o.voteMissed,
 		o.voteSignedButMissed,
 		o.votingPower,
+	}
+}
+
+// MilestoneLatestObserver drives the milestone freshness gauges from the tip
+// milestone, which is published every cycle independent of the backlog stream so
+// the gauges never lag behind a slow catch-up.
+type MilestoneLatestObserver struct {
+	time       *prometheus.GaugeVec
+	count      *prometheus.GaugeVec
+	startBlock *prometheus.GaugeVec
+	endBlock   *prometheus.GaugeVec
+}
+
+func (o *MilestoneLatestObserver) Notify(ctx context.Context, m Message) {
+	latest := m.Data().(*HeimdallMilestone)
+	if latest == nil || latest.Timestamp == 0 {
+		return
+	}
+
+	network := m.Network().GetName()
+	provider := m.Provider()
+
+	seconds := time.Since(time.Unix(latest.Timestamp, 0)).Seconds()
+	o.time.WithLabelValues(network, provider).Set(seconds)
+	o.count.WithLabelValues(network, provider).Set(float64(latest.Count))
+	o.startBlock.WithLabelValues(network, provider).Set(float64(latest.StartBlock))
+	o.endBlock.WithLabelValues(network, provider).Set(float64(latest.EndBlock))
+}
+
+func (o *MilestoneLatestObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.MilestoneLatest, o)
+
+	o.time = metrics.NewGauge(metrics.Heimdall, "time_since_last_milestone", "The time since last milestone")
+	o.count = metrics.NewGauge(metrics.Heimdall, "milestone_count", "The milestone count")
+	o.startBlock = metrics.NewGauge(metrics.Heimdall, "milestone_start_block", "The milestone start block")
+	o.endBlock = metrics.NewGauge(metrics.Heimdall, "milestone_end_block", "The milestone end block")
+}
+
+func (o *MilestoneLatestObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
+		o.time,
+		o.count,
+		o.startBlock,
+		o.endBlock,
 	}
 }
 

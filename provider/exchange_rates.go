@@ -48,17 +48,17 @@ func (e *ExchangeRatesProvider) RefreshState(ctx context.Context) error {
 
 	e.rates = nil
 	for base, quotes := range e.tokens {
-		e.fetchRates(base, quotes)
+		e.fetchRates(ctx, base, quotes)
 	}
 
 	return nil
 }
 
-func (e *ExchangeRatesProvider) fetchRates(base string, quotes []string) {
+func (e *ExchangeRatesProvider) fetchRates(ctx context.Context, base string, quotes []string) {
 	url := e.coinbaseURL + base
 
 	var body CoinbaseExchangeRates
-	if err := api.GetJSON(url, &body); err != nil {
+	if err := api.GetJSON(ctx, url, &body); err != nil {
 		e.logger.Error().Err(err).Str("url", url).Msg("Failed to fetch exchange rates")
 		return
 	}

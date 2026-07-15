@@ -165,6 +165,7 @@ var observersMap = map[string]Observer{
 	"heimdall_validator_set_change":       new(HeimdallValidatorSetChangeObserver),
 	"heimdall_buffered_checkpoint":        new(HeimdallBufferedCheckpointObserver),
 	"milestone":                           new(MilestoneObserver),
+	"milestone_latest":                    new(MilestoneLatestObserver),
 	"missed_block_proposal":               new(MissedBlockProposalObserver),
 	"refresh_state_time":                  new(RefreshStateTimeObserver),
 	"reorg":                               new(ReorgObserver),

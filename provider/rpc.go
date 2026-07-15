@@ -1115,8 +1115,12 @@ func (r *RPCProvider) refreshTimeToMine(ctx context.Context, c *ethclient.Client
 	// Generally, all messages sent to topics should be done in the PublishEvents
 	// method. This is the exception because of its asynchronous nature. This
 	// implementation reduces complexity by not needing to manage shared variables.
+	//
+	// This goroutine outlives the refresh cycle (waiting for the tx to be mined
+	// can take minutes), so it is detached from the cycle context — which the
+	// runner cancels once RefreshState returns — and given its own deadline.
 	go func() {
-		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
 		_, err := bind.WaitMined(ctx, c, signedTx)
@@ -1804,7 +1808,10 @@ func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *
 	provider, ok := r.trustedSequencers[rollupID]
 	if !ok {
 		r.trustedSequencers[rollupID] = NewRPCProvider(network, r.bus, rollup.RPC)
-		go runProvider(ctx, r.trustedSequencers[rollupID])
+		// This is a long-lived loop, so it must not capture the caller's
+		// per-cycle context (which is cancelled when the parent cycle returns);
+		// give it a context tied to the process lifetime instead.
+		go runProvider(context.Background(), r.trustedSequencers[rollupID])
 		return nil
 	}
 
@@ -1816,20 +1823,14 @@ func (r *RPCProvider) refreshTrustedSequencerURL(ctx context.Context, contract *
 }
 
 func runProvider(ctx context.Context, p *RPCProvider) {
-	for {
+	for ctx.Err() == nil {
 		select {
 		case url := <-p.trustedSequencerURL:
 			p.url = url
 		default:
-			if err := p.RefreshState(ctx); err != nil {
-				p.logger.Error().Err(err).Send()
-			}
-
-			if err := p.PublishEvents(ctx); err != nil {
-				p.logger.Error().Err(err).Send()
-			}
-
-			util.BlockFor(ctx, p.PollingInterval())
+			// Reuse the same bounded cycle as top-level providers so a hung
+			// sub-provider upstream can't pin this goroutine.
+			RunCycle(ctx, p)
 		}
 	}
 }
