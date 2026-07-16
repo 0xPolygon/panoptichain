@@ -36,7 +36,6 @@ type HeimdallProvider struct {
 	bus           *observer.EventBus
 	interval      time.Duration
 	logger        zerolog.Logger
-	maxSpanLag    uint64
 
 	blockNumber         uint64
 	prevBlockNumber     uint64
@@ -57,6 +56,19 @@ type HeimdallProvider struct {
 	// consecutive pair is published and overlap detection sees the full sequence.
 	spanUpdates []*observer.HeimdallSpans
 
+	// borProviders are the RPC providers for this network, used to read the
+	// current Bor block height (no second Bor connection). Empty when none is
+	// configured, in which case the active span is unknown.
+	borProviders []*RPCProvider
+	// activeSpan is the span containing the current Bor block, published every
+	// cycle on topics.ActiveSpan; nil when the Bor height is unavailable or not
+	// yet resolved.
+	activeSpan *observer.HeimdallSpan
+	// spanCursor is the convergence cursor for resolving the active span: it
+	// walks one span per fetch toward the block and persists across cycles so a
+	// long catch-up resumes where it left off (like refreshMilestone's backlog).
+	spanCursor *observer.HeimdallSpan
+
 	validatorSets *observer.HeimdallValidatorSets
 
 	missedVotes    []*observer.HeimdallMissedVotes
@@ -67,10 +79,14 @@ type HeimdallProvider struct {
 	bufferedCheckpoint *observer.HeimdallCheckpoint
 }
 
-func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.HeimdallEndpoint) *HeimdallProvider {
-	maxSpanLag := config.DefaultMaxSpanLag
-	if cfg.MaxSpanLag != nil {
-		maxSpanLag = *cfg.MaxSpanLag
+// NewHeimdallProvider builds a Heimdall provider, reusing the rpcProviders entry
+// matching this endpoint's network (if any) to read the current Bor block height.
+func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.HeimdallEndpoint, rpcProviders []*RPCProvider) *HeimdallProvider {
+	logger := NewLogger(n, cfg.Label)
+
+	borProviders := rpcProvidersByNetwork(rpcProviders)[n.GetName()]
+	if len(borProviders) == 0 {
+		logger.Warn().Msg("No RPC provider configured for this network; active span metrics will not be emitted")
 	}
 
 	return &HeimdallProvider{
@@ -79,10 +95,10 @@ func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.He
 		network:             n,
 		label:               cfg.Label,
 		bus:                 eb,
+		borProviders:        borProviders,
 		blockBuffer:         blockbuffer.NewBlockBuffer(128),
 		interval:            GetInterval(cfg.Interval),
-		logger:              NewLogger(n, cfg.Label),
-		maxSpanLag:          maxSpanLag,
+		logger:              logger,
 		checkpointProposers: orderedmap.New[string, struct{}](),
 		refreshStateTime:    new(time.Duration),
 		spans:               &observer.HeimdallSpans{},
@@ -107,6 +123,7 @@ func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	h.refreshMissedCheckpointProposal(ctx)
 	h.refreshMissedBlockProposal(ctx)
 	h.refreshSpan(ctx)
+	h.refreshActiveSpan(ctx)
 	h.refreshMissedVotes(ctx)
 
 	return nil
@@ -189,6 +206,13 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 	for _, s := range h.spanUpdates {
 		m := observer.NewMessage(h.network, h.label, s)
 		h.bus.Publish(ctx, topics.Span, m)
+	}
+
+	// Publish every cycle (observer handles nil) so it tracks the chain into new
+	// spans, unlike the latest span above (published only on change). Skipped
+	// entirely when the feature is off (no RPC provider for this network).
+	if len(h.borProviders) > 0 {
+		h.bus.Publish(ctx, topics.ActiveSpan, observer.NewMessage(h.network, h.label, h.activeSpan))
 	}
 
 	if h.validatorSets != nil {
@@ -701,32 +725,26 @@ func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
 		return nil
 	}
 
-	// If we've fallen too far behind, jump straight to the latest span rather
-	// than walking every intermediate one.
-	if lag := latest.ID - h.spans.Curr.ID; lag > h.maxSpanLag {
-		h.logger.Warn().
-			Uint64("current_span_id", h.spans.Curr.ID).
-			Uint64("latest_span_id", latest.ID).
-			Uint64("lag", lag).
-			Uint64("max_span_lag", h.maxSpanLag).
-			Msg("Span lag exceeds maximum, jumping to latest")
-
-		h.spans.Prev = h.spans.Curr
-		h.spans.Curr = latest
-		h.recordSpanUpdate()
-		return nil
-	}
-
 	// Walk every new span up to the latest so overlap detection sees each
-	// consecutive pair (mirrors refreshMilestone). Each step is published as its
-	// own Prev/Curr snapshot; the final one carries the latest span forward.
+	// consecutive pair (mirrors refreshMilestone). The per-cycle deadline bounds
+	// the work; a catch-up truncated by the deadline resumes from the advanced
+	// Curr next cycle. Each step is published as its own Prev/Curr snapshot; the
+	// final one carries the latest span forward.
 	for id := h.spans.Curr.ID + 1; id <= latest.ID; id++ {
+		if ctx.Err() != nil {
+			h.logger.Warn().
+				Uint64("span_id", id).
+				Err(ctx.Err()).
+				Msg("Span walk deadline reached; resuming next cycle")
+			return nil
+		}
+
 		span := latest
 		if id != latest.ID {
 			span, err = h.getSpan(ctx, id)
 			if err != nil {
 				if ctx.Err() != nil {
-					// Deadline reached mid-walk; resume from here next cycle.
+					// Deadline reached mid-fetch; resume from here next cycle.
 					h.logger.Warn().
 						Uint64("span_id", id).
 						Err(err).
@@ -735,7 +753,7 @@ func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
 				}
 
 				// Skip a span that fails on its own (pruned/404/transient) so one
-				// bad span can't freeze span progress until the lag-jump kicks in.
+				// bad span can't freeze span progress.
 				h.logger.Warn().
 					Uint64("span_id", id).
 					Err(err).
@@ -789,6 +807,167 @@ func (h *HeimdallProvider) fetchSpan(ctx context.Context, spanID string) (*obser
 	}
 
 	return span, nil
+}
+
+// refreshActiveSpan resolves the span containing the current Bor block from the
+// RPC provider's height into activeSpan (nil when no provider or no height yet).
+func (h *HeimdallProvider) refreshActiveSpan(ctx context.Context) {
+	block := h.borHeight()
+	if block == 0 {
+		h.activeSpan = nil
+		h.spanCursor = nil
+		return
+	}
+
+	h.activeSpan = h.resolveActiveSpan(ctx, block)
+}
+
+// borHeight returns the highest Bor block height across the RPC providers for
+// this network, or 0 when none is configured or none has a height yet. The
+// highest wins so a single lagging or stalled provider can't drag the active
+// span backward while a healthy one is available.
+func (h *HeimdallProvider) borHeight() uint64 {
+	var height uint64
+	for _, r := range h.borProviders {
+		if bn := r.BlockNumber(); bn > height {
+			height = bn
+		}
+	}
+	return height
+}
+
+// spanContainsBlock reports whether the span includes the given Bor block.
+func spanContainsBlock(s *observer.HeimdallSpan, block uint64) bool {
+	return s != nil && block >= s.StartBlock && block <= s.EndBlock
+}
+
+// knownSpanContaining returns the highest-id already-known span that contains
+// the block, or nil. Spans can overlap, and the newest span owns the overlap.
+func (h *HeimdallProvider) knownSpanContaining(block uint64) *observer.HeimdallSpan {
+	var best *observer.HeimdallSpan
+	for _, s := range []*observer.HeimdallSpan{h.spanCursor, h.spans.Curr, h.spans.Prev} {
+		if spanContainsBlock(s, block) && (best == nil || s.ID > best.ID) {
+			best = s
+		}
+	}
+	return best
+}
+
+// spanByID returns the span with the given id, reusing an already-held span
+// (Curr/Prev) instead of fetching when possible.
+func (h *HeimdallProvider) spanByID(ctx context.Context, id uint64) (*observer.HeimdallSpan, error) {
+	if h.spans.Curr != nil && h.spans.Curr.ID == id {
+		return h.spans.Curr, nil
+	}
+	if h.spans.Prev != nil && h.spans.Prev.ID == id {
+		return h.spans.Prev, nil
+	}
+	return h.getSpan(ctx, id)
+}
+
+// resolveActiveSpan returns the span containing the given Bor block. The
+// /bor/spans/latest span can be created preemptively, before the chain reaches
+// its start block, so the block often sits in an earlier span (usually
+// latest-1). It converges spanCursor toward the block one span per fetch,
+// bounded by the per-cycle deadline; progress persists on spanCursor so a long
+// catch-up resumes next cycle (mirroring refreshMilestone's backlog walk).
+// Returns nil when the block isn't in any span (a gap) or hasn't been reached
+// yet.
+func (h *HeimdallProvider) resolveActiveSpan(ctx context.Context, block uint64) *observer.HeimdallSpan {
+	// Fast path, no fetch: an already-known span (cursor, Curr, Prev) contains it.
+	if best := h.knownSpanContaining(block); best != nil {
+		h.spanCursor = best
+		return best
+	}
+
+	// Seed from the known span nearest the block so convergence starts with the
+	// fewest fetches (e.g. step down from Curr rather than climb from a stale
+	// cursor after the chain jumped forward).
+	h.spanCursor = h.nearestKnownSpan(block)
+
+	for h.spanCursor != nil && !spanContainsBlock(h.spanCursor, block) {
+		if ctx.Err() != nil {
+			return nil // deadline; resume from spanCursor next cycle
+		}
+
+		next := h.stepToward(ctx, h.spanCursor, block)
+		if next == nil {
+			return nil
+		}
+		h.spanCursor = next
+	}
+
+	return h.spanCursor
+}
+
+// stepToward fetches the span one step from cur toward the block, or returns nil
+// if the walk should stop: the block is past the latest committed span, cur is
+// the genesis span, the fetch failed, the API returned an unexpected id, or the
+// block falls in a gap between adjacent spans.
+func (h *HeimdallProvider) stepToward(ctx context.Context, cur *observer.HeimdallSpan, block uint64) *observer.HeimdallSpan {
+	var nextID uint64
+	switch {
+	case block > cur.EndBlock:
+		// Curr is the latest committed span; never fetch above it. A block past
+		// Curr means its span isn't committed yet (rare, since the latest span is
+		// usually preemptive), so it's unknown for now.
+		if h.spans.Curr == nil || cur.ID >= h.spans.Curr.ID {
+			return nil
+		}
+		nextID = cur.ID + 1
+	case cur.ID == 0:
+		return nil // block precedes the genesis span
+	default:
+		nextID = cur.ID - 1
+	}
+
+	next, err := h.spanByID(ctx, nextID)
+	if err != nil {
+		h.logger.Debug().Uint64("span_id", nextID).Err(err).Msg("Failed to fetch span while resolving active span")
+		return nil
+	}
+	if next.ID != nextID {
+		// The API returned a different span than requested (e.g. an out-of-range
+		// id clamped to latest); bail to avoid a stuck loop.
+		return nil
+	}
+
+	// The block falls in a gap between adjacent spans (an overlap/pruning
+	// anomaly), so no span contains it.
+	if (block > cur.EndBlock && next.StartBlock > block) ||
+		(block < cur.StartBlock && next.EndBlock < block) {
+		return nil
+	}
+
+	return next
+}
+
+// nearestKnownSpan returns the already-known span (cursor, Curr, Prev) closest
+// to the block, so a convergence walk starts with the fewest fetches.
+func (h *HeimdallProvider) nearestKnownSpan(block uint64) *observer.HeimdallSpan {
+	var best *observer.HeimdallSpan
+	var bestDist uint64
+	for _, s := range []*observer.HeimdallSpan{h.spanCursor, h.spans.Curr, h.spans.Prev} {
+		if s == nil {
+			continue
+		}
+		if d := spanDistance(s, block); best == nil || d < bestDist {
+			best, bestDist = s, d
+		}
+	}
+	return best
+}
+
+// spanDistance returns how far the block lies outside the span (0 if inside).
+func spanDistance(s *observer.HeimdallSpan, block uint64) uint64 {
+	switch {
+	case block < s.StartBlock:
+		return s.StartBlock - block
+	case block > s.EndBlock:
+		return block - s.EndBlock
+	default:
+		return 0
+	}
 }
 
 func (h *HeimdallProvider) refreshValidatorSet(ctx context.Context) error {

@@ -78,7 +78,7 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		p := provider.NewHeimdallProvider(n, eb, h)
+		p := provider.NewHeimdallProvider(n, eb, h, rpcProviders)
 		providers = append(providers, p)
 	}
 
