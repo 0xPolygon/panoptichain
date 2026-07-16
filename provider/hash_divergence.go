@@ -35,13 +35,10 @@ type HashDivergenceProvider struct {
 
 func NewHashDivergenceProvider(rpcProviders []*RPCProvider, eb *observer.EventBus, interval time.Duration) *HashDivergenceProvider {
 	label := "hash-divergence"
-	networkProvidersMap := make(map[string][]*RPCProvider)
-	networkBlockNumbers := make(map[string]uint64)
-
-	for _, provider := range rpcProviders {
-		networkProvidersMap[provider.network.GetName()] = append(networkProvidersMap[provider.network.GetName()], provider)
-		networkBlockNumbers[provider.network.GetName()] = 0
-	}
+	networkProvidersMap := rpcProvidersByNetwork(rpcProviders)
+	// Read with the zero-value default and written each cycle, so no
+	// pre-population is needed.
+	networkBlockNumbers := make(map[string]uint64, len(networkProvidersMap))
 
 	return &HashDivergenceProvider{
 		bus:                 eb,
@@ -67,8 +64,9 @@ loop:
 		for _, provider := range providers {
 			// Find the minimum BlockNumber to ensure that all providers have at least
 			// that block number.
-			if blockNumber == 0 || blockNumber > provider.blockNumber {
-				blockNumber = provider.blockNumber
+			pbn := provider.BlockNumber()
+			if blockNumber == 0 || blockNumber > pbn {
+				blockNumber = pbn
 			}
 		}
 
