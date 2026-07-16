@@ -1144,7 +1144,6 @@ Metric Type: CounterVec
 Variable Labels:
 - network
 - provider
-- signer_address
 
 ## HeimdallSpanObserver
 

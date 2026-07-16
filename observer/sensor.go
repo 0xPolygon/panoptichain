@@ -192,7 +192,7 @@ func (o *SensorBogonBlockObserver) Notify(ctx context.Context, m Message) {
 		signer := "0x" + hex.EncodeToString(bytes)
 
 		if _, ok := signers[signer]; !ok {
-			o.bogonBlocks.WithLabelValues(m.Network().GetName(), m.Provider(), signer).Inc()
+			o.bogonBlocks.WithLabelValues(m.Network().GetName(), m.Provider()).Inc()
 		}
 	}
 }
@@ -204,7 +204,6 @@ func (o *SensorBogonBlockObserver) Register(eb *EventBus) {
 		metrics.Sensor,
 		"bogon_block",
 		"The total number of bogon blocks observed",
-		"signer_address",
 	)
 }
 
