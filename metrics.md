@@ -29,6 +29,36 @@ Variable Labels:
 - tag
 - direction
 
+## HeimdallActiveSpanObserver
+
+
+### panoptichain_heimdall_active_span_id
+The id of the active span (the span containing the current Bor block)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_active_span_start_block
+The start block of the active span
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_active_span_end_block
+The end block of the active span
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## AggchainObserver
 
 

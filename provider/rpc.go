@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	ethabi "github.com/ethereum/go-ethereum/accounts/abi"
@@ -38,13 +39,17 @@ import (
 
 // RPCProvider is the generic struct for all EVM style JSON RPC services.
 type RPCProvider struct {
-	url              string
-	network          network.Network
-	label            string
-	bus              *observer.EventBus
-	interval         time.Duration
-	logger           zerolog.Logger
+	url      string
+	network  network.Network
+	label    string
+	bus      *observer.EventBus
+	interval time.Duration
+	logger   zerolog.Logger
+	// blockNumber is written only from this provider's own goroutine; blockNumberMu
+	// guards it for cross-goroutine reads via BlockNumber() (used by meta-providers
+	// such as the Heimdall and hash divergence providers).
 	blockNumber      uint64
+	blockNumberMu    sync.RWMutex
 	prevBlockNumber  uint64
 	finalizedHeight  uint64
 	blockBuffer      *blockbuffer.BlockBuffer
@@ -375,13 +380,39 @@ func (r *RPCProvider) PollingInterval() time.Duration {
 	return r.interval
 }
 
+// BlockNumber returns the latest block height seen by this provider. It is safe
+// to call from other goroutines (e.g. the Heimdall and hash divergence
+// meta-providers, which run on their own goroutines).
+func (r *RPCProvider) BlockNumber() uint64 {
+	r.blockNumberMu.RLock()
+	defer r.blockNumberMu.RUnlock()
+	return r.blockNumber
+}
+
+// rpcProvidersByNetwork groups RPC providers by their network name so
+// meta-providers can look up the providers for a given network.
+func rpcProvidersByNetwork(rpcProviders []*RPCProvider) map[string][]*RPCProvider {
+	byNetwork := make(map[string][]*RPCProvider)
+	for _, r := range rpcProviders {
+		name := r.network.GetName()
+		byNetwork[name] = append(byNetwork[name], r)
+	}
+	return byNetwork
+}
+
 func (r *RPCProvider) refreshBlockBuffer(ctx context.Context, c *ethclient.Client) (err error) {
 	r.prevBlockNumber = r.blockNumber
-	r.blockNumber, err = c.BlockNumber(ctx)
+	bn, err := c.BlockNumber(ctx)
 	if err != nil {
+		// Keep the last-good height rather than resetting to 0: other providers
+		// read it via BlockNumber(), and a transient error shouldn't make the
+		// height look unknown.
 		r.logger.Error().Err(err).Msg("Failed to get block number")
 		return err
 	}
+	r.blockNumberMu.Lock()
+	r.blockNumber = bn
+	r.blockNumberMu.Unlock()
 
 	r.logger.Info().Uint64("block_number", r.blockNumber).Msg("Refreshing block state")
 

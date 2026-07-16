@@ -50,4 +50,5 @@ const (
 	StakingEvents                                      // *observer.StakingEvents
 	BufferedCheckpoint                                 // *observer.HeimdallCheckpoint (nil if no buffered checkpoint)
 	MilestoneLatest                                    // *observer.HeimdallMilestone (tip milestone, drives freshness gauges)
+	ActiveSpan                                         // *observer.HeimdallSpan (span containing the current Bor block; nil when Bor height unavailable)
 )
