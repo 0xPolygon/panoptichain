@@ -698,6 +698,52 @@ func (o *HeimdallSpanObserver) GetCollectors() []prometheus.Collector {
 	}
 }
 
+// HeimdallActiveSpanObserver reports the active span: the span containing the
+// current Bor block. Unlike HeimdallSpanObserver (the latest span), it is
+// published every cycle and its series are removed when the Bor height is not
+// yet known (no RPC provider for the network, or before its first successful
+// fetch). A later Bor outage retains the last-good height, so the series hold
+// rather than drop.
+type HeimdallActiveSpanObserver struct {
+	spanID     *prometheus.GaugeVec
+	startBlock *prometheus.GaugeVec
+	endBlock   *prometheus.GaugeVec
+}
+
+func (o *HeimdallActiveSpanObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.ActiveSpan, o)
+	o.spanID = metrics.NewGauge(metrics.Heimdall, "active_span_id", "The id of the active span (the span containing the current Bor block)")
+	o.startBlock = metrics.NewGauge(metrics.Heimdall, "active_span_start_block", "The start block of the active span")
+	o.endBlock = metrics.NewGauge(metrics.Heimdall, "active_span_end_block", "The end block of the active span")
+}
+
+func (o *HeimdallActiveSpanObserver) Notify(ctx context.Context, m Message) {
+	span := m.Data().(*HeimdallSpan)
+
+	network := m.Network().GetName()
+	provider := m.Provider()
+
+	// Unknown span: drop the series so a stale value doesn't linger.
+	if span == nil {
+		o.spanID.DeleteLabelValues(network, provider)
+		o.startBlock.DeleteLabelValues(network, provider)
+		o.endBlock.DeleteLabelValues(network, provider)
+		return
+	}
+
+	o.spanID.WithLabelValues(network, provider).Set(float64(span.ID))
+	o.startBlock.WithLabelValues(network, provider).Set(float64(span.StartBlock))
+	o.endBlock.WithLabelValues(network, provider).Set(float64(span.EndBlock))
+}
+
+func (o *HeimdallActiveSpanObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
+		o.spanID,
+		o.startBlock,
+		o.endBlock,
+	}
+}
+
 type HeimdallValidatorSetChangeObserver struct {
 	counter *prometheus.CounterVec
 }

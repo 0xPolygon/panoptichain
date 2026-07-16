@@ -15,7 +15,6 @@ import (
 )
 
 const DefaultBlockLookBack uint64 = 1000
-const DefaultMaxSpanLag uint64 = 10
 
 // DefaultAccountBalanceBatchSize is the number of balance lookups packed into a
 // single JSON-RPC batch when a provider does not override it. 1000 is the
@@ -151,7 +150,6 @@ type HeimdallEndpoint struct {
 	HeimdallURL   string         `mapstructure:"heimdall_url" validate:"url,required"`
 	Label         string         `mapstructure:"label" validate:"required"`
 	Interval      *time.Duration `mapstructure:"interval"`
-	MaxSpanLag    *uint64        `mapstructure:"max_span_lag"`
 }
 
 // SensorNetwork configures the sensor network provider. This fetches data from

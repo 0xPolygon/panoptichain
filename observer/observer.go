@@ -175,6 +175,7 @@ var observersMap = map[string]Observer{
 	"sensor_blocks":                       new(SensorBlocksObserver),
 	"sensor_bogon_block":                  new(SensorBogonBlockObserver),
 	"span":                                new(HeimdallSpanObserver),
+	"active_span":                         new(HeimdallActiveSpanObserver),
 	"stake_manager":                       new(StakeManagerObserver),
 	"spol_controller":                     new(SPOLControllerObserver),
 	"state_sync":                          new(StateSyncObserver),

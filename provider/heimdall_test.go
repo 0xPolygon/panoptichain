@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/observer"
 )
 
@@ -41,17 +41,6 @@ func newProvider(serverURL string, curr *observer.HeimdallSpan) *HeimdallProvide
 		heimdallURL: serverURL,
 		spans:       &observer.HeimdallSpans{Curr: curr},
 		logger:      NewLogger(nil, "test"),
-		maxSpanLag:  config.DefaultMaxSpanLag,
-	}
-}
-
-// newProviderWithMaxLag creates a HeimdallProvider with custom maxSpanLag.
-func newProviderWithMaxLag(serverURL string, curr *observer.HeimdallSpan, maxLag uint64) *HeimdallProvider {
-	return &HeimdallProvider{
-		heimdallURL: serverURL,
-		spans:       &observer.HeimdallSpans{Curr: curr},
-		logger:      NewLogger(nil, "test"),
-		maxSpanLag:  maxLag,
 	}
 }
 
@@ -339,76 +328,224 @@ func TestFetchSpan_AcceptsValidSpanZero(t *testing.T) {
 	}
 }
 
-func TestRefreshSpan_ExcessiveLagJumpsToLatest(t *testing.T) {
-	// When lag exceeds maxSpanLag, should jump directly to latest
-	server := newSpanServer(t, map[string]*observer.HeimdallSpan{
-		"/bor/spans/latest": newSpan(120, 12000, 12099),
-	})
+func TestRefreshSpan_LargeLagWalksAll(t *testing.T) {
+	// With no lag cap, even a large gap walks every span (no jump), like
+	// refreshMilestone's backlog. Span N covers [N*100, N*100+99].
+	spans := map[string]*observer.HeimdallSpan{
+		"/bor/spans/latest": newSpan(112, 11200, 11299),
+	}
+	for id := uint64(101); id <= 112; id++ {
+		spans[fmt.Sprintf("/bor/spans/%d", id)] = newSpan(id, id*100, id*100+99)
+	}
+	server := newSpanServer(t, spans)
 	defer server.Close()
 
-	// Current span is 100, latest is 120, lag = 20
-	// With maxSpanLag = 5, should jump to latest
-	h := newProviderWithMaxLag(server.URL, newSpan(100, 10000, 10099), 5)
+	// Current span is 100, latest is 112, lag = 12.
+	h := newProvider(server.URL, newSpan(100, 10000, 10099))
 
 	if err := h.refreshSpan(context.Background()); err != nil {
 		t.Fatalf("refreshSpan() error: %v", err)
 	}
 
-	if h.spans.Curr.ID != 120 {
-		t.Errorf("expected to jump to latest span 120, got %d", h.spans.Curr.ID)
+	if h.spans.Curr.ID != 112 {
+		t.Errorf("expected walk to latest span 112, got %d", h.spans.Curr.ID)
 	}
-	if h.spans.Prev == nil || h.spans.Prev.ID != 100 {
-		t.Errorf("expected Prev to be 100, got %v", h.spans.Prev)
+	if h.spans.Prev == nil || h.spans.Prev.ID != 111 {
+		t.Errorf("expected Prev to be 111, got %v", h.spans.Prev)
+	}
+	if len(h.spanUpdates) != 12 {
+		t.Errorf("expected 12 published span pairs, got %d", len(h.spanUpdates))
 	}
 }
 
-func TestRefreshSpan_WithinLagWalksToLatest(t *testing.T) {
-	// When lag is within maxSpanLag, a refresh walks every span up to the latest.
-	server := newSpanServer(t, map[string]*observer.HeimdallSpan{
-		"/bor/spans/latest": newSpan(105, 10500, 10599),
-		"/bor/spans/101":    newSpan(101, 10100, 10199),
-		"/bor/spans/102":    newSpan(102, 10200, 10299),
-		"/bor/spans/103":    newSpan(103, 10300, 10399),
-		"/bor/spans/104":    newSpan(104, 10400, 10499),
-	})
-	defer server.Close()
+func TestResolveActiveSpan_CurrentContainsBlock(t *testing.T) {
+	// The block is inside the tracked current span, so no fetch is needed.
+	h := newProvider("", newSpan(100, 1000, 1099))
 
-	// Current span is 100, latest is 105, lag = 5, maxSpanLag = 10.
-	h := newProviderWithMaxLag(server.URL, newSpan(100, 10000, 10099), 10)
-
-	if err := h.refreshSpan(context.Background()); err != nil {
-		t.Fatalf("refreshSpan() error: %v", err)
-	}
-
-	if h.spans.Curr.ID != 105 {
-		t.Errorf("expected walk to latest span 105, got %d", h.spans.Curr.ID)
-	}
-	if h.spans.Prev == nil || h.spans.Prev.ID != 104 {
-		t.Errorf("expected Prev to be 104, got %v", h.spans.Prev)
-	}
-	if len(h.spanUpdates) != 5 {
-		t.Errorf("expected 5 published span pairs, got %d", len(h.spanUpdates))
+	got := h.resolveActiveSpan(context.Background(), 1050)
+	if got == nil || got.ID != 100 {
+		t.Fatalf("expected active span 100, got %v", got)
 	}
 }
 
-func TestRefreshSpan_ExactLagThresholdWalksToLatest(t *testing.T) {
-	// When lag equals maxSpanLag exactly it walks (lag is not > maxSpanLag).
+func TestResolveActiveSpan_PreemptiveLatestSpan(t *testing.T) {
+	// The current span (101) was created preemptively: the chain is still in
+	// span 100, before span 101's start block. The active span must be 100.
 	server := newSpanServer(t, map[string]*observer.HeimdallSpan{
-		"/bor/spans/latest": newSpan(103, 10300, 10399),
-		"/bor/spans/101":    newSpan(101, 10100, 10199),
-		"/bor/spans/102":    newSpan(102, 10200, 10299),
-		"/bor/spans/103":    newSpan(103, 10300, 10399),
+		"/bor/spans/100": newSpan(100, 1000, 1099),
 	})
 	defer server.Close()
 
-	// Current span is 100, latest is 103, lag = 3 == maxSpanLag.
-	h := newProviderWithMaxLag(server.URL, newSpan(100, 10000, 10099), 3)
+	h := newProvider(server.URL, newSpan(101, 1100, 1199))
 
-	if err := h.refreshSpan(context.Background()); err != nil {
-		t.Fatalf("refreshSpan() error: %v", err)
+	got := h.resolveActiveSpan(context.Background(), 1050)
+	if got == nil || got.ID != 100 {
+		t.Fatalf("expected active span 100, got %v", got)
 	}
+}
 
-	if h.spans.Curr.ID != 103 {
-		t.Errorf("expected walk to latest span 103, got %d", h.spans.Curr.ID)
+func TestResolveActiveSpan_UsesPrevWithoutFetch(t *testing.T) {
+	// Prev already contains the block, so no span should be fetched (the server
+	// 404s on any request).
+	server := newSpanServer(t, map[string]*observer.HeimdallSpan{})
+	defer server.Close()
+
+	h := newProvider(server.URL, newSpan(101, 1100, 1199))
+	h.spans.Prev = newSpan(100, 1000, 1099)
+
+	got := h.resolveActiveSpan(context.Background(), 1050)
+	if got == nil || got.ID != 100 {
+		t.Fatalf("expected active span 100 from Prev, got %v", got)
+	}
+}
+
+func TestResolveActiveSpan_CacheHit(t *testing.T) {
+	// The cursor from a prior cycle still contains the block, so no fetch occurs.
+	server := newSpanServer(t, map[string]*observer.HeimdallSpan{})
+	defer server.Close()
+
+	h := newProvider(server.URL, newSpan(101, 1100, 1199))
+	h.spanCursor = newSpan(100, 1000, 1099)
+
+	got := h.resolveActiveSpan(context.Background(), 1050)
+	if got == nil || got.ID != 100 {
+		t.Fatalf("expected cached active span 100, got %v", got)
+	}
+}
+
+func TestResolveActiveSpan_WalksForwardIntoUntrackedSpan(t *testing.T) {
+	// The chain advanced past the cursor into a span that is neither Curr nor
+	// Prev; the resolver walks forward to it.
+	server := newSpanServer(t, map[string]*observer.HeimdallSpan{
+		"/bor/spans/101": newSpan(101, 1010, 1019),
+	})
+	defer server.Close()
+
+	h := newProvider(server.URL, newSpan(103, 1030, 1039)) // Curr is ahead
+	h.spanCursor = newSpan(100, 1000, 1009)                // block was here last cycle
+
+	got := h.resolveActiveSpan(context.Background(), 1015) // now in span 101
+	if got == nil || got.ID != 101 {
+		t.Fatalf("expected active span 101, got %v", got)
+	}
+}
+
+func TestResolveActiveSpan_WalksDeepPreemption(t *testing.T) {
+	// The active span sits 5 spans below a preemptive Curr. Resolution walks all
+	// the way down (no lag cap) to reach it.
+	server := newSpanServer(t, map[string]*observer.HeimdallSpan{
+		"/bor/spans/104": newSpan(104, 1040, 1049),
+		"/bor/spans/103": newSpan(103, 1030, 1039),
+		"/bor/spans/102": newSpan(102, 1020, 1029),
+		"/bor/spans/101": newSpan(101, 1010, 1019),
+		"/bor/spans/100": newSpan(100, 1000, 1009),
+	})
+	defer server.Close()
+
+	h := newProvider(server.URL, newSpan(105, 1050, 1059))
+
+	got := h.resolveActiveSpan(context.Background(), 1005)
+	if got == nil || got.ID != 100 {
+		t.Fatalf("expected active span 100, got %v", got)
+	}
+}
+
+func TestResolveActiveSpan_SeedsFromNearestKnownSpan(t *testing.T) {
+	// A stale low cursor and a much-closer Curr: resolution must seed from Curr
+	// and step down one span, not climb from the stale cursor. (Climbing from 50
+	// would fetch 51.. which the server doesn't have, yielding nil.)
+	server := newSpanServer(t, map[string]*observer.HeimdallSpan{
+		"/bor/spans/99": newSpan(99, 9900, 9999),
+	})
+	defer server.Close()
+
+	h := newProvider(server.URL, newSpan(100, 10000, 10099)) // Curr just above block
+	h.spanCursor = newSpan(50, 5000, 5099)                   // stale, far below
+
+	got := h.resolveActiveSpan(context.Background(), 9995)
+	if got == nil || got.ID != 99 {
+		t.Fatalf("expected active span 99 resolved from Curr, got %v", got)
+	}
+}
+
+func TestResolveActiveSpan_DoesNotFetchAboveLatest(t *testing.T) {
+	// The block is beyond the latest committed span (Curr); resolution must not
+	// fetch a not-yet-created span. The empty server would 404 any fetch.
+	server := newSpanServer(t, map[string]*observer.HeimdallSpan{})
+	defer server.Close()
+
+	h := newProvider(server.URL, newSpan(100, 10000, 10099))
+
+	if got := h.resolveActiveSpan(context.Background(), 10150); got != nil {
+		t.Fatalf("expected nil for block beyond the latest span, got %v", got)
+	}
+}
+
+func TestResolveActiveSpan_BlockInGapReturnsNil(t *testing.T) {
+	// Block 1050 falls in a gap: below the current span (101) start, above
+	// span 100's start, and inside neither span 100 nor 99.
+	server := newSpanServer(t, map[string]*observer.HeimdallSpan{
+		"/bor/spans/100": newSpan(100, 1060, 1099),
+		"/bor/spans/99":  newSpan(99, 1000, 1049),
+	})
+	defer server.Close()
+
+	h := newProvider(server.URL, newSpan(101, 1100, 1199))
+
+	if got := h.resolveActiveSpan(context.Background(), 1050); got != nil {
+		t.Fatalf("expected nil for block in gap, got %v", got)
+	}
+}
+
+func TestRefreshActiveSpan_ResolvesFromBorHeight(t *testing.T) {
+	// The Bor RPC provider reports a height inside the current span, so the
+	// active span resolves to it without any HTTP fetch.
+	h := newProvider("", newSpan(100, 1000, 1099))
+	h.borProviders = []*RPCProvider{{blockNumber: 1050}}
+
+	h.refreshActiveSpan(context.Background())
+
+	if h.activeSpan == nil || h.activeSpan.ID != 100 {
+		t.Fatalf("expected active span 100, got %v", h.activeSpan)
+	}
+}
+
+func TestRefreshActiveSpan_UsesMaxHeightAcrossProviders(t *testing.T) {
+	// One provider lags (height 500, before the span); the healthy one is at
+	// 1050. The max wins, resolving the active span without a fetch. (The lower
+	// height would fall before the span and trigger a walk-back that fails
+	// against the empty server, so this only passes if the max is used.)
+	h := newProvider("", newSpan(100, 1000, 1099))
+	h.borProviders = []*RPCProvider{{blockNumber: 500}, {blockNumber: 1050}}
+
+	h.refreshActiveSpan(context.Background())
+
+	if h.activeSpan == nil || h.activeSpan.ID != 100 {
+		t.Fatalf("expected active span 100 from max height, got %v", h.activeSpan)
+	}
+}
+
+func TestRefreshActiveSpan_NoBorProvider(t *testing.T) {
+	// Without an RPC provider for this network the active span is unknown.
+	h := newProvider("", newSpan(100, 1000, 1099))
+	h.activeSpan = newSpan(100, 1000, 1099) // stale value from a prior cycle
+
+	h.refreshActiveSpan(context.Background())
+
+	if h.activeSpan != nil {
+		t.Fatalf("expected nil active span without a Bor provider, got %v", h.activeSpan)
+	}
+}
+
+func TestRefreshActiveSpan_HeightUnavailable(t *testing.T) {
+	// The RPC provider exists but has not fetched a block yet (height 0).
+	h := newProvider("", newSpan(100, 1000, 1099))
+	h.borProviders = []*RPCProvider{{blockNumber: 0}}
+	h.activeSpan = newSpan(100, 1000, 1099) // stale value from a prior cycle
+
+	h.refreshActiveSpan(context.Background())
+
+	if h.activeSpan != nil {
+		t.Fatalf("expected nil active span when height unavailable, got %v", h.activeSpan)
 	}
 }
