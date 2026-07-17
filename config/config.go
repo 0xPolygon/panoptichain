@@ -155,11 +155,15 @@ type HeimdallEndpoint struct {
 // SensorNetwork configures the sensor network provider. This fetches data from
 // GCP Datastore where the sensors write their data.
 type SensorNetwork struct {
-	Name     string         `mapstructure:"name" validate:"required"`
-	Label    string         `mapstructure:"label" validate:"required"`
-	Project  string         `mapstructure:"project" validate:"required"`
-	Database string         `mapstructure:"database"`
-	Interval *time.Duration `mapstructure:"interval"`
+	Name    string `mapstructure:"name" validate:"required"`
+	Label   string `mapstructure:"label" validate:"required"`
+	Project string `mapstructure:"project" validate:"required"`
+	// Database is the GCP Datastore database ID (Datastore backend).
+	Database string `mapstructure:"database"`
+	// ClickHouseDSN selects the ClickHouse backend when set, e.g.
+	// clickhouse://analytics:pass@host:9000/sensor. Takes precedence over Datastore.
+	ClickHouseDSN string         `mapstructure:"clickhouse_dsn"`
+	Interval      *time.Duration `mapstructure:"interval"`
 }
 
 // SuccinctProverNetwork configures the succinct prover provider. This fetches
