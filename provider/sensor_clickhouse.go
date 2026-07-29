@@ -100,7 +100,7 @@ func (s *ClickHouseSensorNetworkProvider) refreshBlockBuffer(ctx context.Context
 		s.prevBlockNumber = s.blockNumber
 	}
 
-	// The head is taken from recent sightings rather than from max(number) over
+	// The head is taken from recent events rather than from max(number) over
 	// the whole blocks table. blocks is retained forever and ordered by number, so
 	// a single bogon block announcing an absurd height would otherwise pin
 	// blockNumber permanently and skew clampStart's backfill window for good. A
@@ -109,14 +109,14 @@ func (s *ClickHouseSensorNetworkProvider) refreshBlockBuffer(ctx context.Context
 	var bn uint64
 	if err := s.conn.QueryRow(ctx, `
 		SELECT max(block_number)
-		FROM block_sightings
+		FROM block_events
 		WHERE seen_at > now() - INTERVAL ? SECOND`, int(headWindow.Seconds())).Scan(&bn); err != nil {
 		return err
 	}
 	if bn == 0 {
-		// No sightings in the window: the fleet is down or not yet writing. Leave
+		// No events in the window: the fleet is down or not yet writing. Leave
 		// the previous head in place rather than resetting it to zero.
-		return errors.New("no block sightings in the recent window")
+		return errors.New("no block events in the recent window")
 	}
 	s.blockNumber = bn
 
@@ -158,7 +158,7 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 	}
 	defer rows.Close()
 
-	// blockTimes feeds the sightings pass below, which needs each block's header
+	// blockTimes feeds the events pass below, which needs each block's header
 	// timestamp to compute latency.
 	blockTimes := make(map[string]time.Time)
 
@@ -220,12 +220,12 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 	s.getBlockEvents(ctx, start, blockTimes)
 }
 
-// getBlockEvents loads every sighting for the block range in a single query.
+// getBlockEvents loads every event for the block range in a single query.
 //
 // This used to issue one `WHERE block_hash = ?` query per block, fanned out over
 // unbounded goroutines from inside the still-open blocks cursor -- up to 512
 // concurrent point lookups against the largest table in the database after a
-// stall. block_sightings now carries block_number as the leading sort key, so the
+// stall. block_events now carries block_number as the leading sort key, so the
 // whole range is one ordered scan instead.
 func (s *ClickHouseSensorNetworkProvider) getBlockEvents(ctx context.Context, start uint64, blockTimes map[string]time.Time) {
 	if len(blockTimes) == 0 {
@@ -234,7 +234,7 @@ func (s *ClickHouseSensorNetworkProvider) getBlockEvents(ctx context.Context, st
 
 	rows, err := s.conn.Query(ctx, `
 		SELECT block_hash, sensor_id, node_id, seen_at
-		FROM block_sightings
+		FROM block_events
 		WHERE block_number >= ? AND block_number < ?
 		ORDER BY block_number`, start, s.blockNumber)
 	if err != nil {
@@ -268,7 +268,7 @@ func (s *ClickHouseSensorNetworkProvider) getBlockEvents(ctx context.Context, st
 	for blockHash, events := range byBlock {
 		blockTime, ok := blockTimes[blockHash]
 		if !ok {
-			// A sighting for a block whose header we have not stored (or that fell
+			// A event for a block whose header we have not stored (or that fell
 			// outside the blocks query). Latency is measured against the header
 			// timestamp, so there is nothing to compute without it.
 			continue
