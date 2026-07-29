@@ -232,9 +232,11 @@ func (s *ClickHouseSensorNetworkProvider) getBlockEvents(ctx context.Context, st
 		return
 	}
 
-	// Only propagation events: header and header_backfill are blocks the sensor
+	// Only propagation events: header, header_backfill and body are things the sensor
 	// requested, so they carry no peer, and counting them would add an empty peer to
-	// every unique-propagator metric. This matches what block_events_first rolls up.
+	// every unique-propagator metric. block_events_first is keyed by source and keeps
+	// all of them, so the restriction has to be stated here -- the same one
+	// v_block_latency applies.
 	rows, err := s.conn.Query(ctx, `
 		SELECT block_hash, sensor_id, node_id, seen_at
 		FROM block_events
