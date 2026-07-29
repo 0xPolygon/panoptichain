@@ -88,12 +88,17 @@ func Init(ctx context.Context) error {
 			return err
 		}
 
-		var p provider.Provider
-		if s.ClickHouseDSN != "" {
-			p = provider.NewClickHouseSensorNetworkProvider(ctx, n, eb, s)
-		} else {
-			p = provider.NewSensorNetworkProvider(ctx, n, eb, s)
+		p := provider.NewSensorNetworkProvider(ctx, n, eb, s)
+		providers = append(providers, p)
+	}
+
+	for _, s := range config.Config().Providers.SensorNetworksCH {
+		n, err := network.GetNetworkByName(s.Name)
+		if err != nil {
+			return err
 		}
+
+		p := provider.NewClickHouseSensorNetworkProvider(n, eb, s)
 		providers = append(providers, p)
 	}
 

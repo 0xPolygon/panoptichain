@@ -126,6 +126,7 @@
 ## - hash_divergence
 ## - heimdall
 ## - sensor_network
+## - sensor_network_clickhouse
 ## - exchange_rates
 #
 # providers:
@@ -446,10 +447,9 @@
   #     version: 1
 
   ## @param sensor_network - list of objects - optional
-  ## The `sensor_network` provider fetches p2p sensor data from either ClickHouse
-  ## or GCP Datastore. Setting `clickhouse_dsn` selects ClickHouse; without it the
-  ## provider reads GCP Datastore, in which case remove these providers entirely
-  ## if this isn't being run in GCP.
+  ## The `sensor_network` provider fetches p2p sensor data from GCP Datastore.
+  ## Remove these providers entirely if this isn't being run in GCP. For the
+  ## ClickHouse-backed equivalent, see `sensor_network_clickhouse`.
   ##
     ## @param name - string - required
     ## @env PANOPTICHAIN_PROVIDERS_SENSOR_NETWORK_0_NAME - string - required
@@ -461,17 +461,7 @@
     ##
     ## @param database - string - optional - default ""
     ## @env PANOPTICHAIN_PROVIDERS_SENSOR_NETWORK_0_DATABASE - string - optional - default ""
-    ## The GCP Datastore database. Ignored when `clickhouse_dsn` is set.
-    ##
-    ## @param clickhouse_dsn - string - optional - default ""
-    ## @env PANOPTICHAIN_PROVIDERS_SENSOR_NETWORK_0_CLICKHOUSE_DSN - string - optional - default ""
-    ## The sensor ClickHouse DSN, e.g.
-    ## `clickhouse://analytics:pass@host:9000/mainnet`. Each network has its own
-    ## database because block numbers collide across networks. All connection
-    ## tuning (TLS, compression, pool sizing) must be expressed in the DSN. When
-    ## set, this provider reads ClickHouse instead of GCP Datastore, and `project`
-    ## and `database` are unused. Prefer supplying this via the environment
-    ## variable so the password does not live in the config file.
+    ## The GCP Datastore database.
     ##
     ## @param label - string - required
     ## @env PANOPTICHAIN_PROVIDERS_SENSOR_NETWORK_0_LABEL - string - required
@@ -491,6 +481,41 @@
   #   - name: "Polygon Amoy"
   #     project: "prj-polygonlabs-devtools-dev"
   #     database: "amoy"
+  #     label: "sensor-network"
+
+  ## @param sensor_network_clickhouse - list of objects - optional
+  ## The `sensor_network_clickhouse` provider fetches the same p2p sensor data as
+  ## `sensor_network`, but from ClickHouse instead of GCP Datastore.
+  ##
+    ## @param name - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_SENSOR_NETWORK_CLICKHOUSE_0_NAME - string - required
+    ## The network name. See `networks` for the list of predefined networks.
+    ##
+    ## @param dsn - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_SENSOR_NETWORK_CLICKHOUSE_0_DSN - string - required
+    ## The sensor ClickHouse DSN, e.g.
+    ## `clickhouse://analytics:pass@host:9000/mainnet`. Each network has its own
+    ## database because block numbers collide across networks. All connection
+    ## tuning (TLS, compression, pool sizing) must be expressed in the DSN. Prefer
+    ## supplying this via the environment variable so the password does not live in
+    ## the config file.
+    ##
+    ## @param label - string - required
+    ## @env PANOPTICHAIN_PROVIDERS_SENSOR_NETWORK_CLICKHOUSE_0_LABEL - string - required
+    ## The label for this provider. This field helps distinguish providers from
+    ## each other.
+    ##
+    ## @param interval - string - optional - default: runner.interval
+    ## @env PANOPTICHAIN_PROVIDERS_SENSOR_NETWORK_CLICKHOUSE_0_INTERVAL - string - optional - default: runner.interval
+    ## The polling interval for the `sensor_network_clickhouse` provider.
+  #
+  # sensor_network_clickhouse:
+  #   - name: "Polygon Mainnet"
+  #     dsn: "clickhouse://analytics:pass@localhost:9000/mainnet"
+  #     label: "sensor-network"
+  #
+  #   - name: "Polygon Amoy"
+  #     dsn: "clickhouse://analytics:pass@localhost:9000/amoy"
   #     label: "sensor-network"
 
   ## @param succinct_prover_network - list of objects - optional

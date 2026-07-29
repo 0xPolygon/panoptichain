@@ -40,7 +40,7 @@ type ClickHouseSensorNetworkProvider struct {
 	conn driver.Conn
 }
 
-func NewClickHouseSensorNetworkProvider(ctx context.Context, n network.Network, eb *observer.EventBus, cfg config.SensorNetwork) *ClickHouseSensorNetworkProvider {
+func NewClickHouseSensorNetworkProvider(n network.Network, eb *observer.EventBus, cfg config.SensorNetworkClickHouse) *ClickHouseSensorNetworkProvider {
 	logger := NewLogger(n, cfg.Label)
 
 	base := &SensorNetworkProvider{
@@ -54,7 +54,7 @@ func NewClickHouseSensorNetworkProvider(ctx context.Context, n network.Network, 
 		refreshStateTime: new(time.Duration),
 	}
 
-	opts, err := clickhouse.ParseDSN(cfg.ClickHouseDSN)
+	opts, err := clickhouse.ParseDSN(cfg.DSN)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to parse ClickHouse DSN")
 		return &ClickHouseSensorNetworkProvider{SensorNetworkProvider: base}
