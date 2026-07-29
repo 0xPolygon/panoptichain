@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"math/big"
-	"sync"
 	"time"
 
 	"cloud.google.com/go/datastore"
@@ -18,6 +17,17 @@ import (
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/network"
 	"github.com/0xPolygon/panoptichain/observer"
+)
+
+const (
+	// headWindow bounds how far back the head-block query looks. It must comfortably
+	// exceed the polling interval so a slow cycle never sees an empty window.
+	headWindow = 5 * time.Minute
+
+	// maxReorgsPerPoll caps the reorg backlog a single cycle will pull. The
+	// watermark query is otherwise unbounded, so a long outage would return every
+	// reorg since it began in one go.
+	maxReorgsPerPoll = 1000
 )
 
 // ClickHouseSensorNetworkProvider reads the same sensor data as
@@ -90,9 +100,23 @@ func (s *ClickHouseSensorNetworkProvider) refreshBlockBuffer(ctx context.Context
 		s.prevBlockNumber = s.blockNumber
 	}
 
+	// The head is taken from recent sightings rather than from max(number) over
+	// the whole blocks table. blocks is retained forever and ordered by number, so
+	// a single bogon block announcing an absurd height would otherwise pin
+	// blockNumber permanently and skew clampStart's backfill window for good. A
+	// time-bounded window cannot prevent a bogon from moving the head, but it does
+	// bound the damage to the window instead of forever.
 	var bn uint64
-	if err := s.conn.QueryRow(ctx, "SELECT number FROM blocks ORDER BY number DESC LIMIT 1").Scan(&bn); err != nil {
+	if err := s.conn.QueryRow(ctx, `
+		SELECT max(block_number)
+		FROM block_sightings
+		WHERE seen_at > now() - INTERVAL ? SECOND`, int(headWindow.Seconds())).Scan(&bn); err != nil {
 		return err
+	}
+	if bn == 0 {
+		// No sightings in the window: the fleet is down or not yet writing. Leave
+		// the previous head in place rather than resetting it to zero.
+		return errors.New("no block sightings in the recent window")
 	}
 	s.blockNumber = bn
 
@@ -115,20 +139,28 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 		Msg("Filling sensor network block range")
 
 	// End is exclusive so the sensors have a moment to finish writing the head.
+	//
+	// LIMIT 1 BY collapses rows that have not yet been merged away. blocks is a
+	// ReplacingMergeTree whose rows for a hash are byte-identical, so without this
+	// the same block can be returned more than once and downstream fork counting
+	// (forks_per_block_number) reads the copies as competing blocks.
 	rows, err := s.conn.Query(ctx, `
 		SELECT hash, number, parent_hash, block_time, coinbase, difficulty,
 		       gas_used, gas_limit, base_fee, uncle_hash, state_root, tx_root,
 		       receipt_root, logs_bloom, extra_data, mix_digest, nonce
 		FROM blocks
 		WHERE number >= ? AND number < ?
-		ORDER BY number`, start, s.blockNumber)
+		ORDER BY number
+		LIMIT 1 BY number, hash`, start, s.blockNumber)
 	if err != nil {
 		s.logger.Warn().Err(err).Msg("Failed to query blocks")
 		return
 	}
 	defer rows.Close()
 
-	var wg sync.WaitGroup
+	// blockTimes feeds the sightings pass below, which needs each block's header
+	// timestamp to compute latency.
+	blockTimes := make(map[string]time.Time)
 
 	for rows.Next() {
 		var (
@@ -136,7 +168,8 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 			uncleHash, stateRoot, txRoot, receiptRoot string
 			mixDigest, logsBloom, extraData           string
 			number, difficulty, gasUsed, gasLimit     uint64
-			baseFee, nonce                            uint64
+			nonce                                     uint64
+			baseFee                                   big.Int
 			blockTime                                 time.Time
 		)
 
@@ -148,6 +181,11 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 		}
 
 		// Full header so downstream ecrecover (signer/bogon/stolen) works.
+		//
+		// logs_bloom and extra_data are stored as RAW BYTES in their String
+		// columns, not as hex text (see the conventions in clickhouse_schema.sql),
+		// so they are converted directly. Hex-decoding them here would corrupt
+		// Extra and silently break every signer-derived metric.
 		header := &types.Header{
 			ParentHash:  common.HexToHash(parentHash),
 			UncleHash:   common.HexToHash(uncleHash),
@@ -164,13 +202,10 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 			Extra:       []byte(extraData),
 			MixDigest:   common.HexToHash(mixDigest),
 			Nonce:       types.EncodeNonce(nonce),
-			BaseFee:     new(big.Int).SetUint64(baseFee),
+			BaseFee:     new(big.Int).Set(&baseFee),
 		}
 		block := types.NewBlockWithHeader(header)
-
-		wg.Go(func() {
-			s.getBlockEvents(ctx, hash, blockTime)
-		})
+		blockTimes[hash] = blockTime
 
 		if s.blocks.Len() >= blockBufferSize {
 			s.blocks.Remove(s.blocks.Front())
@@ -182,50 +217,93 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 		s.logger.Warn().Err(err).Msg("Failed to iterate blocks")
 	}
 
-	wg.Wait()
+	s.getBlockEvents(ctx, start, blockTimes)
 }
 
-func (s *ClickHouseSensorNetworkProvider) getBlockEvents(ctx context.Context, blockHash string, blockTime time.Time) {
-	rows, err := s.conn.Query(ctx,
-		"SELECT sensor_id, peer_id, seen_at FROM block_events WHERE block_hash = ?", blockHash)
+// getBlockEvents loads every sighting for the block range in a single query.
+//
+// This used to issue one `WHERE block_hash = ?` query per block, fanned out over
+// unbounded goroutines from inside the still-open blocks cursor -- up to 512
+// concurrent point lookups against the largest table in the database after a
+// stall. block_sightings now carries block_number as the leading sort key, so the
+// whole range is one ordered scan instead.
+func (s *ClickHouseSensorNetworkProvider) getBlockEvents(ctx context.Context, start uint64, blockTimes map[string]time.Time) {
+	if len(blockTimes) == 0 {
+		return
+	}
+
+	rows, err := s.conn.Query(ctx, `
+		SELECT block_hash, sensor_id, node_id, seen_at
+		FROM block_sightings
+		WHERE block_number >= ? AND block_number < ?
+		ORDER BY block_number`, start, s.blockNumber)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("Failed to get block events")
 		return
 	}
 	defer rows.Close()
 
-	var events []database.DatastoreEvent
+	byBlock := make(map[string][]database.DatastoreEvent, len(blockTimes))
 	for rows.Next() {
-		var sensorID, peerID string
+		var blockHash, sensorID, nodeID string
 		var seenAt time.Time
-		if err := rows.Scan(&sensorID, &peerID, &seenAt); err != nil {
+		if err := rows.Scan(&blockHash, &sensorID, &nodeID, &seenAt); err != nil {
 			s.logger.Warn().Err(err).Msg("Failed to scan block event")
 			continue
 		}
-		events = append(events, database.DatastoreEvent{
+		byBlock[blockHash] = append(byBlock[blockHash], database.DatastoreEvent{
 			SensorId: sensorID,
-			PeerId:   peerID,
+			PeerId:   nodeID,
 			Time:     seenAt,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		s.logger.Warn().Err(err).Msg("Failed to iterate block events")
 	}
 
 	s.blockEventsLock.Lock()
 	defer s.blockEventsLock.Unlock()
 
-	// Only block.Time is consumed by BlockEventsObserver, so a minimal header
-	// carrying the block timestamp is sufficient here.
-	s.blockEvents = append(s.blockEvents, &observer.SensorBlockEvents{
-		Block:  &database.DatastoreBlock{DatastoreHeader: &database.DatastoreHeader{Time: blockTime}},
-		Events: events,
-	})
+	for blockHash, events := range byBlock {
+		blockTime, ok := blockTimes[blockHash]
+		if !ok {
+			// A sighting for a block whose header we have not stored (or that fell
+			// outside the blocks query). Latency is measured against the header
+			// timestamp, so there is nothing to compute without it.
+			continue
+		}
+		// Only block.Time is consumed by BlockEventsObserver, so a minimal header
+		// carrying the block timestamp is sufficient here.
+		s.blockEvents = append(s.blockEvents, &observer.SensorBlockEvents{
+			Block:  &database.DatastoreBlock{DatastoreHeader: &database.DatastoreHeader{Time: blockTime}},
+			Events: events,
+		})
+	}
 }
 
 func (s *ClickHouseSensorNetworkProvider) refreshReorgs(ctx context.Context) error {
+	// reorg_detections is append-only: the same reorg is re-reported as it deepens,
+	// and the deepest detection is the one worth alerting on. Collapsing to one row
+	// per start height here is what the old ReplacingMergeTree(depth) was trying to
+	// express -- but it belongs in the read, since an insert cannot suppress itself.
+	//
+	// Note this table is written by the reorg-alerts job, which is still backed by
+	// Datastore, so it stays empty (and the reorg and stolen-block metrics stay at
+	// zero) until that job is ported.
 	rows, err := s.conn.Query(ctx, `
-		SELECT start_block, depth, start_block_hash, end_block, end_block_hash, detected_at
-		FROM reorgs
+		SELECT
+			start_block,
+			max(depth)                      AS depth,
+			argMax(start_block_hash, depth) AS start_block_hash,
+			argMax(end_block, depth)        AS end_block,
+			argMax(end_block_hash, depth)   AS end_block_hash,
+			max(detected_at)                AS detected_at
+		FROM reorg_detections
 		WHERE detected_at > ?
-		ORDER BY detected_at`, s.latestReorgTime)
+		GROUP BY start_block
+		ORDER BY detected_at
+		LIMIT ?`, s.latestReorgTime, maxReorgsPerPoll)
 	if err != nil {
 		return err
 	}

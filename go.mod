@@ -3,6 +3,7 @@ module github.com/0xPolygon/panoptichain
 go 1.26.2
 
 require (
+	github.com/ClickHouse/clickhouse-go/v2 v2.47.0
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.35.1
@@ -16,7 +17,6 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/ClickHouse/ch-go v0.73.0 // indirect
-	github.com/ClickHouse/clickhouse-go/v2 v2.47.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20260416073033-7c2071eaa8d4 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
