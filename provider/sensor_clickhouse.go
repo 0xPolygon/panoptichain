@@ -294,20 +294,30 @@ func (s *ClickHouseSensorNetworkProvider) refreshReorgs(ctx context.Context) err
 	// per start height here is what the old ReplacingMergeTree(depth) was trying to
 	// express -- but it belongs in the read, since an insert cannot suppress itself.
 	//
+	// That collapse is v_reorgs in the schema, so read the view rather than
+	// restating it. A hand-rolled copy here aliased each aggregate to its own
+	// source column name, which makes ClickHouse resolve the WHERE and the argMax
+	// argument to the alias instead of the column -- two ILLEGAL_AGGREGATION
+	// errors, so the query failed on every poll regardless of the data. The view
+	// aggregates in a subquery under distinct names precisely to avoid that.
+	//
+	// The view also takes detected_at as argMax(detected_at, depth) rather than
+	// max(detected_at), so every field describes the same detection; the copy
+	// mixed the newest timestamp with the deepest detection's other fields.
+	//
 	// Note this table is written by the reorg-alerts job, which is still backed by
 	// Datastore, so it stays empty (and the reorg and stolen-block metrics stay at
 	// zero) until that job is ported.
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 			start_block,
-			max(depth)                      AS depth,
-			argMax(start_block_hash, depth) AS start_block_hash,
-			argMax(end_block, depth)        AS end_block,
-			argMax(end_block_hash, depth)   AS end_block_hash,
-			max(detected_at)                AS detected_at
-		FROM reorg_detections
+			depth,
+			start_block_hash,
+			end_block,
+			end_block_hash,
+			detected_at
+		FROM v_reorgs
 		WHERE detected_at > ?
-		GROUP BY start_block
 		ORDER BY detected_at
 		LIMIT ?`, s.latestReorgTime, maxReorgsPerPoll)
 	if err != nil {
