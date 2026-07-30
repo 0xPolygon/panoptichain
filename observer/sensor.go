@@ -15,6 +15,7 @@ import (
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
+	"github.com/rs/zerolog/log"
 )
 
 const ReorgsKind = "reorgs"
@@ -58,6 +59,11 @@ type SensorBlocks struct {
 	Blocks types.Blocks
 }
 
+// maxForkObservationRange bounds the per-height loop in SensorBlocksObserver.
+// Providers publish ranges of at most a block buffer (512); this is an order of
+// magnitude above that, so it only ever cuts corrupt input.
+const maxForkObservationRange = 8192
+
 type SensorBlocksObserver struct {
 	forksPerBlockNumber *prometheus.HistogramVec
 	totalBlocks         *prometheus.CounterVec
@@ -81,6 +87,12 @@ func (o *SensorBlocksObserver) Register(eb *EventBus) {
 	for _, s := range config.Config().Providers.SensorNetworks {
 		o.totalBlocks.WithLabelValues(s.Name, s.Label).Add(0)
 	}
+	// The ClickHouse-backed provider publishes to the same topic; without this a
+	// deployment running only that provider exposes no sensor_total_blocks series
+	// until its first block, leaving absence-based alerts nothing to fire on.
+	for _, s := range config.Config().Providers.SensorNetworksCH {
+		o.totalBlocks.WithLabelValues(s.Name, s.Label).Add(0)
+	}
 }
 
 func (o *SensorBlocksObserver) Notify(ctx context.Context, msg Message) {
@@ -98,7 +110,21 @@ func (o *SensorBlocksObserver) Notify(ctx context.Context, msg Message) {
 
 	// Iterate over the entire collected range to ensure that there's no missing
 	// blocks.
-	for i := data.Start; i < data.End; i++ {
+	//
+	// Bounded, because Start and End derive from peer-announced heights and this
+	// loop runs once per height: unbounded, a single bogon announcement at 2^63
+	// parks this goroutine ~9,000 years from returning (~32ns per iteration).
+	// Providers publish at most a block-buffer's worth of range, so any larger gap
+	// is corrupt input, not data; observe the newest window of it and say so.
+	start := data.Start
+	if data.End > start && data.End-start > maxForkObservationRange {
+		log.Warn().
+			Uint64("start", data.Start).
+			Uint64("end", data.End).
+			Msg("Implausibly large block range; observing only the newest window")
+		start = data.End - maxForkObservationRange
+	}
+	for i := start; i < data.End; i++ {
 		var n float64 = 0
 		if blocks, ok := m[i]; ok {
 			n = float64(len(blocks))

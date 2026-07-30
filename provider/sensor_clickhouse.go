@@ -118,6 +118,25 @@ func (s *ClickHouseSensorNetworkProvider) refreshBlockBuffer(ctx context.Context
 		// the previous head in place rather than resetting it to zero.
 		return errors.New("no block events in the recent window")
 	}
+
+	// The window bounds how LONG a bogon skews the head; this bounds how FAR.
+	// block_number is peer-announced and written as received, so one announcement at
+	// an absurd height moves max() -- and End - Start of the published range is then
+	// peer-controlled. The fork observer iterates that range per height, measured at
+	// ~32ns each: a bogon at 2^63 parks its goroutine ~9,000 years from returning.
+	// Advancing more than the buffer per poll is a bogon or an outage recovery, and
+	// either way heights beyond the buffer would be evicted unread; clampStart
+	// already skips them from the other side. During a genuine large gap the head
+	// drifts up by a buffer per poll and catches up; when a bogon leaves the window
+	// the head simply snaps back to the real maximum.
+	if s.prevBlockNumber != 0 && bn > s.prevBlockNumber+blockBufferSize {
+		s.logger.Warn().
+			Uint64("prev_block_number", s.prevBlockNumber).
+			Uint64("max_announced", bn).
+			Uint64("clamped_to", s.prevBlockNumber+blockBufferSize).
+			Msg("Announced head is implausibly far ahead; clamping the advance")
+		bn = s.prevBlockNumber + blockBufferSize
+	}
 	s.blockNumber = bn
 
 	s.logger.Trace().
@@ -214,7 +233,13 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 	}
 
 	if err := rows.Err(); err != nil {
-		s.logger.Warn().Err(err).Msg("Failed to iterate blocks")
+		// A truncated cursor leaves blockTimes incomplete, and the events pass drops
+		// every event whose block is missing from it -- so a partial blocks read
+		// silently discards events as well, understating peer counts and latency
+		// with no failure signal. Skip the events pass; the blocks already buffered
+		// are complete facts and the next poll re-covers the range.
+		s.logger.Error().Err(err).Msg("Failed to iterate blocks; skipping the events pass for this poll")
+		return
 	}
 
 	s.getBlockEvents(ctx, start, blockTimes)
@@ -265,7 +290,11 @@ func (s *ClickHouseSensorNetworkProvider) getBlockEvents(ctx context.Context, st
 	}
 
 	if err := rows.Err(); err != nil {
-		s.logger.Warn().Err(err).Msg("Failed to iterate block events")
+		// blockEvents was cleared at the top of this poll, so returning here
+		// publishes no events rather than a truncated set that reads as a quiet
+		// network. The next poll re-covers the range.
+		s.logger.Error().Err(err).Msg("Failed to iterate block events; publishing none for this poll")
+		return
 	}
 
 	s.blockEventsLock.Lock()
