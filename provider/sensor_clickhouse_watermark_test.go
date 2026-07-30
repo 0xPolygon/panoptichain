@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"math"
 	"os"
 	"testing"
 
@@ -140,5 +141,77 @@ func TestFailedPollRetriesRange(t *testing.T) {
 	}
 	if p.covered < covered {
 		t.Fatalf("watermark went backward: %d -> %d", covered, p.covered)
+	}
+}
+
+// TestPublishedThroughNeverGoesBackward is the regression test for a false
+// sensor_double_sign against a real validator.
+//
+// Separating the resume watermark from the publish head dropped the property that
+// made prevBlockNumber safe: monotonicity. covered legitimately moves DOWN when a
+// bogon leaves the head window, and the first version derived prevBlockNumber from
+// it -- so the buffer still held blocks above the lowered watermark and the publish
+// filter un-skipped them. The same block went out twice in one poll; grouped by
+// height with one recovered signer, DoubleSignObserver reads that as a double sign.
+//
+// No bogon is needed to trigger it: a lagging sensor whose tip announcement ages out
+// of the 5-minute window while another announces lower is enough.
+//
+// publishedThrough is now advanced only through publish(), which cannot lower it.
+func TestPublishedThroughNeverGoesBackward(t *testing.T) {
+	dsn := os.Getenv("PANOPTICHAIN_TEST_CLICKHOUSE_DSN")
+	if dsn == "" {
+		t.Skip("PANOPTICHAIN_TEST_CLICKHOUSE_DSN not set")
+	}
+	p := newTestClickHouseProvider(t, dsn)
+
+	// Drive the state machine directly: the sequence needs a head that goes down,
+	// which live data will not do on demand.
+	p.covered = 1000
+	p.publish(1000)
+
+	// A normal advance.
+	p.covered = 1100
+	p.publish(1000)
+	if p.prevBlockNumber != 1000 {
+		t.Fatalf("publish(1000) should set the filter to 1000, got %d", p.prevBlockNumber)
+	}
+	p.publish(1100)
+
+	// Now the head snaps below the watermark, as it does when a bogon expires.
+	p.covered = 1040
+	p.publish(1040)
+	if p.prevBlockNumber < 1100 {
+		t.Fatalf("publish filter went backward to %d; blocks above it are still buffered "+
+			"and would republish as a double sign", p.prevBlockNumber)
+	}
+	if p.publishedThrough != 1100 {
+		t.Fatalf("publishedThrough regressed to %d, want 1100", p.publishedThrough)
+	}
+}
+
+// TestHeadBoundDoesNotWrap is the regression test for the unchecked uint64 addition.
+//
+// block_number is UInt64 and peer-announced, so a first-poll announcement anywhere in
+// the top 512 of the range made covered+blockBufferSize wrap to near zero. The bound
+// then sat permanently below the real head, maxIf returned 0 on every poll, and the
+// walk was the only recovery path: ~175,000 polls, roughly ten days of silence. This
+// is the exact failure class the head bound was introduced to prevent.
+func TestHeadBoundDoesNotWrap(t *testing.T) {
+	for _, covered := range []uint64{
+		math.MaxUint64,
+		math.MaxUint64 - 1,
+		math.MaxUint64 - blockBufferSize,     // the exact boundary
+		math.MaxUint64 - blockBufferSize + 1, // just inside it
+		math.MaxUint64 - 2*blockBufferSize,
+	} {
+		got := addSaturating(covered, blockBufferSize)
+		if got < covered {
+			t.Fatalf("covered=%d + %d wrapped to %d", covered, blockBufferSize, got)
+		}
+	}
+	// And the ordinary case still adds.
+	if got := addSaturating(1000, blockBufferSize); got != 1000+blockBufferSize {
+		t.Fatalf("addSaturating(1000, %d) = %d", blockBufferSize, got)
 	}
 }

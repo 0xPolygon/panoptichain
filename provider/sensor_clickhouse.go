@@ -37,6 +37,9 @@ const (
 	// watermark query is otherwise unbounded, so a long outage would return every
 	// reorg since it began in one go.
 	maxReorgsPerPoll = 1000
+
+	// maxPublishedReorgDepths bounds the dedup map.
+	maxPublishedReorgDepths = 4096
 )
 
 // ClickHouseSensorNetworkProvider reads the same sensor data as
@@ -51,11 +54,18 @@ type ClickHouseSensorNetworkProvider struct {
 	// covered is the resume watermark: every height below it has been read in a
 	// CLEAN pass, blocks and events both. It advances only after a whole cycle
 	// commits, so a failed poll leaves it in place and the next poll re-covers the
-	// same range. prevBlockNumber cannot carry this role: the shared PublishEvents
-	// uses it as the already-published filter and the published range start, and
-	// maintaining it as a running max meant one bogon announcement poisoned all
-	// three roles at once, permanently.
-	covered uint64
+	// same range. It may move DOWN, when a bogon leaves the head window.
+	//
+	// publishedThrough is the high-water mark of what has been handed to the
+	// observers, and it is monotonic BY CONSTRUCTION -- advance() is the only writer
+	// and it never lowers it. That is the property the Datastore path gets from
+	// `if blockNumber > prevBlockNumber`, which the first separation of these roles
+	// dropped: covered going down while the buffer still held higher blocks let the
+	// publish filter un-skip them, republishing a block within one poll. Grouped by
+	// height with one signer, that reads as a double sign, and DoubleSignObserver
+	// raised sensor_double_sign against a real validator address.
+	covered          uint64
+	publishedThrough uint64
 
 	// publishedReorgDepth remembers the deepest depth already published per start
 	// height, so re-reading the clock-skew allowance window cannot re-publish a
@@ -116,6 +126,29 @@ func (s *ClickHouseSensorNetworkProvider) RefreshState(ctx context.Context) erro
 	return nil
 }
 
+// addSaturating adds without wrapping. Every operand here derives from a
+// peer-announced block_number (UInt64 in the schema), so an announcement anywhere in
+// the top 512 of the range used to wrap the bound to near zero -- which stranded the
+// watermark below the real head, made maxIf return 0 on every subsequent poll, and
+// left the walk as the only recovery: ~175,000 polls, about ten days of silence.
+func addSaturating(a, b uint64) uint64 {
+	if a > math.MaxUint64-b {
+		return math.MaxUint64
+	}
+	return a + b
+}
+
+// publish sets the range the observers will be shown, and is the ONLY writer of
+// publishedThrough. It cannot lower it: PublishEvents both filters on it
+// (block.Number() < prev is skipped) and reports it as SensorBlocks.Start, so
+// lowering it re-publishes blocks still sitting in the buffer.
+func (s *ClickHouseSensorNetworkProvider) publish(from uint64) {
+	if from > s.publishedThrough {
+		s.publishedThrough = from
+	}
+	s.prevBlockNumber = s.publishedThrough
+}
+
 func (s *ClickHouseSensorNetworkProvider) refreshBlockBuffer(ctx context.Context) error {
 	s.blockEvents = nil
 
@@ -128,18 +161,19 @@ func (s *ClickHouseSensorNetworkProvider) refreshBlockBuffer(ctx context.Context
 	if s.covered == 0 {
 		// First successful poll: nothing behind us to fill. Start covering from here.
 		s.covered = head
-		s.prevBlockNumber = head
+		s.publish(head)
 		return nil
 	}
 
 	// clampStart bounds the range to one buffer behind the head, logging any skip.
 	start := s.clampStart(s.covered)
 	if start >= head {
-		// Nothing new -- or the watermark sits above the head because an earlier
-		// bogon inflated it, in which case snapping it down IS the recovery.
-		// prevBlockNumber stays at or above the head so nothing re-publishes.
-		s.prevBlockNumber = start
+		// Nothing new, or the head dropped below the watermark because a bogon left
+		// the window -- snapping covered down IS the recovery. publishedThrough does
+		// not follow it down, so the blocks still buffered above the new head are not
+		// re-published; they were published when they were read.
 		s.covered = head
+		s.publish(start)
 		return nil
 	}
 
@@ -154,12 +188,12 @@ func (s *ClickHouseSensorNetworkProvider) refreshBlockBuffer(ctx context.Context
 	// range forever).
 	blocks, blockTimes, err := s.readBlocks(ctx, start, head)
 	if err != nil {
-		s.prevBlockNumber = head
+		s.publish(head)
 		return err
 	}
 	events, err := s.readBlockEvents(ctx, start, head, blockTimes)
 	if err != nil {
-		s.prevBlockNumber = head
+		s.publish(head)
 		return err
 	}
 
@@ -173,10 +207,10 @@ func (s *ClickHouseSensorNetworkProvider) refreshBlockBuffer(ctx context.Context
 	s.blockEvents = events
 	s.blockEventsLock.Unlock()
 
-	// PublishEvents publishes [prevBlockNumber, blockNumber) -- exactly the range
-	// committed above and nothing older.
-	s.prevBlockNumber = start
+	// PublishEvents publishes [prevBlockNumber, blockNumber) -- the range committed
+	// above, clamped by publishedThrough so nothing already shown goes out twice.
 	s.covered = head
+	s.publish(start)
 	return nil
 }
 
@@ -202,7 +236,7 @@ func (s *ClickHouseSensorNetworkProvider) refreshBlockBuffer(ctx context.Context
 func (s *ClickHouseSensorNetworkProvider) queryHead(ctx context.Context) (uint64, error) {
 	bound := uint64(math.MaxUint64)
 	if s.covered != 0 {
-		bound = s.covered + blockBufferSize
+		bound = addSaturating(s.covered, blockBufferSize)
 	}
 
 	var rawMax, head uint64
@@ -226,7 +260,7 @@ func (s *ClickHouseSensorNetworkProvider) queryHead(ctx context.Context) (uint64
 			Msg("Ignoring implausibly high announced heights")
 	}
 	if head == 0 {
-		head = s.covered + blockBufferSize
+		head = addSaturating(s.covered, blockBufferSize)
 	}
 	return head, nil
 }
@@ -425,6 +459,8 @@ func (s *ClickHouseSensorNetworkProvider) refreshReorgs(ctx context.Context) err
 	defer rows.Close()
 
 	var reorgs []*observer.DatastoreReorg
+	readThrough := s.latestReorgTime
+	rowsRead := 0
 	for rows.Next() {
 		var (
 			startBlock, endBlock uint64
@@ -437,7 +473,18 @@ func (s *ClickHouseSensorNetworkProvider) refreshReorgs(ctx context.Context) err
 			continue
 		}
 
-		// The skew allowance re-reads a window below the watermark, so rows already
+		// The cursor advances on every row READ, not every row published. Advancing
+		// it only on publication deadlocked the read: once maxReorgsPerPoll
+		// already-published rows sat in one skew window, each poll pulled the same
+		// page, deduped all of it, published nothing, and so never moved the cursor
+		// past them -- every later reorg lost permanently, and stolen-block detection
+		// with it, since refreshStolenBlocks walks s.reorgs.
+		if detectedAt.After(readThrough) {
+			readThrough = detectedAt
+		}
+		rowsRead++
+
+		// The skew allowance re-reads a window below the cursor, so rows already
 		// published come back; only a genuine deepening (greater depth for the same
 		// start height) goes out again.
 		if published, ok := s.publishedReorgDepth[startBlock]; ok && depth <= published {
@@ -463,17 +510,34 @@ func (s *ClickHouseSensorNetworkProvider) refreshReorgs(ctx context.Context) err
 	// Bound the dedup map: reorgs near the head are the live ones; anything far
 	// below it can no longer deepen meaningfully and is dropped so the map cannot
 	// grow without bound.
-	if len(s.publishedReorgDepth) > 4096 {
-		for start := range s.publishedReorgDepth {
-			if start+uint64(10*blockBufferSize) < s.blockNumber {
-				delete(s.publishedReorgDepth, start)
+	if len(s.publishedReorgDepth) > maxPublishedReorgDepths {
+		if s.blockNumber == 0 {
+			// No head to measure distance from -- queryHead has failed on every poll
+			// so far -- and the distance predicate would be vacuously false, so the
+			// map grew past its own guard. Reset instead: the worst case is
+			// re-publishing a reorg that is still inside the skew window.
+			s.publishedReorgDepth = make(map[uint64]uint32)
+		} else {
+			for start := range s.publishedReorgDepth {
+				if addSaturating(start, 10*blockBufferSize) < s.blockNumber {
+					delete(s.publishedReorgDepth, start)
+				}
 			}
 		}
 	}
 
 	s.reorgs = reorgs
-	if len(reorgs) > 0 {
-		s.latestReorgTime = *reorgs[len(reorgs)-1].Time
+	// A full page means there is more behind it. The cursor has moved to the newest
+	// row read, so the next poll continues from there rather than re-reading the
+	// same page; a backlog drains a page per poll instead of wedging.
+	if rowsRead >= maxReorgsPerPoll {
+		s.logger.Warn().
+			Int("rows_read", rowsRead).
+			Time("read_through", readThrough).
+			Msg("Reorg page was full; more remain and will be read next poll")
+	}
+	if readThrough.After(s.latestReorgTime) {
+		s.latestReorgTime = readThrough
 	}
 
 	return nil
