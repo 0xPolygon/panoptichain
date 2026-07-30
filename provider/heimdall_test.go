@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	orderedmap "github.com/wk8/go-ordered-map/v2"
+
 	"github.com/0xPolygon/panoptichain/observer"
 )
 
@@ -547,5 +549,28 @@ func TestRefreshActiveSpan_HeightUnavailable(t *testing.T) {
 
 	if h.activeSpan != nil {
 		t.Fatalf("expected nil active span when height unavailable, got %v", h.activeSpan)
+	}
+}
+
+func TestRefreshMissedCheckpointProposal_NoCheckpointYet(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"checkpoint":{"proposer":"0xabc"}}`)
+	}))
+	defer server.Close()
+
+	h := newProvider(server.URL, nil)
+	h.checkpointProposers = orderedmap.New[string, struct{}]()
+
+	// h.checkpoint is nil, e.g. a fresh chain where /checkpoints/latest 500s
+	// with "checkpoint not found".
+	if err := h.refreshMissedCheckpointProposal(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := h.checkpointProposers.Get("0xabc"); !ok {
+		t.Fatal("expected current proposer to be recorded")
+	}
+	if h.missedCheckpointProposers != nil {
+		t.Fatalf("expected no missed proposers, got %v", h.missedCheckpointProposers)
 	}
 }

@@ -635,6 +635,13 @@ func (h *HeimdallProvider) refreshMissedCheckpointProposal(ctx context.Context) 
 		h.checkpointProposers.Set(signer, struct{}{})
 	}
 
+	// No checkpoint has been observed yet (fresh chain, or the latest checkpoint
+	// fetch failed this cycle). There is nothing to measure misses against, so
+	// keep the proposer we just recorded and try again next cycle.
+	if h.checkpoint == nil {
+		return nil
+	}
+
 	latest := h.checkpoint.Proposer
 	if _, ok := h.checkpointProposers.Get(latest); !ok {
 		return nil
