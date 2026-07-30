@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"errors"
+	"math"
 	"math/big"
 	"time"
 
@@ -24,6 +25,14 @@ const (
 	// exceed the polling interval so a slow cycle never sees an empty window.
 	headWindow = 5 * time.Minute
 
+	// reorgClockSkewAllowance is how far below the reorg watermark each poll
+	// re-reads. The watermark is the global max detected_at of the last batch,
+	// while a deepening of an OLDER start height can carry a timestamp below it
+	// (writer clock skew, out-of-order arrival) -- without the allowance such a
+	// detection is never seen again. publishedReorgDepth keeps the re-read window
+	// from re-publishing.
+	reorgClockSkewAllowance = 5 * time.Minute
+
 	// maxReorgsPerPoll caps the reorg backlog a single cycle will pull. The
 	// watermark query is otherwise unbounded, so a long outage would return every
 	// reorg since it began in one go.
@@ -38,6 +47,20 @@ const (
 type ClickHouseSensorNetworkProvider struct {
 	*SensorNetworkProvider
 	conn driver.Conn
+
+	// covered is the resume watermark: every height below it has been read in a
+	// CLEAN pass, blocks and events both. It advances only after a whole cycle
+	// commits, so a failed poll leaves it in place and the next poll re-covers the
+	// same range. prevBlockNumber cannot carry this role: the shared PublishEvents
+	// uses it as the already-published filter and the published range start, and
+	// maintaining it as a running max meant one bogon announcement poisoned all
+	// three roles at once, permanently.
+	covered uint64
+
+	// publishedReorgDepth remembers the deepest depth already published per start
+	// height, so re-reading the clock-skew allowance window cannot re-publish a
+	// detection while a genuine deepening (higher depth) still goes out.
+	publishedReorgDepth map[uint64]uint32
 }
 
 func NewClickHouseSensorNetworkProvider(n network.Network, eb *observer.EventBus, cfg config.SensorNetworkClickHouse) *ClickHouseSensorNetworkProvider {
@@ -57,16 +80,16 @@ func NewClickHouseSensorNetworkProvider(n network.Network, eb *observer.EventBus
 	opts, err := clickhouse.ParseDSN(cfg.DSN)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to parse ClickHouse DSN")
-		return &ClickHouseSensorNetworkProvider{SensorNetworkProvider: base}
+		return &ClickHouseSensorNetworkProvider{SensorNetworkProvider: base, publishedReorgDepth: map[uint64]uint32{}}
 	}
 
 	conn, err := clickhouse.Open(opts)
 	if err != nil {
 		logger.Error().Err(err).Msg("Failed to connect to ClickHouse")
-		return &ClickHouseSensorNetworkProvider{SensorNetworkProvider: base}
+		return &ClickHouseSensorNetworkProvider{SensorNetworkProvider: base, publishedReorgDepth: map[uint64]uint32{}}
 	}
 
-	return &ClickHouseSensorNetworkProvider{SensorNetworkProvider: base, conn: conn}
+	return &ClickHouseSensorNetworkProvider{SensorNetworkProvider: base, conn: conn, publishedReorgDepth: map[uint64]uint32{}}
 }
 
 // RefreshState mirrors SensorNetworkProvider.RefreshState but fetches from
@@ -96,66 +119,125 @@ func (s *ClickHouseSensorNetworkProvider) RefreshState(ctx context.Context) erro
 func (s *ClickHouseSensorNetworkProvider) refreshBlockBuffer(ctx context.Context) error {
 	s.blockEvents = nil
 
-	if s.blockNumber > s.prevBlockNumber {
-		s.prevBlockNumber = s.blockNumber
-	}
-
-	// The head is taken from recent events rather than from max(number) over
-	// the whole blocks table. blocks is retained forever and ordered by number, so
-	// a single bogon block announcing an absurd height would otherwise pin
-	// blockNumber permanently and skew clampStart's backfill window for good. A
-	// time-bounded window cannot prevent a bogon from moving the head, but it does
-	// bound the damage to the window instead of forever.
-	var bn uint64
-	if err := s.conn.QueryRow(ctx, `
-		SELECT max(block_number)
-		FROM block_events
-		WHERE seen_at > now() - INTERVAL ? SECOND`, int(headWindow.Seconds())).Scan(&bn); err != nil {
+	head, err := s.queryHead(ctx)
+	if err != nil {
 		return err
 	}
-	if bn == 0 {
-		// No events in the window: the fleet is down or not yet writing. Leave
-		// the previous head in place rather than resetting it to zero.
-		return errors.New("no block events in the recent window")
+	s.blockNumber = head
+
+	if s.covered == 0 {
+		// First successful poll: nothing behind us to fill. Start covering from here.
+		s.covered = head
+		s.prevBlockNumber = head
+		return nil
 	}
 
-	// The window bounds how LONG a bogon skews the head; this bounds how FAR.
-	// block_number is peer-announced and written as received, so one announcement at
-	// an absurd height moves max() -- and End - Start of the published range is then
-	// peer-controlled. The fork observer iterates that range per height, measured at
-	// ~32ns each: a bogon at 2^63 parks its goroutine ~9,000 years from returning.
-	// Advancing more than the buffer per poll is a bogon or an outage recovery, and
-	// either way heights beyond the buffer would be evicted unread; clampStart
-	// already skips them from the other side. During a genuine large gap the head
-	// drifts up by a buffer per poll and catches up; when a bogon leaves the window
-	// the head simply snaps back to the real maximum.
-	if s.prevBlockNumber != 0 && bn > s.prevBlockNumber+blockBufferSize {
-		s.logger.Warn().
-			Uint64("prev_block_number", s.prevBlockNumber).
-			Uint64("max_announced", bn).
-			Uint64("clamped_to", s.prevBlockNumber+blockBufferSize).
-			Msg("Announced head is implausibly far ahead; clamping the advance")
-		bn = s.prevBlockNumber + blockBufferSize
-	}
-	s.blockNumber = bn
-
-	s.logger.Trace().
-		Uint64("block_number", s.blockNumber).
-		Msg("Refreshing sensor network block state")
-
-	// clampStart is reused from the embedded SensorNetworkProvider.
-	if s.prevBlockNumber != 0 && s.prevBlockNumber != s.blockNumber {
-		s.fillRange(ctx, s.clampStart(s.prevBlockNumber))
+	// clampStart bounds the range to one buffer behind the head, logging any skip.
+	start := s.clampStart(s.covered)
+	if start >= head {
+		// Nothing new -- or the watermark sits above the head because an earlier
+		// bogon inflated it, in which case snapping it down IS the recovery.
+		// prevBlockNumber stays at or above the head so nothing re-publishes.
+		s.prevBlockNumber = start
+		s.covered = head
+		return nil
 	}
 
+	// The cycle is transactional: read both passes to the side, commit only if both
+	// were clean. Committing blocks and then failing on events would advance
+	// nothing visible yet still leave duplicates in the buffer when the range is
+	// retried; committing neither makes the retry exact. On failure prevBlockNumber
+	// is parked at the head so PublishEvents' filter skips everything this cycle --
+	// the covered watermark has not moved, so the next poll re-covers the range,
+	// which is what the previous version's comments claimed and its code did not do
+	// (it advanced the watermark before the first query, so a failed poll lost its
+	// range forever).
+	blocks, blockTimes, err := s.readBlocks(ctx, start, head)
+	if err != nil {
+		s.prevBlockNumber = head
+		return err
+	}
+	events, err := s.readBlockEvents(ctx, start, head, blockTimes)
+	if err != nil {
+		s.prevBlockNumber = head
+		return err
+	}
+
+	for _, block := range blocks {
+		if s.blocks.Len() >= blockBufferSize {
+			s.blocks.Remove(s.blocks.Front())
+		}
+		s.blocks.PushBack(block)
+	}
+	s.blockEventsLock.Lock()
+	s.blockEvents = events
+	s.blockEventsLock.Unlock()
+
+	// PublishEvents publishes [prevBlockNumber, blockNumber) -- exactly the range
+	// committed above and nothing older.
+	s.prevBlockNumber = start
+	s.covered = head
 	return nil
 }
 
-func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start uint64) {
+// queryHead derives the fleet head from recent announcements, refusing implausible
+// heights in the query itself rather than clamping after the fact.
+//
+// block_number is peer-announced and written as received, so max() alone hands a
+// single bogon announcement control of the head -- and with it the size of the
+// range the fork observer iterates per height (~32ns each; a bogon at 2^63 parks
+// that goroutine ~9,000 years from returning). The bound excludes anything more
+// than a buffer above the watermark, so a mid-life bogon never enters the
+// arithmetic at all and publishing continues underneath it. Two cases remain:
+//
+//   - First poll: no watermark to bound against, so a bogon can take the head. But
+//     the head is assigned fresh from this query every poll, never maintained as a
+//     running max, so when the bogon ages out of the window the head snaps back and
+//     the watermark follows. Damage is bounded by the window, not permanent.
+//   - Every event in the window above the bound: either the fleet is recovering
+//     from an outage and the real head genuinely jumped, or the window holds only
+//     bogons. The two are indistinguishable, so advance one buffer and walk: each
+//     walked band is genuinely filled, so a real gap converges at a buffer per
+//     poll, and a pure-bogon window stops mattering the moment the bogon expires.
+func (s *ClickHouseSensorNetworkProvider) queryHead(ctx context.Context) (uint64, error) {
+	bound := uint64(math.MaxUint64)
+	if s.covered != 0 {
+		bound = s.covered + blockBufferSize
+	}
+
+	var rawMax, head uint64
+	if err := s.conn.QueryRow(ctx, `
+		SELECT max(block_number), maxIf(block_number, block_number < ?)
+		FROM block_events
+		WHERE seen_at > now() - INTERVAL ? SECOND`,
+		bound, int(headWindow.Seconds())).Scan(&rawMax, &head); err != nil {
+		return 0, err
+	}
+	if rawMax == 0 {
+		// No events in the window: the fleet is down or not yet writing. Leave the
+		// previous head in place rather than resetting it to zero.
+		return 0, errors.New("no block events in the recent window")
+	}
+	if rawMax >= bound {
+		s.logger.Warn().
+			Uint64("max_announced", rawMax).
+			Uint64("bound", bound).
+			Uint64("watermark", s.covered).
+			Msg("Ignoring implausibly high announced heights")
+	}
+	if head == 0 {
+		head = s.covered + blockBufferSize
+	}
+	return head, nil
+}
+
+// readBlocks reads the header facts for [start, end) without touching provider
+// state, so a failed cursor commits nothing and the range can be retried exactly.
+func (s *ClickHouseSensorNetworkProvider) readBlocks(ctx context.Context, start, end uint64) (types.Blocks, map[string]time.Time, error) {
 	s.logger.Debug().
 		Uint64("start", start).
-		Uint64("end", s.blockNumber).
-		Msg("Filling sensor network block range")
+		Uint64("end", end).
+		Msg("Reading sensor network block range")
 
 	// End is exclusive so the sensors have a moment to finish writing the head.
 	//
@@ -170,16 +252,16 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 		FROM blocks
 		WHERE number >= ? AND number < ?
 		ORDER BY number
-		LIMIT 1 BY number, hash`, start, s.blockNumber)
+		LIMIT 1 BY number, hash`, start, end)
 	if err != nil {
-		s.logger.Warn().Err(err).Msg("Failed to query blocks")
-		return
+		return nil, nil, err
 	}
 	defer rows.Close()
 
-	// blockTimes feeds the events pass below, which needs each block's header
-	// timestamp to compute latency.
+	// blockTimes feeds the events pass, which needs each block's header timestamp
+	// to compute latency.
 	blockTimes := make(map[string]time.Time)
+	var blocks types.Blocks
 
 	for rows.Next() {
 		var (
@@ -223,26 +305,19 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 			Nonce:       types.EncodeNonce(nonce),
 			BaseFee:     new(big.Int).Set(&baseFee),
 		}
-		block := types.NewBlockWithHeader(header)
+		blocks = append(blocks, types.NewBlockWithHeader(header))
 		blockTimes[hash] = blockTime
-
-		if s.blocks.Len() >= blockBufferSize {
-			s.blocks.Remove(s.blocks.Front())
-		}
-		s.blocks.PushBack(block)
 	}
 
 	if err := rows.Err(); err != nil {
-		// A truncated cursor leaves blockTimes incomplete, and the events pass drops
-		// every event whose block is missing from it -- so a partial blocks read
-		// silently discards events as well, understating peer counts and latency
-		// with no failure signal. Skip the events pass; the blocks already buffered
-		// are complete facts and the next poll re-covers the range.
-		s.logger.Error().Err(err).Msg("Failed to iterate blocks; skipping the events pass for this poll")
-		return
+		// A truncated cursor would leave blockTimes incomplete, and the events pass
+		// drops every event whose block is missing from it -- a partial read here
+		// silently discards events too. Nothing has been committed, so the caller
+		// retries the whole range on the next poll.
+		return nil, nil, err
 	}
 
-	s.getBlockEvents(ctx, start, blockTimes)
+	return blocks, blockTimes, nil
 }
 
 // getBlockEvents loads every event for the block range in a single query.
@@ -252,9 +327,9 @@ func (s *ClickHouseSensorNetworkProvider) fillRange(ctx context.Context, start u
 // concurrent point lookups against the largest table in the database after a
 // stall. block_events now carries block_number as the leading sort key, so the
 // whole range is one ordered scan instead.
-func (s *ClickHouseSensorNetworkProvider) getBlockEvents(ctx context.Context, start uint64, blockTimes map[string]time.Time) {
+func (s *ClickHouseSensorNetworkProvider) readBlockEvents(ctx context.Context, start, end uint64, blockTimes map[string]time.Time) ([]*observer.SensorBlockEvents, error) {
 	if len(blockTimes) == 0 {
-		return
+		return nil, nil
 	}
 
 	// Only propagation events: header, header_backfill and body are things the sensor
@@ -267,10 +342,9 @@ func (s *ClickHouseSensorNetworkProvider) getBlockEvents(ctx context.Context, st
 		FROM block_events
 		WHERE block_number >= ? AND block_number < ?
 		  AND source IN ('hash_announce', 'new_block')
-		ORDER BY block_number`, start, s.blockNumber)
+		ORDER BY block_number`, start, end)
 	if err != nil {
-		s.logger.Error().Err(err).Msg("Failed to get block events")
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -290,31 +364,27 @@ func (s *ClickHouseSensorNetworkProvider) getBlockEvents(ctx context.Context, st
 	}
 
 	if err := rows.Err(); err != nil {
-		// blockEvents was cleared at the top of this poll, so returning here
-		// publishes no events rather than a truncated set that reads as a quiet
-		// network. The next poll re-covers the range.
-		s.logger.Error().Err(err).Msg("Failed to iterate block events; publishing none for this poll")
-		return
+		// Nothing committed; the caller retries the whole range next poll.
+		return nil, err
 	}
 
-	s.blockEventsLock.Lock()
-	defer s.blockEventsLock.Unlock()
-
-	for blockHash, events := range byBlock {
+	events := make([]*observer.SensorBlockEvents, 0, len(byBlock))
+	for blockHash, blockEvents := range byBlock {
 		blockTime, ok := blockTimes[blockHash]
 		if !ok {
-			// A event for a block whose header we have not stored (or that fell
+			// An event for a block whose header we have not stored (or that fell
 			// outside the blocks query). Latency is measured against the header
 			// timestamp, so there is nothing to compute without it.
 			continue
 		}
 		// Only block.Time is consumed by BlockEventsObserver, so a minimal header
 		// carrying the block timestamp is sufficient here.
-		s.blockEvents = append(s.blockEvents, &observer.SensorBlockEvents{
+		events = append(events, &observer.SensorBlockEvents{
 			Block:  &database.DatastoreBlock{DatastoreHeader: &database.DatastoreHeader{Time: blockTime}},
-			Events: events,
+			Events: blockEvents,
 		})
 	}
+	return events, nil
 }
 
 func (s *ClickHouseSensorNetworkProvider) refreshReorgs(ctx context.Context) error {
@@ -348,7 +418,7 @@ func (s *ClickHouseSensorNetworkProvider) refreshReorgs(ctx context.Context) err
 		FROM v_reorgs
 		WHERE detected_at > ?
 		ORDER BY detected_at
-		LIMIT ?`, s.latestReorgTime, maxReorgsPerPoll)
+		LIMIT ?`, s.latestReorgTime.Add(-reorgClockSkewAllowance), maxReorgsPerPoll)
 	if err != nil {
 		return err
 	}
@@ -367,6 +437,14 @@ func (s *ClickHouseSensorNetworkProvider) refreshReorgs(ctx context.Context) err
 			continue
 		}
 
+		// The skew allowance re-reads a window below the watermark, so rows already
+		// published come back; only a genuine deepening (greater depth for the same
+		// start height) goes out again.
+		if published, ok := s.publishedReorgDepth[startBlock]; ok && depth <= published {
+			continue
+		}
+		s.publishedReorgDepth[startBlock] = depth
+
 		t := detectedAt
 		reorgs = append(reorgs, &observer.DatastoreReorg{
 			Depth:      int(depth),
@@ -380,6 +458,17 @@ func (s *ClickHouseSensorNetworkProvider) refreshReorgs(ctx context.Context) err
 
 	if err := rows.Err(); err != nil {
 		return err
+	}
+
+	// Bound the dedup map: reorgs near the head are the live ones; anything far
+	// below it can no longer deepen meaningfully and is dropped so the map cannot
+	// grow without bound.
+	if len(s.publishedReorgDepth) > 4096 {
+		for start := range s.publishedReorgDepth {
+			if start+uint64(10*blockBufferSize) < s.blockNumber {
+				delete(s.publishedReorgDepth, start)
+			}
+		}
 	}
 
 	s.reorgs = reorgs

@@ -114,14 +114,16 @@ func (o *SensorBlocksObserver) Notify(ctx context.Context, msg Message) {
 	// Bounded, because Start and End derive from peer-announced heights and this
 	// loop runs once per height: unbounded, a single bogon announcement at 2^63
 	// parks this goroutine ~9,000 years from returning (~32ns per iteration).
-	// Providers publish at most a block-buffer's worth of range, so any larger gap
-	// is corrupt input, not data; observe the newest window of it and say so.
+	// The ClickHouse provider bounds its published range, but the Datastore-backed
+	// one does not, so a genuine multi-hour outage can exceed this too -- in that
+	// case only zero-observations for stale heights are dropped, which is the right
+	// trade either way.
 	start := data.Start
 	if data.End > start && data.End-start > maxForkObservationRange {
 		log.Warn().
 			Uint64("start", data.Start).
 			Uint64("end", data.End).
-			Msg("Implausibly large block range; observing only the newest window")
+			Msg("Block range exceeds the fork-observation bound; observing only the newest window")
 		start = data.End - maxForkObservationRange
 	}
 	for i := start; i < data.End; i++ {
