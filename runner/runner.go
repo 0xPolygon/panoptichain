@@ -92,6 +92,16 @@ func Init(ctx context.Context) error {
 		providers = append(providers, p)
 	}
 
+	for _, s := range config.Config().Providers.SensorNetworksCH {
+		n, err := network.GetNetworkByName(s.Name)
+		if err != nil {
+			return err
+		}
+
+		p := provider.NewClickHouseSensorNetworkProvider(n, eb, s)
+		providers = append(providers, p)
+	}
+
 	for _, p := range config.Config().Providers.SuccinctProverNetworks {
 		n, err := network.GetNetworkByName(p.Name)
 		if err != nil {

@@ -37,15 +37,16 @@ type Runner struct {
 // Providers encloses the different providers configurations. Providers are
 // responsible for fetching data.
 type Providers struct {
-	RPCs                   []RPC                   `mapstructure:"rpc" validate:"dive"`
-	HeimdallEndpoints      []HeimdallEndpoint      `mapstructure:"heimdall" validate:"dive"`
-	SensorNetworks         []SensorNetwork         `mapstructure:"sensor_network" validate:"dive"`
-	SuccinctProverNetworks []SuccinctProverNetwork `mapstructure:"succinct_prover_network" validate:"dive"`
-	Aggchains              []Aggchain              `mapstructure:"aggchain" validate:"dive"`
-	Grafana                []Grafana               `mapstructure:"grafana" validate:"dive"`
-	HashDivergence         *HashDivergence         `mapstructure:"hash_divergence"`
-	System                 *System                 `mapstructure:"system"`
-	ExchangeRates          *ExchangeRates          `mapstructure:"exchange_rates"`
+	RPCs                   []RPC                     `mapstructure:"rpc" validate:"dive"`
+	HeimdallEndpoints      []HeimdallEndpoint        `mapstructure:"heimdall" validate:"dive"`
+	SensorNetworks         []SensorNetwork           `mapstructure:"sensor_network" validate:"dive"`
+	SensorNetworksCH       []SensorNetworkClickHouse `mapstructure:"sensor_network_clickhouse" validate:"dive"`
+	SuccinctProverNetworks []SuccinctProverNetwork   `mapstructure:"succinct_prover_network" validate:"dive"`
+	Aggchains              []Aggchain                `mapstructure:"aggchain" validate:"dive"`
+	Grafana                []Grafana                 `mapstructure:"grafana" validate:"dive"`
+	HashDivergence         *HashDivergence           `mapstructure:"hash_divergence"`
+	System                 *System                   `mapstructure:"system"`
+	ExchangeRates          *ExchangeRates            `mapstructure:"exchange_rates"`
 }
 
 // Account defines an account to monitor with an optional tag.
@@ -155,10 +156,23 @@ type HeimdallEndpoint struct {
 // SensorNetwork configures the sensor network provider. This fetches data from
 // GCP Datastore where the sensors write their data.
 type SensorNetwork struct {
-	Name     string         `mapstructure:"name" validate:"required"`
-	Label    string         `mapstructure:"label" validate:"required"`
-	Project  string         `mapstructure:"project" validate:"required"`
+	Name    string `mapstructure:"name" validate:"required"`
+	Label   string `mapstructure:"label" validate:"required"`
+	Project string `mapstructure:"project" validate:"required"`
+	// Database is the GCP Datastore database ID.
 	Database string         `mapstructure:"database"`
+	Interval *time.Duration `mapstructure:"interval"`
+}
+
+// SensorNetworkClickHouse configures the ClickHouse-backed sensor network
+// provider. It reads the same sensor data as SensorNetwork but from ClickHouse
+// instead of GCP Datastore.
+type SensorNetworkClickHouse struct {
+	Name  string `mapstructure:"name" validate:"required"`
+	Label string `mapstructure:"label" validate:"required"`
+	// DSN addresses the ClickHouse server, e.g.
+	// clickhouse://analytics:pass@host:9000/sensor.
+	DSN      string         `mapstructure:"dsn" validate:"required"`
 	Interval *time.Duration `mapstructure:"interval"`
 }
 
