@@ -438,9 +438,9 @@ func (s *ClickHouseSensorNetworkProvider) refreshReorgs(ctx context.Context) err
 	// max(detected_at), so every field describes the same detection; the copy
 	// mixed the newest timestamp with the deepest detection's other fields.
 	//
-	// Note this table is written by the reorg-alerts job, which is still backed by
-	// Datastore, so it stays empty (and the reorg and stolen-block metrics stay at
-	// zero) until that job is ported.
+	// reorg_detections is written by the reorg-alerts job. On the local stack (and
+	// any freshly-reset schema) it is empty until a reorg is detected, so the reorg
+	// and stolen-block metrics stay at zero until then.
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 			start_block,
