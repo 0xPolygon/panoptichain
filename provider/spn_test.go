@@ -94,8 +94,9 @@ func TestRefreshRequesterUsage_PicksNewestHour(t *testing.T) {
 		t.Fatalf("request did not decode server-side: %+v", got)
 	}
 	// Unlike the other requester filters on this service, this one is a hex
-	// string rather than raw address bytes, and it must stay lowercased so a
-	// case-sensitive comparison on the server still matches.
+	// string rather than raw address bytes. It carries the 0x prefix the
+	// server requires, and stays lowercased so the metric label does not
+	// change with however the address is written in config.
 	if got.Requester != requester {
 		t.Fatalf("unexpected requester encoding: %q, want %q", got.Requester, requester)
 	}

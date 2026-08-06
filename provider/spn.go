@@ -90,9 +90,11 @@ func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Contex
 		StartTime: start.Format(time.RFC3339),
 		EndTime:   end.Format(time.RFC3339),
 		// Unlike the other requester filters on this service, this field is a
-		// hex string rather than raw address bytes. Send it lowercased: a
-		// string field invites a case-sensitive comparison on the server, and
-		// lowercase is the form known to work, so don't risk EIP-55 casing.
+		// hex string rather than raw address bytes. HexToAddress normalizes
+		// whatever the config holds and guarantees the 0x prefix, which the
+		// server rejects the request without. Casing is not significant to the
+		// server, but this value becomes a metric label, so lowercase it to
+		// keep the label stable however the address is written in config.
 		Requester: strings.ToLower(common.HexToAddress(*r.requester).Hex()),
 	}
 
