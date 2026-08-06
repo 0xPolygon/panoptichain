@@ -181,6 +181,7 @@ var observersMap = map[string]Observer{
 	"state_sync":                          new(StateSyncObserver),
 	"stolen_block":                        new(StolenBlockObserver),
 	"spn_proof_request":                   new(ProofRequestObserver),
+	"spn_requester_usage":                 new(RequesterUsageObserver),
 	"staking_events":                      new(StakingEventsObserver),
 	"system":                              new(SystemObserver),
 	"time_to_finalized":                   new(TimeToFinalizedObserver),

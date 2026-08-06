@@ -1275,6 +1275,29 @@ Variable Labels:
 - fulfiller
 - program
 
+## RequesterUsageObserver
+
+
+### panoptichain_spn_gas_reserved
+The reserved gas the requester used over the most recent complete hour
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- requester
+
+### panoptichain_spn_gas_on_demand
+The on-demand gas the requester used over the most recent complete hour
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- requester
+
 ## SPOLControllerObserver
 
 

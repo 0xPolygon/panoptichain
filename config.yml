@@ -541,7 +541,9 @@
     ##
     ## @param requester - string - optional
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_REQUESTER - string - optional
-    ## The requester to filter the proof requests by.
+    ## The requester to filter the proof requests by. Also scopes the hourly
+    ## gas usage tracked by the `spn_requester_usage` observer, which is only
+    ## collected when this is set.
     ##
     ## @param fulfiller - string - optional
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_FULFILLER - string - optional
@@ -699,6 +701,7 @@
   #   - "sensor_bogon_block"
   #   - "span"
   #   - "spn_proof_request"
+  #   - "spn_requester_usage"
   #   - "stake_manager"
   #   - "state_sync"
   #   - "stolen_block"

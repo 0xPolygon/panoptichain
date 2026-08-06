@@ -177,6 +177,32 @@ options.
   rm -rf github.com
   ```
 
+  Two things to know before rerunning this:
+
+  - The checked-in bindings were **not** generated from `main` or from any
+    tag. `GetUsageSummary` exists only on unmerged feature branches of
+    `succinctlabs/network`, so regenerating from `main` silently drops it and
+    breaks `observer/spn.go`.
+  - `requester_usage.pb.go` is generated separately, from the checked-in
+    `proto/network/requester_usage.proto`, because `GetRequesterUsage` is
+    served in production but declared in no branch or tag of
+    `succinctlabs/network`. It imports `types.proto` for `UsageSummary`, so
+    compile it against the same checkout used above:
+
+    ```bash
+    protoc proto/network/requester_usage.proto \
+      --proto_path ~/src/network/proto --proto_path proto/network \
+      --go_out=. \
+      --go_opt=Mrequester_usage.proto=github.com/0xPolygon/panoptichain/proto/network \
+      --go_opt=Mtypes.proto=github.com/0xPolygon/panoptichain/proto/network
+    ```
+
+    The field numbers come from `succinctlabs/sp1`
+    (`crates/sdk/src/network/proto/base/types.rs`), which ships prost-generated
+    Rust for the full schema. `proto/network/requester_usage_client.go` is
+    hand-written for the same reason. Fold both into the normal generation
+    above once the method lands upstream.
+
 #### Heimdall Vote Extension Types
 
 Generate Heimdall vote extension types from CometBFT and Heimdall v2 proto files.
