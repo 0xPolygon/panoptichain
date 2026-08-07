@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+import "types.proto";
+
+package types;
+
+// The usage summary for a single hour, as returned by
+// ProverNetwork.GetRequesterUsage.
+message RequesterUsageSummary {
+  // The hour boundary as an ISO timestamp string (e.g., 2024-01-15T14:00:00Z).
+  string hour = 1;
+  // The usage summary associated with this requester.
+  UsageSummary usage_summary = 2;
+}
+
+message GetRequesterUsageRequest {
+  // The ISO timestamp string of the usage start time (e.g., 2024-01-15T14:00:00Z).
+  string start_time = 1;
+  // The ISO timestamp string of the usage end time (e.g., 2024-01-15T17:00:00Z).
+  string end_time = 2;
+  // The hex string of the requester to get the usage for (e.g., 0x...12).
+  string requester = 3;
+}
+
+message GetRequesterUsageResponse {
+  // A list summarizing usage by hour for the specified requester.
+  repeated RequesterUsageSummary usage_summary = 1;
+}

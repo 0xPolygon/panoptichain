@@ -2,6 +2,7 @@ package observer
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -12,9 +13,14 @@ import (
 	spnpb "github.com/0xPolygon/panoptichain/proto/network"
 )
 
+// UsageSummary is the gas a requester consumed over a single hour.
 type UsageSummary struct {
 	*spnpb.UsageSummary
 	Requester string
+	// Hour is the ISO-8601 hour boundary the usage falls in. It is
+	// deliberately not a metric label: a new label value every hour would
+	// grow the series count without bound.
+	Hour string
 }
 
 type ProofRequestObserver struct {
@@ -121,6 +127,61 @@ func (o *ProofRequestObserver) Notify(ctx context.Context, msg Message) {
 	fulfilled := time.Unix(int64(*proof.FulfilledAt), 0)
 	dt := fulfilled.Sub(created).Seconds()
 	o.time.WithLabelValues(labels...).Observe(float64(dt))
+}
+
+// RequesterUsageObserver tracks the gas a requester consumed over the most
+// recent complete hour, split by how it was billed.
+type RequesterUsageObserver struct {
+	reserved  *prometheus.GaugeVec
+	on_demand *prometheus.GaugeVec
+}
+
+func (o *RequesterUsageObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.RequesterUsage, o)
+
+	o.reserved = metrics.NewGauge(
+		metrics.SPN,
+		"gas_reserved",
+		"The reserved gas the requester used over the most recent complete hour",
+		"requester",
+	)
+	o.on_demand = metrics.NewGauge(
+		metrics.SPN,
+		"gas_on_demand",
+		"The on-demand gas the requester used over the most recent complete hour",
+		"requester",
+	)
+}
+
+func (o *RequesterUsageObserver) Notify(ctx context.Context, msg Message) {
+	usage, ok := msg.Data().(*UsageSummary)
+	if !ok || usage == nil || usage.UsageSummary == nil {
+		return
+	}
+
+	labels := []string{
+		msg.Network().GetName(),
+		msg.Provider(),
+		usage.Requester,
+	}
+
+	// Gas values arrive as decimal strings because they can exceed uint64.
+	// Skip a malformed value rather than resetting the gauge to zero, which
+	// would read as "no usage" instead of "no data".
+	if reserved, err := strconv.ParseFloat(usage.ReservedGas, 64); err == nil {
+		o.reserved.WithLabelValues(labels...).Set(reserved)
+	}
+
+	if onDemand, err := strconv.ParseFloat(usage.OnDemandGas, 64); err == nil {
+		o.on_demand.WithLabelValues(labels...).Set(onDemand)
+	}
+}
+
+func (o *RequesterUsageObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
+		o.reserved,
+		o.on_demand,
+	}
 }
 
 func (o *ProofRequestObserver) GetCollectors() []prometheus.Collector {

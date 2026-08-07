@@ -51,4 +51,5 @@ const (
 	BufferedCheckpoint                                 // *observer.HeimdallCheckpoint (nil if no buffered checkpoint)
 	MilestoneLatest                                    // *observer.HeimdallMilestone (tip milestone, drives freshness gauges)
 	ActiveSpan                                         // *observer.HeimdallSpan (span containing the current Bor block; nil when Bor height unavailable)
+	RequesterUsage                                     // *observer.UsageSummary (most recent complete hour; nil when the hour has no usage)
 )
