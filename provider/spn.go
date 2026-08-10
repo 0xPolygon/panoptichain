@@ -171,7 +171,7 @@ func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context
 
 	res, err := c.GetFilteredProofRequests(metadata.AppendToOutgoingContext(ctx, "api-key", r.apiKey), req)
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Failed to get requester usage")
+		r.logger.Error().Err(err).Msg("Failed to get filtered proof requests")
 	}
 
 	if res != nil {
