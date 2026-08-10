@@ -53,10 +53,10 @@ func newUsageServer(t *testing.T, res *spnpb.GetRequesterUsageResponse) (*grpc.C
 	return conn, got
 }
 
-func newUsageProvider(requester *string) *SuccinctProverNetworkProvider {
+func newUsageProvider(usageRequesters ...string) *SuccinctProverNetworkProvider {
 	return &SuccinctProverNetworkProvider{
-		logger:    NewLogger(nil, "test"),
-		requester: requester,
+		logger:          NewLogger(nil, "test"),
+		usageRequesters: usageRequesters,
 	}
 }
 
@@ -75,17 +75,18 @@ func TestRefreshRequesterUsage_PicksNewestHour(t *testing.T) {
 	})
 
 	requester := "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
-	h := newUsageProvider(&requester)
+	h := newUsageProvider(requester)
 	h.refreshRequesterUsage(context.Background(), conn)
 
-	if h.usage == nil {
-		t.Fatal("expected usage to be set")
+	if len(h.usage) != 1 {
+		t.Fatalf("expected one usage summary, got %d", len(h.usage))
 	}
-	if h.usage.Hour != "2026-08-06T12:00:00Z" {
-		t.Fatalf("expected newest hour, got %q", h.usage.Hour)
+	usage := h.usage[0]
+	if usage.Hour != "2026-08-06T12:00:00Z" {
+		t.Fatalf("expected newest hour, got %q", usage.Hour)
 	}
-	if h.usage.ReservedGas != "300" || h.usage.OnDemandGas != "400" {
-		t.Fatalf("unexpected gas: reserved=%q on_demand=%q", h.usage.ReservedGas, h.usage.OnDemandGas)
+	if usage.ReservedGas != "300" || usage.OnDemandGas != "400" {
+		t.Fatalf("unexpected gas: reserved=%q on_demand=%q", usage.ReservedGas, usage.OnDemandGas)
 	}
 
 	// The request must round-trip over the wire with the field numbers taken
@@ -106,10 +107,10 @@ func TestRefreshRequesterUsage_EmptyHourLeavesUsageNil(t *testing.T) {
 	conn, _ := newUsageServer(t, &spnpb.GetRequesterUsageResponse{})
 
 	requester := "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
-	h := newUsageProvider(&requester)
+	h := newUsageProvider(requester)
 	h.refreshRequesterUsage(context.Background(), conn)
 
-	if h.usage != nil {
+	if len(h.usage) != 0 {
 		t.Fatalf("expected no usage for an empty hour, got %+v", h.usage)
 	}
 }
@@ -122,13 +123,66 @@ func TestRefreshRequesterUsage_NoRequesterSkipsCall(t *testing.T) {
 		}},
 	})
 
-	h := newUsageProvider(nil)
+	h := newUsageProvider()
 	h.refreshRequesterUsage(context.Background(), conn)
 
-	if h.usage != nil {
+	if len(h.usage) != 0 {
 		t.Fatalf("expected no usage without a configured requester, got %+v", h.usage)
 	}
 	if got.Requester != "" {
 		t.Fatal("expected no RPC to be made without a configured requester")
+	}
+}
+
+// Usage is tracked per requester, so several configured requesters each get
+// their own summary rather than collapsing into one.
+func TestRefreshRequesterUsage_TracksEachRequester(t *testing.T) {
+	conn, _ := newUsageServer(t, &spnpb.GetRequesterUsageResponse{
+		UsageSummary: []*spnpb.RequesterUsageSummary{{
+			Hour:         "2026-08-06T12:00:00Z",
+			UsageSummary: &spnpb.UsageSummary{ReservedGas: "1", OnDemandGas: "2"},
+		}},
+	})
+
+	requesters := []string{
+		"0x5428abf0e5aec1be48597a984a4f9570d9236f29",
+		"0xafb1d2c26654c85f51f550c97f16699da0293dee",
+	}
+
+	h := newUsageProvider(requesters...)
+	h.refreshRequesterUsage(context.Background(), conn)
+
+	if len(h.usage) != len(requesters) {
+		t.Fatalf("expected %d usage summaries, got %d", len(requesters), len(h.usage))
+	}
+	for i, want := range requesters {
+		if h.usage[i].Requester != want {
+			t.Fatalf("usage[%d]: got requester %q, want %q", i, h.usage[i].Requester, want)
+		}
+	}
+}
+
+// The proof-request filter and the usage requesters are independent: setting
+// only Requester must not cause a usage call, since narrowing proof requests
+// says nothing about whose gas budget is being tracked.
+func TestRefreshRequesterUsage_RequesterFilterDoesNotDriveUsage(t *testing.T) {
+	conn, got := newUsageServer(t, &spnpb.GetRequesterUsageResponse{
+		UsageSummary: []*spnpb.RequesterUsageSummary{{
+			Hour:         "2026-08-06T12:00:00Z",
+			UsageSummary: &spnpb.UsageSummary{ReservedGas: "1", OnDemandGas: "2"},
+		}},
+	})
+
+	requester := "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
+	h := newUsageProvider()
+	h.requester = &requester
+
+	h.refreshRequesterUsage(context.Background(), conn)
+
+	if len(h.usage) != 0 {
+		t.Fatalf("expected no usage from the proof-request filter alone, got %+v", h.usage)
+	}
+	if got.Requester != "" {
+		t.Fatal("expected no RPC to be made from the proof-request filter alone")
 	}
 }

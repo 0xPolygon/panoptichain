@@ -184,8 +184,13 @@ type SuccinctProverNetwork struct {
 	APIKey    string         `mapstructure:"api_key" validate:"required"`
 	Label     string         `mapstructure:"label" validate:"required"`
 	Interval  *time.Duration `mapstructure:"interval"`
-	Requester *string        `mapsturcture:"requester"`
+	Requester *string        `mapstructure:"requester"`
 	Fulfiller *string        `mapstructure:"fulfiller"`
+	// UsageRequesters are the requesters to report hourly gas usage for. This
+	// is deliberately separate from Requester: that field filters which proof
+	// requests are observed, whereas usage is billing-scoped and the addresses
+	// holding a gas budget need not be ones a configured fulfiller serves.
+	UsageRequesters []string `mapstructure:"usage_requesters"`
 }
 
 type Aggchain struct {
