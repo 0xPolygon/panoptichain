@@ -541,13 +541,22 @@
     ##
     ## @param requester - string - optional
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_REQUESTER - string - optional
-    ## The requester to filter the proof requests by. Also scopes the hourly
-    ## gas usage tracked by the `spn_requester_usage` observer, which is only
-    ## collected when this is set.
+    ## The requester to filter the proof requests by. This does not affect the
+    ## hourly gas usage tracked by the `spn_requester_usage` observer; see
+    ## `usage_requesters`.
     ##
     ## @param fulfiller - string - optional
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_FULFILLER - string - optional
     ## The fulfiller to filter the proof requests by.
+    ##
+    ## @param usage_requesters - list of strings - optional
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_USAGE_REQUESTERS - list of strings - optional
+    ## The requesters to report hourly gas usage for via the
+    ## `spn_requester_usage` observer. Each requester costs one extra RPC call
+    ## per polling interval, and no usage is collected when this is empty. This
+    ## is separate from `requester`, which only filters proof requests: usage is
+    ## billing-scoped, so the addresses holding a gas budget need not be ones a
+    ## configured fulfiller serves.
     ##
     ## @param interval - string - optional - default: runner.interval
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_INTERVAL - string - optional - default: runner.interval

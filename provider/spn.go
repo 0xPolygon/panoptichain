@@ -31,9 +31,10 @@ type SuccinctProverNetworkProvider struct {
 	apiKey           string
 	requester        *string
 	fulfiller        *string
+	usageRequesters  []string
 	proofRequests    []*spnpb.ProofRequest
 	seen             map[string]time.Time
-	usage            *observer.UsageSummary
+	usage            []*observer.UsageSummary
 }
 
 func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg config.SuccinctProverNetwork) *SuccinctProverNetworkProvider {
@@ -49,6 +50,7 @@ func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg conf
 		apiKey:           cfg.APIKey,
 		requester:        cfg.Requester,
 		fulfiller:        cfg.Fulfiller,
+		usageRequesters:  cfg.UsageRequesters,
 		seen:             make(map[string]time.Time),
 	}
 }
@@ -71,21 +73,33 @@ func (r *SuccinctProverNetworkProvider) RefreshState(ctx context.Context) error 
 	return nil
 }
 
-// refreshRequesterUsage fetches the requester's gas usage for the most recent
-// complete hour. The network buckets usage hourly, so an in-progress hour would
-// report a partial total that only climbs until the hour closes; reading one
-// hour behind keeps the gauge on settled numbers.
+// refreshRequesterUsage fetches each configured requester's gas usage for the
+// most recent complete hour. The network buckets usage hourly, so an in-progress
+// hour would report a partial total that only climbs until the hour closes;
+// reading one hour behind keeps the gauge on settled numbers.
 func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Context, conn *grpc.ClientConn) {
 	r.usage = nil
-
-	// The RPC is requester-scoped and has no "all requesters" mode.
-	if r.requester == nil {
-		return
-	}
 
 	end := time.Now().UTC().Truncate(time.Hour)
 	start := end.Add(-time.Hour)
 
+	// The RPC is requester-scoped and has no "all requesters" mode, so each
+	// configured requester costs a call. With none configured, none are made.
+	for _, requester := range r.usageRequesters {
+		if usage := r.requesterUsage(ctx, conn, requester, start, end); usage != nil {
+			r.usage = append(r.usage, usage)
+		}
+	}
+}
+
+// requesterUsage fetches a single requester's usage for the given window,
+// returning nil when the hour has no settled usage to report.
+func (r *SuccinctProverNetworkProvider) requesterUsage(
+	ctx context.Context,
+	conn *grpc.ClientConn,
+	requester string,
+	start, end time.Time,
+) *observer.UsageSummary {
 	req := &spnpb.GetRequesterUsageRequest{
 		StartTime: start.Format(time.RFC3339),
 		EndTime:   end.Format(time.RFC3339),
@@ -95,13 +109,13 @@ func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Contex
 		// server rejects the request without. Casing is not significant to the
 		// server, but this value becomes a metric label, so lowercase it to
 		// keep the label stable however the address is written in config.
-		Requester: strings.ToLower(common.HexToAddress(*r.requester).Hex()),
+		Requester: strings.ToLower(common.HexToAddress(requester).Hex()),
 	}
 
 	res, err := spnpb.GetRequesterUsage(metadata.AppendToOutgoingContext(ctx, "api-key", r.apiKey), conn, req)
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Failed to get requester usage")
-		return
+		r.logger.Error().Err(err).Str("requester", req.Requester).Msg("Failed to get requester usage")
+		return nil
 	}
 
 	// An hour with no usage comes back empty rather than zeroed. Leave the
@@ -109,10 +123,11 @@ func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Contex
 	// indistinguishable from real idleness.
 	if len(res.UsageSummary) == 0 {
 		r.logger.Debug().
+			Str("requester", req.Requester).
 			Str("start_time", req.StartTime).
 			Str("end_time", req.EndTime).
 			Msg("No requester usage reported for the hour")
-		return
+		return nil
 	}
 
 	// The window spans a single hour, but take the newest bucket rather than
@@ -125,10 +140,10 @@ func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Contex
 	}
 
 	if latest.UsageSummary == nil {
-		return
+		return nil
 	}
 
-	r.usage = &observer.UsageSummary{
+	return &observer.UsageSummary{
 		UsageSummary: latest.UsageSummary,
 		Requester:    req.Requester,
 		Hour:         latest.Hour,
@@ -183,8 +198,8 @@ func (r *SuccinctProverNetworkProvider) PublishEvents(ctx context.Context) error
 		r.seen[id] = time.Now()
 	}
 
-	if r.usage != nil {
-		msg := observer.NewMessage(r.network, r.label, r.usage)
+	for _, usage := range r.usage {
+		msg := observer.NewMessage(r.network, r.label, usage)
 		r.bus.Publish(ctx, topics.RequesterUsage, msg)
 	}
 
