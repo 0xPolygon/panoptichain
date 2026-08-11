@@ -574,3 +574,75 @@ func TestRefreshMissedCheckpointProposal_NoCheckpointYet(t *testing.T) {
 		t.Fatalf("expected no missed proposers, got %v", h.missedCheckpointProposers)
 	}
 }
+
+// newHeightRecorder serves /block and records each request's height. Responses
+// are deliberately unusable: fillRange breaks on the first failed fetch, and the
+// first height it asks for is what these tests assert on.
+func newHeightRecorder(t *testing.T) (*httptest.Server, *[]string) {
+	t.Helper()
+
+	var heights []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		heights = append(heights, r.URL.Query().Get("height"))
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	return srv, &heights
+}
+
+func newFillProvider(serverURL string, blockNumber uint64) *HeimdallProvider {
+	return &HeimdallProvider{
+		tendermintURL: serverURL,
+		blockNumber:   blockNumber,
+		logger:        NewLogger(nil, "test"),
+	}
+}
+
+// A range spanning hundreds of blocks must skip to the newest window rather
+// than fetch blocks that get evicted unread.
+func TestFillRange_ClampsToBufferCapacity(t *testing.T) {
+	srv, heights := newHeightRecorder(t)
+
+	const latest = 51062264
+	h := newFillProvider(srv.URL, latest)
+	h.fillRange(context.Background(), latest-330)
+
+	if len(*heights) == 0 {
+		t.Fatal("expected at least one block request")
+	}
+
+	want := fmt.Sprint(uint64(latest) - (heimdallBlockBufferSize - 1))
+	if got := (*heights)[0]; got != want {
+		t.Fatalf("first requested height = %s, want %s (clamped to the newest window)", got, want)
+	}
+}
+
+// A range that fits in the buffer must not be clamped.
+func TestFillRange_SmallRangeUnchanged(t *testing.T) {
+	srv, heights := newHeightRecorder(t)
+
+	const latest = 1000
+	h := newFillProvider(srv.URL, latest)
+	h.fillRange(context.Background(), latest-5)
+
+	if len(*heights) == 0 {
+		t.Fatal("expected at least one block request")
+	}
+	if got, want := (*heights)[0], fmt.Sprint(latest-5); got != want {
+		t.Fatalf("first requested height = %s, want %s (unclamped)", got, want)
+	}
+}
+
+// A node reporting a height below the last one seen must not underflow the
+// range into a huge fetch loop.
+func TestFillRange_StartAboveLatestFetchesNothing(t *testing.T) {
+	srv, heights := newHeightRecorder(t)
+
+	h := newFillProvider(srv.URL, 1000)
+	h.fillRange(context.Background(), 1200)
+
+	if len(*heights) != 0 {
+		t.Fatalf("expected no requests when start exceeds latest, got %v", *heights)
+	}
+}
