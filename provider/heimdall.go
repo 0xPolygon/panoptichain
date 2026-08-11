@@ -28,6 +28,10 @@ import (
 // indicating a malformed API response.
 var ErrInvalidSpan = errors.New("invalid span: zero ID with zero blocks")
 
+// heimdallBlockBufferSize is how many blocks the block buffer retains. Once
+// full it evicts the lowest number, so fillRange clamps to this window.
+const heimdallBlockBufferSize = 128
+
 type HeimdallProvider struct {
 	tendermintURL string
 	heimdallURL   string
@@ -96,7 +100,7 @@ func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.He
 		label:               cfg.Label,
 		bus:                 eb,
 		borProviders:        borProviders,
-		blockBuffer:         blockbuffer.NewBlockBuffer(128),
+		blockBuffer:         blockbuffer.NewBlockBuffer(heimdallBlockBufferSize),
 		interval:            GetInterval(cfg.Interval),
 		logger:              logger,
 		checkpointProposers: orderedmap.New[string, struct{}](),
@@ -376,6 +380,28 @@ func (h *HeimdallProvider) getValidatorsAtHeight(ctx context.Context, height uin
 }
 
 func (h *HeimdallProvider) fillRange(ctx context.Context, start uint64) {
+	// A load-balanced node can report a height below the last one seen, which
+	// would underflow the range below.
+	if h.blockNumber < start {
+		return
+	}
+
+	// Blocks past the buffer window are evicted before anything reads them, and
+	// each is a sequential fetch spending cycle budget that the later refresh
+	// steps need. After an outage this range can reach several hundred blocks.
+	if h.blockNumber-start >= heimdallBlockBufferSize {
+		clamped := h.blockNumber - (heimdallBlockBufferSize - 1)
+
+		h.logger.Warn().
+			Uint64("requested_start_block", start).
+			Uint64("start_block", clamped).
+			Uint64("end_block", h.blockNumber).
+			Uint64("skipped_blocks", clamped-start).
+			Msg("Block range exceeds the buffer capacity; filling only the newest blocks")
+
+		start = clamped
+	}
+
 	h.logger.Debug().
 		Uint64("start_block", start).
 		Uint64("end_block", h.blockNumber).
