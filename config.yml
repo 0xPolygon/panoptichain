@@ -549,14 +549,61 @@
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_FULFILLER - string - optional
     ## The fulfiller to filter the proof requests by.
     ##
-    ## @param usage_requesters - list of strings - optional
-    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_USAGE_REQUESTERS - list of strings - optional
+    ## @param usage_requesters - list of objects - optional
     ## The requesters to report hourly gas usage for via the
     ## `spn_requester_usage` observer. Each requester costs one extra RPC call
     ## per polling interval, and no usage is collected when this is empty. This
     ## is separate from `requester`, which only filters proof requests: usage is
     ## billing-scoped, so the addresses holding a gas budget need not be ones a
     ## configured fulfiller serves.
+    ##
+      ## @param address - string - required
+      ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_USAGE_REQUESTERS_0_ADDRESS - string - required
+      ## The requester address.
+      ##
+      ## @param tag - string - optional
+      ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_USAGE_REQUESTERS_0_TAG - string - optional
+      ## A human-readable name for the requester, carried as a metric label so a
+      ## dashboard does not have to map addresses back to the systems that own
+      ## them by hand.
+      ##
+      ## @param billed - boolean - optional - default: true
+      ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_USAGE_REQUESTERS_0_BILLED - boolean - optional - default: true
+      ## Whether this requester's gas lands on the invoice we pay. Requesters we
+      ## track but are not billed for (infrastructure owned by a partner, for
+      ## example) set it false. It is a metric label rather than an exclusion, so
+      ## the usage stays on the graph while a dashboard can still sum only the
+      ## billed subset.
+    ##
+    ## @param pricing - object - optional
+    ## Converts the gas the network reports into a cost, published as the
+    ## `cost_hourly` gauge and the `cost_total` counter alongside their gas
+    ## equivalents. Omit it to report gas only, which is what to do for a network
+    ## whose commercial terms are not settled. The flat monthly support fee is
+    ## deliberately not modelled: it is not per-requester and not per-hour, so it
+    ## belongs in whatever totals the invoice, not in a per-requester metric.
+    ##
+    ## The `spn_requester_usage` observer reports each quantity as both a gauge
+    ## and a counter, because they answer different questions. `gas_hourly` and
+    ## `cost_hourly` are gauges holding the most recent complete hour: read them
+    ## for the current burn rate and alert a spike on them. `gas_consumed_total`
+    ## and `cost_total` are cumulative counters that add each hourly bucket
+    ## exactly once, so a query can total an arbitrary window with
+    ## `increase(...[$__range])`. The gauges cannot be summed over time: the same
+    ## hourly bucket is republished on every poll, so summing would count each
+    ## hour once per poll. The counters have no backfill, so gas consumed while
+    ## panoptichain was down is never added and every later range total inherits
+    ## the gap; use the gauges when a window must be exact across a restart.
+    ##
+      ## @param rate_per_billion_gas - float - required
+      ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_PRICING_RATE_PER_BILLION_GAS - float - required
+      ## The price of one billion prover gas units.
+      ##
+      ## @param currency - string - required
+      ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_PRICING_CURRENCY - string - required
+      ## The currency `rate_per_billion_gas` is denominated in. It becomes a
+      ## metric label, matching the `exchange_rates` observer, so a rate in a
+      ## second currency does not need a second metric.
     ##
     ## @param interval - string - optional - default: runner.interval
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_INTERVAL - string - optional - default: runner.interval
@@ -569,6 +616,16 @@
   #     api_key: "$SUCCINCT_PROVER_NETWORK_API_KEY"
   #     requester: "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
   #     fulfiller: "0xe9b7607e06ec0d4ee69bee3abedd954c069ad794"
+  #     pricing:
+  #       # Illustrative only; use the rate your own contract sets.
+  #       rate_per_billion_gas: 0.5
+  #       currency: "USD"
+  #     usage_requesters:
+  #       - address: "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
+  #         tag: "katana"
+  #         billed: false
+  #       - address: "0xacfe00ba538e753cd0a73ede2c5c27cc44a02fa8"
+  #         tag: "agglayer-node-mainnet"
 
   ## @param aggchain - list of objects - optional
   ## The `aggchain` provider fetches data from L1 and L2 RPCs. This should be 

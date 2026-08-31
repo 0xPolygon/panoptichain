@@ -31,7 +31,8 @@ type SuccinctProverNetworkProvider struct {
 	apiKey           string
 	requester        *string
 	fulfiller        *string
-	usageRequesters  []string
+	usageRequesters  []config.UsageRequester
+	pricing          *config.SuccinctPricing
 	proofRequests    []*spnpb.ProofRequest
 	seen             map[string]time.Time
 	usage            []*observer.UsageSummary
@@ -51,6 +52,7 @@ func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg conf
 		requester:        cfg.Requester,
 		fulfiller:        cfg.Fulfiller,
 		usageRequesters:  cfg.UsageRequesters,
+		pricing:          cfg.Pricing,
 		seen:             make(map[string]time.Time),
 	}
 }
@@ -97,7 +99,7 @@ func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Contex
 func (r *SuccinctProverNetworkProvider) requesterUsage(
 	ctx context.Context,
 	conn *grpc.ClientConn,
-	requester string,
+	requester config.UsageRequester,
 	start, end time.Time,
 ) *observer.UsageSummary {
 	req := &spnpb.GetRequesterUsageRequest{
@@ -109,7 +111,7 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 		// server rejects the request without. Casing is not significant to the
 		// server, but this value becomes a metric label, so lowercase it to
 		// keep the label stable however the address is written in config.
-		Requester: strings.ToLower(common.HexToAddress(requester).Hex()),
+		Requester: strings.ToLower(common.HexToAddress(requester.Address).Hex()),
 	}
 
 	res, err := spnpb.GetRequesterUsage(metadata.AppendToOutgoingContext(ctx, "api-key", r.apiKey), conn, req)
@@ -143,11 +145,22 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 		return nil
 	}
 
-	return &observer.UsageSummary{
+	usage := &observer.UsageSummary{
 		UsageSummary: latest.UsageSummary,
 		Requester:    req.Requester,
+		Tag:          requester.Tag,
+		Billed:       requester.IsBilled(),
 		Hour:         latest.Hour,
 	}
+
+	// Pricing is optional, so leave the rate at zero when none is configured;
+	// the observer reads that as "gas only" and emits no cost.
+	if r.pricing != nil {
+		usage.RatePerBillionGas = r.pricing.RatePerBillionGas
+		usage.Currency = r.pricing.Currency
+	}
+
+	return usage
 }
 
 func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context, c spnpb.ProverNetworkClient) {

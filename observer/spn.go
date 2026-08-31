@@ -3,6 +3,8 @@ package observer
 import (
 	"context"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -17,10 +19,19 @@ import (
 type UsageSummary struct {
 	*spnpb.UsageSummary
 	Requester string
+	// Tag is the human-readable name configured for the requester.
+	Tag string
+	// Billed reports whether this requester's gas lands on the invoice we pay.
+	Billed bool
 	// Hour is the ISO-8601 hour boundary the usage falls in. It is
 	// deliberately not a metric label: a new label value every hour would
 	// grow the series count without bound.
 	Hour string
+	// RatePerBillionGas prices the usage. Zero means no pricing is configured,
+	// which suppresses the cost gauge rather than publishing a free hour.
+	RatePerBillionGas float64
+	// Currency denominates RatePerBillionGas.
+	Currency string
 }
 
 type ProofRequestObserver struct {
@@ -130,26 +141,91 @@ func (o *ProofRequestObserver) Notify(ctx context.Context, msg Message) {
 }
 
 // RequesterUsageObserver tracks the gas a requester consumed over the most
-// recent complete hour, split by how it was billed.
+// recent complete hour, split by how it was billed, and what that gas cost.
+//
+// It reports each quantity twice, because two different questions are being
+// asked of it. The gauges answer "what is the burn rate right now": they hold a
+// single hour's usage and are the right thing to alert a spike on. The counters
+// answer "how much was consumed over some window": being cumulative, they can
+// be range-summed in a query (increase(...[$__range])), which the gauges cannot
+// be. A gauge holding an hourly bucket is republished on every poll, so summing
+// it over time would count each hour once per poll rather than once.
 type RequesterUsageObserver struct {
-	reserved  *prometheus.GaugeVec
-	on_demand *prometheus.GaugeVec
+	reserved    *prometheus.GaugeVec
+	on_demand   *prometheus.GaugeVec
+	hourly      *prometheus.GaugeVec
+	cost_hourly *prometheus.GaugeVec
+
+	consumed   *prometheus.CounterVec
+	cost_total *prometheus.CounterVec
+
+	// mu guards counted. EventBus.Publish delivers every message on its own
+	// goroutine, so Notify runs concurrently across providers; an unguarded map
+	// write here would race and can crash the process.
+	mu sync.Mutex
+	// counted is the newest usage hour already added to the counters, keyed by
+	// series identity. The network buckets usage hourly and the provider
+	// re-reads the same bucket every poll, so without this the counters would
+	// add one hour's gas once per poll and overstate consumption by the number
+	// of polls per hour.
+	//
+	// Only hours this process observed are counted: there is no backfill, so
+	// gas consumed while panoptichain was down is never added. Unlike a gauge,
+	// which self-heals on the next poll, a counter's gap is permanent and every
+	// later range total inherits it. Prefer the gauges when a window has to be
+	// exact across a restart.
+	counted map[string]string
 }
 
 func (o *RequesterUsageObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.RequesterUsage, o)
 
+	o.counted = make(map[string]string)
+
+	// tag names the system that owns the requester and billed says whether we
+	// pay for it, so a dashboard can read the graph and sum the invoiced subset
+	// without carrying its own address table. Both are drawn from config, so
+	// they add no cardinality beyond the requester label they accompany.
+	labels := []string{"requester", "tag", "billed"}
+
 	o.reserved = metrics.NewGauge(
 		metrics.SPN,
 		"gas_reserved",
 		"The reserved gas the requester used over the most recent complete hour",
-		"requester",
+		labels...,
 	)
 	o.on_demand = metrics.NewGauge(
 		metrics.SPN,
 		"gas_on_demand",
 		"The on-demand gas the requester used over the most recent complete hour",
-		"requester",
+		labels...,
+	)
+	// Named hourly rather than total: a _total suffix reads as a counter to
+	// anyone writing a query, and this is a gauge holding one hour.
+	o.hourly = metrics.NewGauge(
+		metrics.SPN,
+		"gas_hourly",
+		"The total gas (reserved plus on-demand) the requester used over the most recent complete hour",
+		labels...,
+	)
+	o.cost_hourly = metrics.NewGauge(
+		metrics.SPN,
+		"cost_hourly",
+		"The cost of the gas the requester used over the most recent complete hour, excluding any flat support fee",
+		append(labels, "currency")...,
+	)
+
+	o.consumed = metrics.NewCounter(
+		metrics.SPN,
+		"gas_consumed_total",
+		"Cumulative total gas the requester consumed, counting each hourly bucket once, for range totals",
+		labels...,
+	)
+	o.cost_total = metrics.NewCounter(
+		metrics.SPN,
+		"cost_total",
+		"Cumulative cost of the gas the requester consumed, excluding any flat support fee, for range totals",
+		append(labels, "currency")...,
 	)
 }
 
@@ -163,24 +239,98 @@ func (o *RequesterUsageObserver) Notify(ctx context.Context, msg Message) {
 		msg.Network().GetName(),
 		msg.Provider(),
 		usage.Requester,
+		usage.Tag,
+		strconv.FormatBool(usage.Billed),
 	}
 
 	// Gas values arrive as decimal strings because they can exceed uint64.
 	// Skip a malformed value rather than resetting the gauge to zero, which
 	// would read as "no usage" instead of "no data".
-	if reserved, err := strconv.ParseFloat(usage.ReservedGas, 64); err == nil {
+	reserved, reservedErr := strconv.ParseFloat(usage.ReservedGas, 64)
+	if reservedErr == nil {
 		o.reserved.WithLabelValues(labels...).Set(reserved)
 	}
 
-	if onDemand, err := strconv.ParseFloat(usage.OnDemandGas, 64); err == nil {
+	onDemand, onDemandErr := strconv.ParseFloat(usage.OnDemandGas, 64)
+	if onDemandErr == nil {
 		o.on_demand.WithLabelValues(labels...).Set(onDemand)
 	}
+
+	total, ok := totalGas(usage, reserved, reservedErr, onDemand, onDemandErr)
+	if !ok {
+		return
+	}
+
+	o.hourly.WithLabelValues(labels...).Set(total)
+
+	// A zero rate means no pricing is configured. Publishing a cost then would
+	// claim the hour was free, so report gas alone and leave the cost series
+	// absent for this network.
+	priced := usage.RatePerBillionGas != 0
+	cost := total / 1e9 * usage.RatePerBillionGas
+	if priced {
+		o.cost_hourly.WithLabelValues(append(labels, usage.Currency)...).Set(cost)
+	}
+
+	// Advance the counters only when this bucket is one the process has not
+	// already added. Without an hour to key on there is no way to tell a fresh
+	// bucket from a repeat, so leave the counters alone rather than risk
+	// double-counting: overstating consumption is worse than a flat series,
+	// because a counter never recovers from it.
+	if usage.Hour == "" || !o.claimHour(labels, usage.Hour) {
+		return
+	}
+
+	o.consumed.WithLabelValues(labels...).Add(total)
+	if priced {
+		o.cost_total.WithLabelValues(append(labels, usage.Currency)...).Add(cost)
+	}
+}
+
+// claimHour reports whether hour is newer than the last one counted for this
+// series, recording it when so. Hours are RFC 3339 UTC at a fixed width, so they
+// order lexicographically and compare as strings.
+func (o *RequesterUsageObserver) claimHour(labels []string, hour string) bool {
+	key := strings.Join(labels, "|")
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if hour <= o.counted[key] {
+		return false
+	}
+
+	o.counted[key] = hour
+
+	return true
+}
+
+// totalGas resolves the requester's total gas for the hour, preferring the
+// total the network reports and falling back to the sum of the two components
+// when it is absent or malformed. The fallback exists because the total is a
+// convenience field: the components are what the network bills on, so a total
+// that fails to parse must not cost us the cost gauge. It reports false when
+// neither source is usable, which leaves both gauges at their last reading.
+func totalGas(usage *UsageSummary, reserved float64, reservedErr error, onDemand float64, onDemandErr error) (float64, bool) {
+	if total, err := strconv.ParseFloat(usage.TotalGas, 64); err == nil {
+		return total, true
+	}
+
+	if reservedErr != nil || onDemandErr != nil {
+		return 0, false
+	}
+
+	return reserved + onDemand, true
 }
 
 func (o *RequesterUsageObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		o.reserved,
 		o.on_demand,
+		o.hourly,
+		o.cost_hourly,
+		o.consumed,
+		o.cost_total,
 	}
 }
 

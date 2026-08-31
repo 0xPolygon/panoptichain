@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/0xPolygon/panoptichain/config"
 	spnpb "github.com/0xPolygon/panoptichain/proto/network"
 )
 
@@ -54,9 +55,14 @@ func newUsageServer(t *testing.T, res *spnpb.GetRequesterUsageResponse) (*grpc.C
 }
 
 func newUsageProvider(usageRequesters ...string) *SuccinctProverNetworkProvider {
+	requesters := make([]config.UsageRequester, 0, len(usageRequesters))
+	for _, address := range usageRequesters {
+		requesters = append(requesters, config.UsageRequester{Address: address})
+	}
+
 	return &SuccinctProverNetworkProvider{
 		logger:          NewLogger(nil, "test"),
-		usageRequesters: usageRequesters,
+		usageRequesters: requesters,
 	}
 }
 
@@ -159,6 +165,86 @@ func TestRefreshRequesterUsage_TracksEachRequester(t *testing.T) {
 		if h.usage[i].Requester != want {
 			t.Fatalf("usage[%d]: got requester %q, want %q", i, h.usage[i].Requester, want)
 		}
+	}
+}
+
+// The tag and billed flag are config, not observations, so they must ride along
+// to the observer that turns them into metric labels.
+func TestRefreshRequesterUsage_CarriesRequesterConfig(t *testing.T) {
+	conn, _ := newUsageServer(t, &spnpb.GetRequesterUsageResponse{
+		UsageSummary: []*spnpb.RequesterUsageSummary{{
+			Hour:         "2026-08-06T12:00:00Z",
+			UsageSummary: &spnpb.UsageSummary{ReservedGas: "1", OnDemandGas: "2"},
+		}},
+	})
+
+	billed := false
+	h := newUsageProvider()
+	h.usageRequesters = []config.UsageRequester{{
+		Address: "0x5428abf0e5aec1be48597a984a4f9570d9236f29",
+		Tag:     "katana",
+		Billed:  &billed,
+	}}
+
+	h.refreshRequesterUsage(context.Background(), conn)
+
+	if len(h.usage) != 1 {
+		t.Fatalf("expected one usage summary, got %d", len(h.usage))
+	}
+	if h.usage[0].Tag != "katana" {
+		t.Fatalf("tag = %q, want katana", h.usage[0].Tag)
+	}
+	if h.usage[0].Billed {
+		t.Fatal("expected billed to be carried through as false")
+	}
+}
+
+// An unset billed flag means billed: the common case is a requester we pay for,
+// so the config only has to speak up about the exceptions.
+func TestRefreshRequesterUsage_BilledDefaultsTrue(t *testing.T) {
+	conn, _ := newUsageServer(t, &spnpb.GetRequesterUsageResponse{
+		UsageSummary: []*spnpb.RequesterUsageSummary{{
+			Hour:         "2026-08-06T12:00:00Z",
+			UsageSummary: &spnpb.UsageSummary{ReservedGas: "1", OnDemandGas: "2"},
+		}},
+	})
+
+	h := newUsageProvider("0x5428abf0e5aec1be48597a984a4f9570d9236f29")
+	h.refreshRequesterUsage(context.Background(), conn)
+
+	if len(h.usage) != 1 || !h.usage[0].Billed {
+		t.Fatalf("expected billed to default true, got %+v", h.usage)
+	}
+}
+
+// Pricing is optional. Without it the summary carries a zero rate, which the
+// observer reads as "gas only".
+func TestRefreshRequesterUsage_PricingIsOptional(t *testing.T) {
+	res := &spnpb.GetRequesterUsageResponse{
+		UsageSummary: []*spnpb.RequesterUsageSummary{{
+			Hour:         "2026-08-06T12:00:00Z",
+			UsageSummary: &spnpb.UsageSummary{ReservedGas: "1", OnDemandGas: "2"},
+		}},
+	}
+	requester := "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
+
+	conn, _ := newUsageServer(t, res)
+	h := newUsageProvider(requester)
+	h.refreshRequesterUsage(context.Background(), conn)
+
+	if len(h.usage) != 1 || h.usage[0].RatePerBillionGas != 0 {
+		t.Fatalf("expected a zero rate without pricing, got %+v", h.usage)
+	}
+
+	h = newUsageProvider(requester)
+	h.pricing = &config.SuccinctPricing{RatePerBillionGas: 0.5, Currency: "USD"}
+	h.refreshRequesterUsage(context.Background(), conn)
+
+	if len(h.usage) != 1 {
+		t.Fatalf("expected one usage summary, got %d", len(h.usage))
+	}
+	if h.usage[0].RatePerBillionGas != 0.5 || h.usage[0].Currency != "USD" {
+		t.Fatalf("pricing not carried through: %+v", h.usage[0])
 	}
 }
 
