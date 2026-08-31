@@ -611,7 +611,6 @@
   #     requester: "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
   #     fulfiller: "0xe9b7607e06ec0d4ee69bee3abedd954c069ad794"
   #     pricing:
-  #       # Illustrative only; use the rate your own contract sets.
   #       rate_per_billion_gas: 0.5
   #       currency: "USD"
   #     usage_requesters:
