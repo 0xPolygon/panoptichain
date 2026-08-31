@@ -204,12 +204,6 @@ type UsageRequester struct {
 	// label so a dashboard does not have to map addresses back to the systems
 	// that own them by hand.
 	Tag string `mapstructure:"tag"`
-	// Billed marks whether this requester's gas lands on the invoice we pay.
-	// Requesters we track but are not billed for (infrastructure owned by a
-	// partner, for example) set it false. It is a label rather than an
-	// exclusion so the usage stays on the graph while a dashboard can still
-	// sum only the billed subset. Defaults to true.
-	Billed *bool `mapstructure:"billed"`
 }
 
 // SuccinctPricing prices the gas the Succinct Prover Network reports.
@@ -221,12 +215,6 @@ type SuccinctPricing struct {
 	// a name suffix, matching the exchange_rates observer, so a rate in a
 	// second currency does not need a second metric.
 	Currency string `mapstructure:"currency" validate:"required"`
-}
-
-// IsBilled reports whether the requester's gas lands on the invoice we pay,
-// defaulting to true when the config does not say.
-func (u UsageRequester) IsBilled() bool {
-	return u.Billed == nil || *u.Billed
 }
 
 type Aggchain struct {

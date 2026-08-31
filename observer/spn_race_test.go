@@ -15,7 +15,7 @@ func TestRequesterUsageObserver_ConcurrentNotifyIsSafe(t *testing.T) {
 	o := newUsageObserver(t)
 
 	requester := "0x8888888888888888888888888888888888888888"
-	labels := []string{testNetwork.GetName(), "test", requester, "", "true"}
+	labels := []string{testNetwork.GetName(), "test", requester, ""}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 64; i++ {
@@ -25,7 +25,6 @@ func TestRequesterUsageObserver_ConcurrentNotifyIsSafe(t *testing.T) {
 			o.Notify(nil, NewMessage(testNetwork, "test", &UsageSummary{
 				UsageSummary: &spnpb.UsageSummary{ReservedGas: "1000000000", OnDemandGas: "0", TotalGas: "1000000000"},
 				Requester:    requester,
-				Billed:       true,
 				Hour:         "2026-08-31T10:00:00Z",
 			}))
 		}()

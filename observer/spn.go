@@ -21,8 +21,6 @@ type UsageSummary struct {
 	Requester string
 	// Tag is the human-readable name configured for the requester.
 	Tag string
-	// Billed reports whether this requester's gas lands on the invoice we pay.
-	Billed bool
 	// Hour is the ISO-8601 hour boundary the usage falls in. It is
 	// deliberately not a metric label: a new label value every hour would
 	// grow the series count without bound.
@@ -182,11 +180,11 @@ func (o *RequesterUsageObserver) Register(eb *EventBus) {
 
 	o.counted = make(map[string]string)
 
-	// tag names the system that owns the requester and billed says whether we
-	// pay for it, so a dashboard can read the graph and sum the invoiced subset
-	// without carrying its own address table. Both are drawn from config, so
-	// they add no cardinality beyond the requester label they accompany.
-	labels := []string{"requester", "tag", "billed"}
+	// tag names the system that owns the requester, so a dashboard can read the
+	// graph and group or exclude requesters without carrying its own address
+	// table. It is drawn from config, so it adds no cardinality beyond the
+	// requester label it accompanies.
+	labels := []string{"requester", "tag"}
 
 	o.reserved = metrics.NewGauge(
 		metrics.SPN,
@@ -240,7 +238,6 @@ func (o *RequesterUsageObserver) Notify(ctx context.Context, msg Message) {
 		msg.Provider(),
 		usage.Requester,
 		usage.Tag,
-		strconv.FormatBool(usage.Billed),
 	}
 
 	// Gas values arrive as decimal strings because they can exceed uint64.

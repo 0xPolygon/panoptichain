@@ -25,7 +25,6 @@ providers:
       usage_requesters:
         - address: "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
           tag: "katana"
-          billed: false
         - address: "0xacfe00ba538e753cd0a73ede2c5c27cc44a02fa8"
           tag: "agglayer-node-mainnet"
 `
@@ -56,13 +55,12 @@ providers:
 		t.Fatalf("expected two usage requesters, got %d: %+v", len(requesters), requesters)
 	}
 
-	// An explicit false must survive; the pointer exists so that it can.
-	if requesters[0].Tag != "katana" || requesters[0].IsBilled() {
-		t.Fatalf("requester 0: tag=%q billed=%v", requesters[0].Tag, requesters[0].IsBilled())
+	if requesters[0].Address == "" || requesters[0].Tag != "katana" {
+		t.Fatalf("requester 0: %+v", requesters[0])
 	}
 
-	// An omitted flag means billed, so config only speaks up about exceptions.
-	if requesters[1].Tag != "agglayer-node-mainnet" || !requesters[1].IsBilled() {
-		t.Fatalf("requester 1: tag=%q billed=%v", requesters[1].Tag, requesters[1].IsBilled())
+	// The tag is optional, but when given it must survive the decode.
+	if requesters[1].Address == "" || requesters[1].Tag != "agglayer-node-mainnet" {
+		t.Fatalf("requester 1: %+v", requesters[1])
 	}
 }

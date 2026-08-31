@@ -565,15 +565,9 @@
       ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_USAGE_REQUESTERS_0_TAG - string - optional
       ## A human-readable name for the requester, carried as a metric label so a
       ## dashboard does not have to map addresses back to the systems that own
-      ## them by hand.
-      ##
-      ## @param billed - boolean - optional - default: true
-      ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_USAGE_REQUESTERS_0_BILLED - boolean - optional - default: true
-      ## Whether this requester's gas lands on the invoice we pay. Requesters we
-      ## track but are not billed for (infrastructure owned by a partner, for
-      ## example) set it false. It is a metric label rather than an exclusion, so
-      ## the usage stays on the graph while a dashboard can still sum only the
-      ## billed subset.
+      ## them by hand. Whether a requester's gas lands on an invoice is not
+      ## modelled here: every configured requester is reported the same way, and
+      ## a dashboard selects on `tag` to separate what it cares about.
     ##
     ## @param pricing - object - optional
     ## Converts the gas the network reports into a cost, published as the
@@ -623,7 +617,6 @@
   #     usage_requesters:
   #       - address: "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
   #         tag: "katana"
-  #         billed: false
   #       - address: "0xacfe00ba538e753cd0a73ede2c5c27cc44a02fa8"
   #         tag: "agglayer-node-mainnet"
 

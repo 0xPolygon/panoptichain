@@ -149,7 +149,6 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 		UsageSummary: latest.UsageSummary,
 		Requester:    req.Requester,
 		Tag:          requester.Tag,
-		Billed:       requester.IsBilled(),
 		Hour:         latest.Hour,
 	}
 

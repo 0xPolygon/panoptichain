@@ -93,11 +93,10 @@ func TestRequesterUsageObserver_SetsGaugesFromStrings(t *testing.T) {
 		},
 		Requester: requester,
 		Tag:       "katana",
-		Billed:    true,
 		Hour:      "2026-08-06T12:00:00Z",
 	})
 
-	labels := []string{testNetwork.GetName(), "test", requester, "katana", "true"}
+	labels := []string{testNetwork.GetName(), "test", requester, "katana"}
 
 	if got, _ := gaugeValue(t, o.reserved, labels...); got != 1234567890 {
 		t.Fatalf("reserved = %v, want 1234567890", got)
@@ -121,12 +120,11 @@ func TestRequesterUsageObserver_PricesTotalGas(t *testing.T) {
 		UsageSummary:      &spnpb.UsageSummary{ReservedGas: "6000000000", OnDemandGas: "4000000000", TotalGas: "10000000000"},
 		Requester:         requester,
 		Tag:               "katana",
-		Billed:            true,
 		RatePerBillionGas: 0.5,
 		Currency:          "USD",
 	})
 
-	labels := []string{testNetwork.GetName(), "test", requester, "katana", "true", "USD"}
+	labels := []string{testNetwork.GetName(), "test", requester, "katana", "USD"}
 
 	got, _ := gaugeValue(t, o.cost_hourly, labels...)
 	if math.Abs(got-5.0) > 1e-9 {
@@ -145,10 +143,9 @@ func TestRequesterUsageObserver_NoPricingEmitsNoCost(t *testing.T) {
 	notifyUsage(t, o, &UsageSummary{
 		UsageSummary: &spnpb.UsageSummary{ReservedGas: "1", OnDemandGas: "2", TotalGas: "3"},
 		Requester:    requester,
-		Billed:       true,
 	})
 
-	labels := []string{testNetwork.GetName(), "test", requester, "", "true"}
+	labels := []string{testNetwork.GetName(), "test", requester, ""}
 
 	// The gas still lands; only the cost is withheld.
 	if got, _ := gaugeValue(t, o.hourly, labels...); got != 3 {
@@ -168,12 +165,11 @@ func TestRequesterUsageObserver_FallsBackToComponentSum(t *testing.T) {
 	notifyUsage(t, o, &UsageSummary{
 		UsageSummary:      &spnpb.UsageSummary{ReservedGas: "6000000000", OnDemandGas: "4000000000"},
 		Requester:         requester,
-		Billed:            true,
 		RatePerBillionGas: 0.5,
 		Currency:          "USD",
 	})
 
-	labels := []string{testNetwork.GetName(), "test", requester, "", "true"}
+	labels := []string{testNetwork.GetName(), "test", requester, ""}
 
 	if got, _ := gaugeValue(t, o.hourly, labels...); got != 10000000000 {
 		t.Fatalf("total = %v, want the component sum 10000000000", got)
@@ -183,9 +179,9 @@ func TestRequesterUsageObserver_FallsBackToComponentSum(t *testing.T) {
 	}
 }
 
-// An unbilled requester is graphed like any other; the label is what lets a
-// dashboard sum only what we pay for, so the series must still be published.
-func TestRequesterUsageObserver_UnbilledRequesterIsStillReported(t *testing.T) {
+// An hour billed entirely on demand, with no reserved gas, still has to produce
+// a total and a cost: the two components are independent and either can be zero.
+func TestRequesterUsageObserver_OnDemandOnlyHourIsReported(t *testing.T) {
 	o := newUsageObserver(t)
 
 	requester := "0xcd35546f2a72e64c6e19a64372511fe2b121fb46"
@@ -193,12 +189,11 @@ func TestRequesterUsageObserver_UnbilledRequesterIsStillReported(t *testing.T) {
 		UsageSummary:      &spnpb.UsageSummary{ReservedGas: "0", OnDemandGas: "1000000000", TotalGas: "1000000000"},
 		Requester:         requester,
 		Tag:               "devtools",
-		Billed:            false,
 		RatePerBillionGas: 0.5,
 		Currency:          "USD",
 	})
 
-	labels := []string{testNetwork.GetName(), "test", requester, "devtools", "false"}
+	labels := []string{testNetwork.GetName(), "test", requester, "devtools"}
 
 	if got, _ := gaugeValue(t, o.hourly, labels...); got != 1000000000 {
 		t.Fatalf("total = %v, want 1000000000", got)
@@ -214,17 +209,15 @@ func TestRequesterUsageObserver_MalformedValueKeepsLastReading(t *testing.T) {
 	o := newUsageObserver(t)
 
 	requester := "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-	labels := []string{testNetwork.GetName(), "test", requester, "", "true"}
+	labels := []string{testNetwork.GetName(), "test", requester, ""}
 
 	notifyUsage(t, o, &UsageSummary{
 		UsageSummary: &spnpb.UsageSummary{ReservedGas: "100", OnDemandGas: "200", TotalGas: "300"},
 		Requester:    requester,
-		Billed:       true,
 	})
 	notifyUsage(t, o, &UsageSummary{
 		UsageSummary: &spnpb.UsageSummary{ReservedGas: "", OnDemandGas: "not-a-number"},
 		Requester:    requester,
-		Billed:       true,
 	})
 
 	if got, _ := gaugeValue(t, o.reserved, labels...); got != 100 {
@@ -256,7 +249,7 @@ func TestRequesterUsageObserver_CountersAddEachHourOnce(t *testing.T) {
 	o := newUsageObserver(t)
 
 	requester := "0x2222222222222222222222222222222222222222"
-	labels := []string{testNetwork.GetName(), "test", requester, "acme", "true"}
+	labels := []string{testNetwork.GetName(), "test", requester, "acme"}
 	costLabels := append(append([]string{}, labels...), "USD")
 
 	hour := func(h, gas string) *UsageSummary {
@@ -264,7 +257,6 @@ func TestRequesterUsageObserver_CountersAddEachHourOnce(t *testing.T) {
 			UsageSummary:      &spnpb.UsageSummary{ReservedGas: gas, OnDemandGas: "0", TotalGas: gas},
 			Requester:         requester,
 			Tag:               "acme",
-			Billed:            true,
 			Hour:              h,
 			RatePerBillionGas: 0.5,
 			Currency:          "USD",
@@ -305,13 +297,12 @@ func TestRequesterUsageObserver_CountersIgnoreOlderHour(t *testing.T) {
 	o := newUsageObserver(t)
 
 	requester := "0x3333333333333333333333333333333333333333"
-	labels := []string{testNetwork.GetName(), "test", requester, "", "true"}
+	labels := []string{testNetwork.GetName(), "test", requester, ""}
 
 	send := func(h, gas string) {
 		notifyUsage(t, o, &UsageSummary{
 			UsageSummary: &spnpb.UsageSummary{ReservedGas: gas, OnDemandGas: "0", TotalGas: gas},
 			Requester:    requester,
-			Billed:       true,
 			Hour:         h,
 		})
 	}
@@ -336,13 +327,12 @@ func TestRequesterUsageObserver_CountersArePerRequester(t *testing.T) {
 		notifyUsage(t, o, &UsageSummary{
 			UsageSummary: &spnpb.UsageSummary{ReservedGas: "1000000000", OnDemandGas: "0", TotalGas: "1000000000"},
 			Requester:    r,
-			Billed:       true,
 			Hour:         "2026-08-31T10:00:00Z",
 		})
 	}
 
 	for _, r := range []string{a, b} {
-		labels := []string{testNetwork.GetName(), "test", r, "", "true"}
+		labels := []string{testNetwork.GetName(), "test", r, ""}
 		if got := counterValue(t, o.consumed, labels...); got != 1e9 {
 			t.Fatalf("requester %s: consumed = %v, want 1e9", r, got)
 		}
@@ -356,12 +346,11 @@ func TestRequesterUsageObserver_UnpricedAdvancesGasCounterOnly(t *testing.T) {
 	o := newUsageObserver(t)
 
 	requester := "0x6666666666666666666666666666666666666666"
-	labels := []string{testNetwork.GetName(), "test", requester, "", "true"}
+	labels := []string{testNetwork.GetName(), "test", requester, ""}
 
 	notifyUsage(t, o, &UsageSummary{
 		UsageSummary: &spnpb.UsageSummary{ReservedGas: "7000000000", OnDemandGas: "0", TotalGas: "7000000000"},
 		Requester:    requester,
-		Billed:       true,
 		Hour:         "2026-08-31T10:00:00Z",
 	})
 
@@ -379,12 +368,11 @@ func TestRequesterUsageObserver_NoHourLeavesCountersAlone(t *testing.T) {
 	o := newUsageObserver(t)
 
 	requester := "0x7777777777777777777777777777777777777777"
-	labels := []string{testNetwork.GetName(), "test", requester, "", "true"}
+	labels := []string{testNetwork.GetName(), "test", requester, ""}
 
 	notifyUsage(t, o, &UsageSummary{
 		UsageSummary: &spnpb.UsageSummary{ReservedGas: "4000000000", OnDemandGas: "0", TotalGas: "4000000000"},
 		Requester:    requester,
-		Billed:       true,
 	})
 
 	// The gauge still reports: an hourless bucket is usable as a level, just not
