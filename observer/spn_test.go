@@ -242,81 +242,57 @@ func TestRequesterUsageObserver_IgnoresNilUsage(t *testing.T) {
 	notifyUsage(t, o, &UsageSummary{Requester: "0xabc"})
 }
 
-// The counters exist to be range-summed, which only works if each hourly bucket
-// is added exactly once. The provider re-reads the same bucket every poll, so
-// repeated delivery of one hour must not advance them.
-func TestRequesterUsageObserver_CountersAddEachHourOnce(t *testing.T) {
+// The counters advance only for a bucket the provider flagged as new. The
+// provider owns that decision; the observer must honour it, because adding a
+// repeat would overstate consumption permanently.
+func TestRequesterUsageObserver_CountersFollowNewHourFlag(t *testing.T) {
 	o := newUsageObserver(t)
 
 	requester := "0x2222222222222222222222222222222222222222"
 	labels := []string{testNetwork.GetName(), "test", requester, "acme"}
 	costLabels := append(append([]string{}, labels...), "USD")
 
-	hour := func(h, gas string) *UsageSummary {
-		return &UsageSummary{
+	send := func(gas string, newHour bool) {
+		notifyUsage(t, o, &UsageSummary{
 			UsageSummary:      &spnpb.UsageSummary{ReservedGas: gas, OnDemandGas: "0", TotalGas: gas},
 			Requester:         requester,
 			Tag:               "acme",
-			Hour:              h,
+			Hour:              "2026-08-31T10:00:00Z",
+			NewHour:           newHour,
 			RatePerBillionGas: 0.5,
 			Currency:          "USD",
-		}
+		})
 	}
 
-	// One hour, delivered three times as three polls would.
-	for i := 0; i < 3; i++ {
-		notifyUsage(t, o, hour("2026-08-31T10:00:00Z", "1000000000"))
-	}
+	// One new bucket, then the same bucket re-reported across later cycles.
+	send("1000000000", true)
+	send("1000000000", false)
+	send("1000000000", false)
 
 	if got := counterValue(t, o.consumed, labels...); got != 1e9 {
-		t.Fatalf("after 3 polls of one hour, consumed = %v, want 1e9", got)
+		t.Fatalf("consumed = %v, want 1e9 (repeats must not accumulate)", got)
 	}
 	if got := counterValue(t, o.cost_total, costLabels...); math.Abs(got-0.5) > 1e-9 {
 		t.Fatalf("cost_total = %v, want 0.5", got)
 	}
 
-	// A new hour advances both counters.
-	notifyUsage(t, o, hour("2026-08-31T11:00:00Z", "2000000000"))
+	// A newly flagged bucket advances both.
+	send("2000000000", true)
 
 	if got := counterValue(t, o.consumed, labels...); got != 3e9 {
-		t.Fatalf("after a second hour, consumed = %v, want 3e9", got)
+		t.Fatalf("consumed = %v, want 3e9", got)
 	}
 	if got := counterValue(t, o.cost_total, costLabels...); math.Abs(got-1.5) > 1e-9 {
 		t.Fatalf("cost_total = %v, want 1.5", got)
 	}
 
-	// The gauge, unlike the counter, tracks the newest hour rather than summing.
+	// The gauge tracks the newest reading rather than summing, on every message.
 	if got, _ := gaugeValue(t, o.hourly, labels...); got != 2e9 {
-		t.Fatalf("hourly gauge = %v, want the newest hour 2e9", got)
+		t.Fatalf("hourly gauge = %v, want 2e9", got)
 	}
 }
 
-// An hour older than one already counted must not be added. The provider takes
-// the newest bucket, but a late or reordered delivery must not double count.
-func TestRequesterUsageObserver_CountersIgnoreOlderHour(t *testing.T) {
-	o := newUsageObserver(t)
-
-	requester := "0x3333333333333333333333333333333333333333"
-	labels := []string{testNetwork.GetName(), "test", requester, ""}
-
-	send := func(h, gas string) {
-		notifyUsage(t, o, &UsageSummary{
-			UsageSummary: &spnpb.UsageSummary{ReservedGas: gas, OnDemandGas: "0", TotalGas: gas},
-			Requester:    requester,
-			Hour:         h,
-		})
-	}
-
-	send("2026-08-31T12:00:00Z", "5000000000")
-	send("2026-08-31T09:00:00Z", "9000000000") // older, must be ignored
-
-	if got := counterValue(t, o.consumed, labels...); got != 5e9 {
-		t.Fatalf("consumed = %v, want 5e9 (older hour ignored)", got)
-	}
-}
-
-// Requesters are counted independently: one advancing must not consume another's
-// budget for the same hour.
+// Requesters are counted independently.
 func TestRequesterUsageObserver_CountersArePerRequester(t *testing.T) {
 	o := newUsageObserver(t)
 
@@ -328,6 +304,7 @@ func TestRequesterUsageObserver_CountersArePerRequester(t *testing.T) {
 			UsageSummary: &spnpb.UsageSummary{ReservedGas: "1000000000", OnDemandGas: "0", TotalGas: "1000000000"},
 			Requester:    r,
 			Hour:         "2026-08-31T10:00:00Z",
+			NewHour:      true,
 		})
 	}
 
@@ -352,6 +329,7 @@ func TestRequesterUsageObserver_UnpricedAdvancesGasCounterOnly(t *testing.T) {
 		UsageSummary: &spnpb.UsageSummary{ReservedGas: "7000000000", OnDemandGas: "0", TotalGas: "7000000000"},
 		Requester:    requester,
 		Hour:         "2026-08-31T10:00:00Z",
+		NewHour:      true,
 	})
 
 	if got := counterValue(t, o.consumed, labels...); got != 7e9 {
@@ -359,28 +337,5 @@ func TestRequesterUsageObserver_UnpricedAdvancesGasCounterOnly(t *testing.T) {
 	}
 	if o.cost_total.DeleteLabelValues(append(append([]string{}, labels...), "")...) {
 		t.Fatal("expected no cost_total series without pricing")
-	}
-}
-
-// A bucket with no hour cannot be deduplicated, so the counters must not move.
-// A flat counter is recoverable; an overstated one is not.
-func TestRequesterUsageObserver_NoHourLeavesCountersAlone(t *testing.T) {
-	o := newUsageObserver(t)
-
-	requester := "0x7777777777777777777777777777777777777777"
-	labels := []string{testNetwork.GetName(), "test", requester, ""}
-
-	notifyUsage(t, o, &UsageSummary{
-		UsageSummary: &spnpb.UsageSummary{ReservedGas: "4000000000", OnDemandGas: "0", TotalGas: "4000000000"},
-		Requester:    requester,
-	})
-
-	// The gauge still reports: an hourless bucket is usable as a level, just not
-	// as something to accumulate.
-	if got, _ := gaugeValue(t, o.hourly, labels...); got != 4e9 {
-		t.Fatalf("hourly = %v, want 4e9", got)
-	}
-	if o.consumed.DeleteLabelValues(labels...) {
-		t.Fatal("expected no consumed series for a bucket with no hour")
 	}
 }

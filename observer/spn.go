@@ -3,8 +3,6 @@ package observer
 import (
 	"context"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -25,6 +23,11 @@ type UsageSummary struct {
 	// deliberately not a metric label: a new label value every hour would
 	// grow the series count without bound.
 	Hour string
+	// NewHour reports that this bucket has not been reported before, and so
+	// should advance the cumulative counters. The gauges are set either way:
+	// they hold a level, and republishing the same hour is harmless. The
+	// provider decides this, because it is the one that keeps state.
+	NewHour bool
 	// RatePerBillionGas prices the usage. Zero means no pricing is configured,
 	// which suppresses the cost gauge rather than publishing a free hour.
 	RatePerBillionGas float64
@@ -148,6 +151,11 @@ func (o *ProofRequestObserver) Notify(ctx context.Context, msg Message) {
 // be range-summed in a query (increase(...[$__range])), which the gauges cannot
 // be. A gauge holding an hourly bucket is republished on every poll, so summing
 // it over time would count each hour once per poll rather than once.
+//
+// Which buckets are new is the provider's business, reported on the summary as
+// NewHour. This observer holds no state of its own: EventBus.Publish delivers
+// every message on its own goroutine, so state kept here would need its own
+// synchronization, whereas a provider's cycle is single-threaded by contract.
 type RequesterUsageObserver struct {
 	reserved    *prometheus.GaugeVec
 	on_demand   *prometheus.GaugeVec
@@ -156,29 +164,10 @@ type RequesterUsageObserver struct {
 
 	consumed   *prometheus.CounterVec
 	cost_total *prometheus.CounterVec
-
-	// mu guards counted. EventBus.Publish delivers every message on its own
-	// goroutine, so Notify runs concurrently across providers; an unguarded map
-	// write here would race and can crash the process.
-	mu sync.Mutex
-	// counted is the newest usage hour already added to the counters, keyed by
-	// series identity. The network buckets usage hourly and the provider
-	// re-reads the same bucket every poll, so without this the counters would
-	// add one hour's gas once per poll and overstate consumption by the number
-	// of polls per hour.
-	//
-	// Only hours this process observed are counted: there is no backfill, so
-	// gas consumed while panoptichain was down is never added. Unlike a gauge,
-	// which self-heals on the next poll, a counter's gap is permanent and every
-	// later range total inherits it. Prefer the gauges when a window has to be
-	// exact across a restart.
-	counted map[string]string
 }
 
 func (o *RequesterUsageObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.RequesterUsage, o)
-
-	o.counted = make(map[string]string)
 
 	// tag names the system that owns the requester, so a dashboard can read the
 	// graph and group or exclude requesters without carrying its own address
@@ -269,12 +258,10 @@ func (o *RequesterUsageObserver) Notify(ctx context.Context, msg Message) {
 		o.cost_hourly.WithLabelValues(append(labels, usage.Currency)...).Set(cost)
 	}
 
-	// Advance the counters only when this bucket is one the process has not
-	// already added. Without an hour to key on there is no way to tell a fresh
-	// bucket from a repeat, so leave the counters alone rather than risk
-	// double-counting: overstating consumption is worse than a flat series,
-	// because a counter never recovers from it.
-	if usage.Hour == "" || !o.claimHour(labels, usage.Hour) {
+	// Advance the counters only for a bucket the provider has not reported
+	// before. Adding a repeat would overstate consumption permanently, since a
+	// counter never recovers from it.
+	if !usage.NewHour {
 		return
 	}
 
@@ -282,24 +269,6 @@ func (o *RequesterUsageObserver) Notify(ctx context.Context, msg Message) {
 	if priced {
 		o.cost_total.WithLabelValues(append(labels, usage.Currency)...).Add(cost)
 	}
-}
-
-// claimHour reports whether hour is newer than the last one counted for this
-// series, recording it when so. Hours are RFC 3339 UTC at a fixed width, so they
-// order lexicographically and compare as strings.
-func (o *RequesterUsageObserver) claimHour(labels []string, hour string) bool {
-	key := strings.Join(labels, "|")
-
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	if hour <= o.counted[key] {
-		return false
-	}
-
-	o.counted[key] = hour
-
-	return true
 }
 
 // totalGas resolves the requester's total gas for the hour, preferring the

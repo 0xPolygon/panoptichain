@@ -62,6 +62,7 @@ func newUsageProvider(usageRequesters ...string) *SuccinctProverNetworkProvider 
 
 	return &SuccinctProverNetworkProvider{
 		logger:          NewLogger(nil, "test"),
+		countedHours:    make(map[string]string),
 		usageRequesters: requesters,
 	}
 }
@@ -247,5 +248,147 @@ func TestRefreshRequesterUsage_RequesterFilterDoesNotDriveUsage(t *testing.T) {
 	}
 	if got.Requester != "" {
 		t.Fatal("expected no RPC to be made from the proof-request filter alone")
+	}
+}
+
+// newUsageServerFor is newUsageServer with a per-call response, so a test can
+// change what the network reports between cycles.
+func newUsageServerFor(t *testing.T, next func() *spnpb.GetRequesterUsageResponse) *grpc.ClientConn {
+	t.Helper()
+
+	desc := grpc.ServiceDesc{
+		ServiceName: "network.ProverNetwork",
+		HandlerType: (*any)(nil),
+		Methods: []grpc.MethodDesc{{
+			MethodName: "GetRequesterUsage",
+			Handler: func(_ any, ctx context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+				if err := dec(new(spnpb.GetRequesterUsageRequest)); err != nil {
+					return nil, err
+				}
+				return next(), nil
+			},
+		}},
+	}
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	srv := grpc.NewServer()
+	srv.RegisterService(&desc, new(struct{}))
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	return conn
+}
+
+func hourResponse(hour string) *spnpb.GetRequesterUsageResponse {
+	return &spnpb.GetRequesterUsageResponse{
+		UsageSummary: []*spnpb.RequesterUsageSummary{{
+			Hour:         hour,
+			UsageSummary: &spnpb.UsageSummary{ReservedGas: "1000000000", OnDemandGas: "0", TotalGas: "1000000000"},
+		}},
+	}
+}
+
+// The provider owns the once-only decision behind the cumulative counters. The
+// network buckets usage hourly and every cycle re-reads the same bucket, so only
+// the first cycle to see an hour may flag it.
+func TestRefreshRequesterUsage_FlagsEachHourOnce(t *testing.T) {
+	hour := "2026-08-31T10:00:00Z"
+	conn := newUsageServerFor(t, func() *spnpb.GetRequesterUsageResponse { return hourResponse(hour) })
+
+	h := newUsageProvider("0x5428abf0e5aec1be48597a984a4f9570d9236f29")
+
+	h.refreshRequesterUsage(context.Background(), conn)
+	if len(h.usage) != 1 || !h.usage[0].NewHour {
+		t.Fatalf("first cycle must flag the hour as new, got %+v", h.usage)
+	}
+
+	// Later cycles re-read the same bucket and must not flag it again.
+	for cycle := 2; cycle <= 4; cycle++ {
+		h.refreshRequesterUsage(context.Background(), conn)
+		if len(h.usage) != 1 {
+			t.Fatalf("cycle %d: expected one summary, got %d", cycle, len(h.usage))
+		}
+		if h.usage[0].NewHour {
+			t.Fatalf("cycle %d re-flagged an hour already reported", cycle)
+		}
+	}
+
+	// The hour rolling over flags again.
+	hour = "2026-08-31T11:00:00Z"
+	h.refreshRequesterUsage(context.Background(), conn)
+	if len(h.usage) != 1 || !h.usage[0].NewHour {
+		t.Fatalf("a new hour must be flagged, got %+v", h.usage)
+	}
+}
+
+// An hour older than one already reported must not be flagged, so a late or
+// reordered response cannot double count.
+func TestRefreshRequesterUsage_DoesNotFlagOlderHour(t *testing.T) {
+	hour := "2026-08-31T12:00:00Z"
+	conn := newUsageServerFor(t, func() *spnpb.GetRequesterUsageResponse { return hourResponse(hour) })
+
+	h := newUsageProvider("0x5428abf0e5aec1be48597a984a4f9570d9236f29")
+	h.refreshRequesterUsage(context.Background(), conn)
+
+	hour = "2026-08-31T09:00:00Z"
+	h.refreshRequesterUsage(context.Background(), conn)
+
+	if len(h.usage) != 1 || h.usage[0].NewHour {
+		t.Fatalf("an older hour must not be flagged, got %+v", h.usage)
+	}
+}
+
+// Requesters are tracked independently: one advancing must not suppress
+// another's first sighting of the same hour.
+func TestRefreshRequesterUsage_FlagsPerRequester(t *testing.T) {
+	conn := newUsageServerFor(t, func() *spnpb.GetRequesterUsageResponse {
+		return hourResponse("2026-08-31T10:00:00Z")
+	})
+
+	h := newUsageProvider(
+		"0x5428abf0e5aec1be48597a984a4f9570d9236f29",
+		"0xafb1d2c26654c85f51f550c97f16699da0293dee",
+	)
+	h.refreshRequesterUsage(context.Background(), conn)
+
+	if len(h.usage) != 2 {
+		t.Fatalf("expected two summaries, got %d", len(h.usage))
+	}
+	for i, u := range h.usage {
+		if !u.NewHour {
+			t.Fatalf("usage[%d] (%s) was not flagged new", i, u.Requester)
+		}
+	}
+}
+
+// A response carrying no hour cannot be told apart from a repeat, so it must
+// never be flagged: a flat counter is recoverable, an overstated one is not.
+func TestRefreshRequesterUsage_NoHourIsNeverFlagged(t *testing.T) {
+	conn := newUsageServerFor(t, func() *spnpb.GetRequesterUsageResponse {
+		return &spnpb.GetRequesterUsageResponse{
+			UsageSummary: []*spnpb.RequesterUsageSummary{{
+				UsageSummary: &spnpb.UsageSummary{ReservedGas: "1", OnDemandGas: "2", TotalGas: "3"},
+			}},
+		}
+	})
+
+	h := newUsageProvider("0x5428abf0e5aec1be48597a984a4f9570d9236f29")
+	h.refreshRequesterUsage(context.Background(), conn)
+
+	if len(h.usage) != 1 {
+		t.Fatalf("expected one summary, got %d", len(h.usage))
+	}
+	if h.usage[0].NewHour {
+		t.Fatal("a summary with no hour must not be flagged new")
 	}
 }
