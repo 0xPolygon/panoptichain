@@ -31,10 +31,23 @@ type SuccinctProverNetworkProvider struct {
 	apiKey           string
 	requester        *string
 	fulfiller        *string
-	usageRequesters  []string
+	usageRequesters  []config.UsageRequester
+	pricing          *config.SuccinctPricing
 	proofRequests    []*spnpb.ProofRequest
 	seen             map[string]time.Time
-	usage            []*observer.UsageSummary
+	// countedHours is the newest usage hour already reported for each requester,
+	// keyed by address. The network buckets usage hourly and every cycle re-reads
+	// the same bucket, so this is what lets the observer add each hour to its
+	// cumulative counters exactly once instead of once per cycle. It lives here
+	// rather than in the observer because a provider's cycle is single-threaded
+	// by contract, so it needs no synchronization.
+	//
+	// Only hours this process observed are recorded: there is no backfill, so gas
+	// consumed while panoptichain was down is never counted. Unlike a gauge,
+	// which self-heals on the next cycle, a counter's gap is permanent and every
+	// later range total inherits it.
+	countedHours map[string]string
+	usage        []*observer.UsageSummary
 }
 
 func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg config.SuccinctProverNetwork) *SuccinctProverNetworkProvider {
@@ -51,7 +64,9 @@ func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg conf
 		requester:        cfg.Requester,
 		fulfiller:        cfg.Fulfiller,
 		usageRequesters:  cfg.UsageRequesters,
+		pricing:          cfg.Pricing,
 		seen:             make(map[string]time.Time),
+		countedHours:     make(map[string]string),
 	}
 }
 
@@ -97,7 +112,7 @@ func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Contex
 func (r *SuccinctProverNetworkProvider) requesterUsage(
 	ctx context.Context,
 	conn *grpc.ClientConn,
-	requester string,
+	requester config.UsageRequester,
 	start, end time.Time,
 ) *observer.UsageSummary {
 	req := &spnpb.GetRequesterUsageRequest{
@@ -109,7 +124,7 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 		// server rejects the request without. Casing is not significant to the
 		// server, but this value becomes a metric label, so lowercase it to
 		// keep the label stable however the address is written in config.
-		Requester: strings.ToLower(common.HexToAddress(requester).Hex()),
+		Requester: strings.ToLower(common.HexToAddress(requester.Address).Hex()),
 	}
 
 	res, err := spnpb.GetRequesterUsage(metadata.AppendToOutgoingContext(ctx, "api-key", r.apiKey), conn, req)
@@ -143,11 +158,31 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 		return nil
 	}
 
-	return &observer.UsageSummary{
+	usage := &observer.UsageSummary{
 		UsageSummary: latest.UsageSummary,
 		Requester:    req.Requester,
+		Tag:          requester.Tag,
 		Hour:         latest.Hour,
 	}
+
+	// Flag a bucket the observer has not been given before, so it can advance
+	// its cumulative counters. Hours are RFC 3339 UTC at a fixed width, so they
+	// order lexicographically and compare as strings. A response with no hour
+	// cannot be told apart from a repeat, so it is never flagged: a flat counter
+	// is recoverable, an overstated one is not.
+	if latest.Hour != "" && latest.Hour > r.countedHours[req.Requester] {
+		r.countedHours[req.Requester] = latest.Hour
+		usage.NewHour = true
+	}
+
+	// Pricing is optional, so leave the rate at zero when none is configured;
+	// the observer reads that as "gas only" and emits no cost.
+	if r.pricing != nil {
+		usage.RatePerBillionGas = r.pricing.RatePerBillionGas
+		usage.Currency = r.pricing.Currency
+	}
+
+	return usage
 }
 
 func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context, c spnpb.ProverNetworkClient) {

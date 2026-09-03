@@ -1287,6 +1287,7 @@ Variable Labels:
 - network
 - provider
 - requester
+- tag
 
 ### panoptichain_spn_gas_on_demand
 The on-demand gas the requester used over the most recent complete hour
@@ -1297,6 +1298,53 @@ Variable Labels:
 - network
 - provider
 - requester
+- tag
+
+### panoptichain_spn_gas_hourly
+The total gas (reserved plus on-demand) the requester used over the most recent complete hour
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- requester
+- tag
+
+### panoptichain_spn_cost_hourly
+The cost of the gas the requester used over the most recent complete hour, excluding any flat support fee
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- requester
+- tag
+- currency
+
+### panoptichain_spn_gas_consumed_total
+Cumulative total gas the requester consumed, counting each hourly bucket once, for range totals
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- requester
+- tag
+
+### panoptichain_spn_cost_total
+Cumulative cost of the gas the requester consumed, excluding any flat support fee, for range totals
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- requester
+- tag
+- currency
 
 ## SPOLControllerObserver
 
