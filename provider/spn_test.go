@@ -195,37 +195,6 @@ func TestRefreshRequesterUsage_CarriesRequesterTag(t *testing.T) {
 	}
 }
 
-// Pricing is optional. Without it the summary carries a zero rate, which the
-// observer reads as "gas only".
-func TestRefreshRequesterUsage_PricingIsOptional(t *testing.T) {
-	res := &spnpb.GetRequesterUsageResponse{
-		UsageSummary: []*spnpb.RequesterUsageSummary{{
-			Hour:         "2026-08-06T12:00:00Z",
-			UsageSummary: &spnpb.UsageSummary{ReservedGas: "1", OnDemandGas: "2"},
-		}},
-	}
-	requester := "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
-
-	conn, _ := newUsageServer(t, res)
-	h := newUsageProvider(requester)
-	h.refreshRequesterUsage(context.Background(), conn)
-
-	if len(h.usage) != 1 || h.usage[0].RatePerBillionGas != 0 {
-		t.Fatalf("expected a zero rate without pricing, got %+v", h.usage)
-	}
-
-	h = newUsageProvider(requester)
-	h.pricing = &config.SuccinctPricing{RatePerBillionGas: 0.5, Currency: "USD"}
-	h.refreshRequesterUsage(context.Background(), conn)
-
-	if len(h.usage) != 1 {
-		t.Fatalf("expected one usage summary, got %d", len(h.usage))
-	}
-	if h.usage[0].RatePerBillionGas != 0.5 || h.usage[0].Currency != "USD" {
-		t.Fatalf("pricing not carried through: %+v", h.usage[0])
-	}
-}
-
 // The proof-request filter and the usage requesters are independent: setting
 // only Requester must not cause a usage call, since narrowing proof requests
 // says nothing about whose gas budget is being tracked.

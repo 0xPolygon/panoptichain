@@ -32,7 +32,6 @@ type SuccinctProverNetworkProvider struct {
 	requester        *string
 	fulfiller        *string
 	usageRequesters  []config.UsageRequester
-	pricing          *config.SuccinctPricing
 	proofRequests    []*spnpb.ProofRequest
 	seen             map[string]time.Time
 	// countedHours is the newest usage hour already reported for each requester,
@@ -64,7 +63,6 @@ func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg conf
 		requester:        cfg.Requester,
 		fulfiller:        cfg.Fulfiller,
 		usageRequesters:  cfg.UsageRequesters,
-		pricing:          cfg.Pricing,
 		seen:             make(map[string]time.Time),
 		countedHours:     make(map[string]string),
 	}
@@ -173,13 +171,6 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 	if latest.Hour != "" && latest.Hour > r.countedHours[req.Requester] {
 		r.countedHours[req.Requester] = latest.Hour
 		usage.NewHour = true
-	}
-
-	// Pricing is optional, so leave the rate at zero when none is configured;
-	// the observer reads that as "gas only" and emits no cost.
-	if r.pricing != nil {
-		usage.RatePerBillionGas = r.pricing.RatePerBillionGas
-		usage.Currency = r.pricing.Currency
 	}
 
 	return usage
