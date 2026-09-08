@@ -191,10 +191,6 @@ type SuccinctProverNetwork struct {
 	// requests are observed, whereas usage is billing-scoped and the addresses
 	// holding a gas budget need not be ones a configured fulfiller serves.
 	UsageRequesters []UsageRequester `mapstructure:"usage_requesters" validate:"dive"`
-	// Pricing converts the gas the network reports into a cost. It is optional:
-	// without it the usage observer reports gas only, which is what to do for a
-	// network whose commercial terms are not settled.
-	Pricing *SuccinctPricing `mapstructure:"pricing"`
 }
 
 // UsageRequester is a requester whose hourly gas usage is reported.
@@ -204,17 +200,6 @@ type UsageRequester struct {
 	// label so a dashboard does not have to map addresses back to the systems
 	// that own them by hand.
 	Tag string `mapstructure:"tag"`
-}
-
-// SuccinctPricing prices the gas the Succinct Prover Network reports.
-type SuccinctPricing struct {
-	// RatePerBillionGas is the price of one billion prover gas units, in the
-	// currency the contract is denominated in.
-	RatePerBillionGas float64 `mapstructure:"rate_per_billion_gas" validate:"required,gt=0"`
-	// Currency denominates RatePerBillionGas. It is a metric label rather than
-	// a name suffix, matching the exchange_rates observer, so a rate in a
-	// second currency does not need a second metric.
-	Currency string `mapstructure:"currency" validate:"required"`
 }
 
 type Aggchain struct {

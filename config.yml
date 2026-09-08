@@ -569,35 +569,24 @@
       ## modelled here: every configured requester is reported the same way, and
       ## a dashboard selects on `tag` to separate what it cares about.
     ##
-    ## @param pricing - object - optional
-    ## Converts the gas the network reports into a cost, published as the
-    ## `cost_hourly` gauge and the `cost_total` counter alongside their gas
-    ## equivalents. Omit it to report gas only, which is what to do for a network
-    ## whose commercial terms are not settled. The flat monthly support fee is
-    ## deliberately not modelled: it is not per-requester and not per-hour, so it
-    ## belongs in whatever totals the invoice, not in a per-requester metric.
+    ## GAS ONLY, NO COST. This observer deliberately publishes no price. Cost is
+    ## gas x a rate, and the rate is a commercial fact that differs per requester
+    ## -- some are billed to Polygon, some to a third party on terms Polygon does
+    ## not hold. A single pricing block here could only apply one rate to every
+    ## requester on the network, which priced third-party usage at Polygon's
+    ## contract. Multiply by a rate wherever the split is known: the Grafana
+    ## dashboard holds it as a per-section constant.
     ##
-    ## The `spn_requester_usage` observer reports each quantity as both a gauge
-    ## and a counter, because they answer different questions. `gas_hourly` and
-    ## `cost_hourly` are gauges holding the most recent complete hour: read them
-    ## for the current burn rate and alert a spike on them. `gas_consumed_total`
-    ## and `cost_total` are cumulative counters that add each hourly bucket
-    ## exactly once, so a query can total an arbitrary window with
-    ## `increase(...[$__range])`. The gauges cannot be summed over time: the same
+    ## The observer reports gas as both a gauge and a counter, because they
+    ## answer different questions. `gas_hourly` is a gauge holding the most
+    ## recent complete hour: read it for the current burn rate and alert a spike
+    ## on it. `gas_consumed_total` is a cumulative counter that adds each hourly
+    ## bucket exactly once, so a query can total an arbitrary window with
+    ## `increase(...[$__range])`. The gauge cannot be summed over time: the same
     ## hourly bucket is republished on every poll, so summing would count each
-    ## hour once per poll. The counters have no backfill, so gas consumed while
+    ## hour once per poll. The counter has no backfill, so gas consumed while
     ## panoptichain was down is never added and every later range total inherits
-    ## the gap; use the gauges when a window must be exact across a restart.
-    ##
-      ## @param rate_per_billion_gas - float - required
-      ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_PRICING_RATE_PER_BILLION_GAS - float - required
-      ## The price of one billion prover gas units.
-      ##
-      ## @param currency - string - required
-      ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_PRICING_CURRENCY - string - required
-      ## The currency `rate_per_billion_gas` is denominated in. It becomes a
-      ## metric label, matching the `exchange_rates` observer, so a rate in a
-      ## second currency does not need a second metric.
+    ## the gap; use the gauge when a window must be exact across a restart.
     ##
     ## @param interval - string - optional - default: runner.interval
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_INTERVAL - string - optional - default: runner.interval
@@ -610,9 +599,6 @@
   #     api_key: "$SUCCINCT_PROVER_NETWORK_API_KEY"
   #     requester: "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
   #     fulfiller: "0xe9b7607e06ec0d4ee69bee3abedd954c069ad794"
-  #     pricing:
-  #       rate_per_billion_gas: 0.5
-  #       currency: "USD"
   #     usage_requesters:
   #       - address: "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
   #         tag: "katana"
