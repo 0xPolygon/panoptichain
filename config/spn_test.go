@@ -9,7 +9,7 @@ import (
 // objects, which is the shape most likely to break silently under viper and
 // mapstructure: a decode that drops it leaves usage collection quietly off
 // rather than failing to start.
-func TestSuccinctProverNetwork_DecodesUsageRequestersAndPricing(t *testing.T) {
+func TestSuccinctProverNetwork_DecodesUsageRequesters(t *testing.T) {
 	dir := t.TempDir()
 	body := `
 namespace: test
@@ -19,9 +19,6 @@ providers:
       label: "succinct.xyz"
       url: "rpc.production.succinct.xyz:443"
       api_key: "key"
-      pricing:
-        rate_per_billion_gas: 0.5
-        currency: "USD"
       usage_requesters:
         - address: "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
           tag: "katana"
@@ -40,14 +37,6 @@ providers:
 	networks := Config().Providers.SuccinctProverNetworks
 	if len(networks) != 1 {
 		t.Fatalf("expected one provider, got %d", len(networks))
-	}
-
-	pricing := networks[0].Pricing
-	if pricing == nil {
-		t.Fatal("expected pricing to decode")
-	}
-	if pricing.RatePerBillionGas != 0.5 || pricing.Currency != "USD" {
-		t.Fatalf("pricing = %+v", pricing)
 	}
 
 	requesters := networks[0].UsageRequesters

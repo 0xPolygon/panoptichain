@@ -28,11 +28,6 @@ type UsageSummary struct {
 	// they hold a level, and republishing the same hour is harmless. The
 	// provider decides this, because it is the one that keeps state.
 	NewHour bool
-	// RatePerBillionGas prices the usage. Zero means no pricing is configured,
-	// which suppresses the cost gauge rather than publishing a free hour.
-	RatePerBillionGas float64
-	// Currency denominates RatePerBillionGas.
-	Currency string
 }
 
 type ProofRequestObserver struct {
@@ -157,13 +152,10 @@ func (o *ProofRequestObserver) Notify(ctx context.Context, msg Message) {
 // every message on its own goroutine, so state kept here would need its own
 // synchronization, whereas a provider's cycle is single-threaded by contract.
 type RequesterUsageObserver struct {
-	reserved    *prometheus.GaugeVec
-	on_demand   *prometheus.GaugeVec
-	hourly      *prometheus.GaugeVec
-	cost_hourly *prometheus.GaugeVec
-
-	consumed   *prometheus.CounterVec
-	cost_total *prometheus.CounterVec
+	reserved  *prometheus.GaugeVec
+	on_demand *prometheus.GaugeVec
+	hourly    *prometheus.GaugeVec
+	consumed  *prometheus.CounterVec
 }
 
 func (o *RequesterUsageObserver) Register(eb *EventBus) {
@@ -195,24 +187,11 @@ func (o *RequesterUsageObserver) Register(eb *EventBus) {
 		"The total gas (reserved plus on-demand) the requester used over the most recent complete hour",
 		labels...,
 	)
-	o.cost_hourly = metrics.NewGauge(
-		metrics.SPN,
-		"cost_hourly",
-		"The cost of the gas the requester used over the most recent complete hour, excluding any flat support fee",
-		append(labels, "currency")...,
-	)
-
 	o.consumed = metrics.NewCounter(
 		metrics.SPN,
 		"gas_consumed_total",
 		"Cumulative total gas the requester consumed, counting each hourly bucket once, for range totals",
 		labels...,
-	)
-	o.cost_total = metrics.NewCounter(
-		metrics.SPN,
-		"cost_total",
-		"Cumulative cost of the gas the requester consumed, excluding any flat support fee, for range totals",
-		append(labels, "currency")...,
 	)
 }
 
@@ -249,15 +228,6 @@ func (o *RequesterUsageObserver) Notify(ctx context.Context, msg Message) {
 
 	o.hourly.WithLabelValues(labels...).Set(total)
 
-	// A zero rate means no pricing is configured. Publishing a cost then would
-	// claim the hour was free, so report gas alone and leave the cost series
-	// absent for this network.
-	priced := usage.RatePerBillionGas != 0
-	cost := total / 1e9 * usage.RatePerBillionGas
-	if priced {
-		o.cost_hourly.WithLabelValues(append(labels, usage.Currency)...).Set(cost)
-	}
-
 	// Advance the counters only for a bucket the provider has not reported
 	// before. Adding a repeat would overstate consumption permanently, since a
 	// counter never recovers from it.
@@ -266,9 +236,6 @@ func (o *RequesterUsageObserver) Notify(ctx context.Context, msg Message) {
 	}
 
 	o.consumed.WithLabelValues(labels...).Add(total)
-	if priced {
-		o.cost_total.WithLabelValues(append(labels, usage.Currency)...).Add(cost)
-	}
 }
 
 // totalGas resolves the requester's total gas for the hour, preferring the
@@ -294,9 +261,7 @@ func (o *RequesterUsageObserver) GetCollectors() []prometheus.Collector {
 		o.reserved,
 		o.on_demand,
 		o.hourly,
-		o.cost_hourly,
 		o.consumed,
-		o.cost_total,
 	}
 }
 
