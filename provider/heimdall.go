@@ -327,28 +327,6 @@ func (h *HeimdallProvider) scanDeadlineReached(ctx context.Context, from, to uin
 	return true
 }
 
-func (h *HeimdallProvider) getValidators(ctx context.Context, height uint64) *observer.HeimdallValidators {
-	path, err := url.JoinPath(h.tendermintURL, "validators")
-	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to join path when fetching Heimdall validators")
-		return nil
-	}
-
-	if height > 0 {
-		path = fmt.Sprintf("%s?height=%d", path, height)
-	}
-
-	var validators observer.HeimdallValidators
-	err = api.GetJSON(ctx, path, &validators)
-	if err != nil {
-		h.logger.Error().Err(err).Msg("Failed to get Heimdall validators")
-		return nil
-	}
-
-	return &validators
-}
-
-// getValidatorsAtHeight fetches all validators at a specific height with pagination.
 func (h *HeimdallProvider) getValidatorsAtHeight(ctx context.Context, height uint64) ([]*observer.HeimdallValidator, error) {
 	const perPage = 100
 	const maxPages = 10
@@ -703,20 +681,53 @@ func (h *HeimdallProvider) refreshMissedBlockProposal(ctx context.Context) error
 		}
 		proposer := block.ProposerAddress()
 
-		v := h.getValidators(ctx, i-1)
-		if v == nil {
+		// PAGINATED, deliberately. getValidators sends /validators with no
+		// page parameters and never reads Result.Total, so CometBFT caps the
+		// response at its default page size of 30. Mainnet reports
+		// total=105 and returns 30, which silently limited this accounting to
+		// the first page -- and is why the metric only ever carried 30 signer
+		// series there. Amoy, at 25, fitted inside the page and looked fine.
+		validators, err := h.getValidatorsAtHeight(ctx, i-1)
+		if err != nil {
 			h.logger.Debug().
+				Err(err).
 				Uint64("height", i).
 				Msg("Failed to get validators")
 			continue
 		}
-		validators := v.Validators()
 
-		// Sort validators in descending order.
-		sort.Slice(validators, func(i, j int) bool {
-			pi, _ := strconv.Atoi(validators[i].ProposerPriority)
-			pj, _ := strconv.Atoi(validators[j].ProposerPriority)
-			return pi > pj
+		// Sort validators by proposer priority, descending.
+		//
+		// PARSE ERRORS ARE NOT IGNORED. This used to be `pi, _ :=
+		// strconv.Atoi(...)`, which turns any unparseable priority into 0. If
+		// the upstream ever returns an empty or non-numeric proposer_priority
+		// -- and it already returns "" for numeric fields elsewhere, see the
+		// buffered-checkpoint unmarshal failures -- every validator would
+		// compare equal, sort.Slice is not stable, and the proposer would land
+		// at an arbitrary index. That silently turns this metric into noise
+		// with no error anywhere. Skip the block instead.
+		priorities := make(map[string]int64, len(validators))
+		malformed := false
+		for _, validator := range validators {
+			p, err := strconv.ParseInt(validator.ProposerPriority, 10, 64)
+			if err != nil {
+				h.logger.Warn().
+					Err(err).
+					Uint64("height", i).
+					Str("address", validator.Address).
+					Str("proposer_priority", validator.ProposerPriority).
+					Msg("Failed to parse validator proposer priority")
+				malformed = true
+				break
+			}
+			priorities[validator.Address] = p
+		}
+		if malformed {
+			continue
+		}
+
+		sort.Slice(validators, func(a, b int) bool {
+			return priorities[validators[a].Address] > priorities[validators[b].Address]
 		})
 
 		var proposers []string
