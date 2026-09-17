@@ -201,7 +201,7 @@ func (o *HeimdallBlockObserver) Notify(ctx context.Context, m Message) {
 	o.totalTxs.WithLabelValues(network, provider).Add(txs)
 
 	if proposer := block.ProposerAddress(); proposer != "" {
-		o.blockProposed.WithLabelValues(network, provider, proposer).Inc()
+		o.blockProposed.WithLabelValues(network, provider, CanonicalAddress(proposer)).Inc()
 	}
 }
 
@@ -277,7 +277,7 @@ func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 	milestone := m.Data().(*HeimdallMilestone)
 
 	o.observed.WithLabelValues(network, provider).Inc()
-	o.proposed.WithLabelValues(network, provider, milestone.Proposer).Inc()
+	o.proposed.WithLabelValues(network, provider, CanonicalAddress(milestone.Proposer)).Inc()
 
 	// Guard the unsigned subtraction: a malformed milestone with EndBlock <
 	// StartBlock would otherwise underflow to a huge value and skew the histogram.
@@ -301,14 +301,14 @@ func (o *MilestoneObserver) Notify(ctx context.Context, m Message) {
 		id := strconv.FormatUint(vote.ValidatorID, 10)
 		switch {
 		case vote.HasMilestone:
-			o.voteProposed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+			o.voteProposed.WithLabelValues(network, provider, id, CanonicalAddress(vote.ValidatorAddress)).Inc()
 		case vote.BlockIDFlag == heimdall.BlockIDFlagCommit:
 			// Signed consensus but didn't propose milestone
-			o.voteSignedButMissed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
-			o.voteMissed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+			o.voteSignedButMissed.WithLabelValues(network, provider, id, CanonicalAddress(vote.ValidatorAddress)).Inc()
+			o.voteMissed.WithLabelValues(network, provider, id, CanonicalAddress(vote.ValidatorAddress)).Inc()
 		default:
 			// Absent/nil - didn't sign consensus and no milestone
-			o.voteMissed.WithLabelValues(network, provider, id, vote.ValidatorAddress).Inc()
+			o.voteMissed.WithLabelValues(network, provider, id, CanonicalAddress(vote.ValidatorAddress)).Inc()
 		}
 	}
 
@@ -442,7 +442,7 @@ func (o *HeimdallMissedBlockProposalObserver) Notify(ctx context.Context, m Mess
 		}
 
 		for _, proposer := range proposers {
-			o.missedBlockProposal.WithLabelValues(m.Network().GetName(), m.Provider(), proposer).Inc()
+			o.missedBlockProposal.WithLabelValues(m.Network().GetName(), m.Provider(), CanonicalAddress(proposer)).Inc()
 		}
 	}
 }
@@ -527,7 +527,7 @@ type HeimdallMissedCheckpointProposalObserver struct {
 func (o *HeimdallMissedCheckpointProposalObserver) Notify(ctx context.Context, m Message) {
 	proposers := m.Data().([]string)
 	for _, proposer := range proposers {
-		o.counter.WithLabelValues(m.Network().GetName(), m.Provider(), proposer).Inc()
+		o.counter.WithLabelValues(m.Network().GetName(), m.Provider(), CanonicalAddress(proposer)).Inc()
 	}
 }
 
@@ -821,7 +821,7 @@ func (o *HeimdallMissedVoteObserver) Notify(ctx context.Context, m Message) {
 
 	for _, vote := range missed.MissedVotes {
 		id := strconv.FormatUint(vote.ValidatorID, 10)
-		o.consensus.WithLabelValues(network, provider, id, vote.SignerAddress, vote.FlagLabel).Inc()
+		o.consensus.WithLabelValues(network, provider, id, CanonicalAddress(vote.SignerAddress), vote.FlagLabel).Inc()
 	}
 
 	if missed.MissingCount > 0 {
