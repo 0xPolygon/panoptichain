@@ -23,7 +23,6 @@ const (
 	Grafana                                            // *observer.GrafanaResponse
 	HashDivergence                                     // *observer.HashDivergence
 	HeimdallBlockInterval                              // uint64
-	HeimdallMissedBlockProposal                        // observer.HeimdallMissedBlockProposal
 	Milestone                                          // *observer.HeimdallMilestone
 	MissedCheckpointProposal                           // []string
 	NewEVMBlock                                        // *types.Block
@@ -52,4 +51,5 @@ const (
 	MilestoneLatest                                    // *observer.HeimdallMilestone (tip milestone, drives freshness gauges)
 	ActiveSpan                                         // *observer.HeimdallSpan (span containing the current Bor block; nil when Bor height unavailable)
 	RequesterUsage                                     // *observer.UsageSummary (most recent complete hour; nil when the hour has no usage)
+	HeimdallMissedBlockProposal                        // observer.HeimdallMissedBlockProposal
 )

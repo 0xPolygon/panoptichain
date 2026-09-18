@@ -1,0 +1,252 @@
+# Missed block proposals: why the old implementation was wrong
+
+Notes from an 11-hour investigation on 2026-09-17.
+`panoptichain_heimdall_missed_block_proposal` used to infer misses from
+proposer-priority ordering and was wrong by ~30x even on a healthy chain. It
+now reads the consensus round directly. **Same metric name — only the values
+changed**, so existing dashboards and alerts keep working.
+
+---
+
+## What the metric actually counts
+
+For each Heimdall block `h`, `refreshMissedBlockProposal` fetches the validator
+set at `h-1`, sorts it by `proposer_priority` descending, and counts **every
+validator ranked above the block's actual proposer** as having missed.
+
+```go
+proposer := block.ProposerAddress()
+validators := <set at h-1>, sorted by proposer_priority desc
+for _, v := range validators {
+    if v.Address == proposer { break }
+    proposers = append(proposers, v.Address)   // "missed"
+}
+```
+
+So the value per block is **the proposer's index in that sorted list**. Zero is
+healthy.
+
+### The assumption, and why it is only approximately true
+
+CometBFT does not pick the highest current priority. It **increments every
+validator's priority by its voting power, then takes the max**, then subtracts
+total voting power from the winner. The real rule is:
+
+```
+proposer(h) = argmax( priority(h-1) + voting_power )
+```
+
+The code omits `+ voting_power`. That works while priorities are spread wide
+relative to voting power, and silently stops working when they are not.
+
+---
+
+## The 2026-09-17 Amoy incident
+
+A validator joined the Amoy set at height 46,549,275 (15:30:27Z) with:
+
+```
+voting_power       = 1
+proposer_priority  = -520,048,305     (total voting power: 481,535,557)
+```
+
+That is CometBFT's new-validator penalty (`≈ -1.125 × totalVotingPower`). With
+voting power 1 it would need ~520 million blocks to ever propose — harmless in
+itself, but it sat far outside the normal priority range and skewed the
+ordering.
+
+Six minutes later the metric stepped from ~30/min to ~620/min across all 24
+pre-existing validators and stayed there for 11 hours.
+
+**Measured by replaying the algorithm against the live API:**
+
+| window | mean proposer index | blocks badly wrong |
+|---|---|---|
+| before the change | 1.00 | 0 of 12 |
+| during (~18:50Z) | **5.86** | **5 of 14** (indices 7–20) |
+| after recovery | 0.50 | 0 of 14 |
+
+The error was **bursty — roughly a third of blocks — not a constant offset**. A
+sparse sample of 9 heights returned mostly zeros and was actively misleading;
+dense sampling is required to see it.
+
+It recovered on its own at ~02:25Z the next day, when the chain re-centred that
+validator's priority. Note this was a **step, not gradual drift**:
+
+```
+15:31Z  -520,058,320      (first 6.7h: only voting-power-1 accumulation)
+22:14Z  -520,033,927
+02:44Z  -259,988,560      <-- step, and the metric recovers at ~02:25Z
+```
+
+**The chain was healthy throughout.** Amoy's block interval held at 0.99s —
+faster than mainnet's 1.21s.
+
+---
+
+## Ruled out, and how
+
+Recording these because several were plausible and cost real time.
+
+| hypothesis | verdict | what killed it |
+|---|---|---|
+| The chain degraded | No | Block interval flat at 0.99s across the whole window. |
+| A Heimdall deploy changed the API | No | Metric flat at 28–43/min for four days, straight through the 09-16 Heimdall v2 rollout. |
+| `proposer_priority` changed type string → int | No | That errors on every unmarshal; `"Failed to get Heimdall validators"` appeared **once in 3 hours**. |
+| Empty or zero priorities collapsing the sort | No | Live API returns 25 distinct valid signed integers. |
+| The recurring buffered-checkpoint unmarshal error | No | Chronic and flat — 60–290/hour for days, no step at the incident. Real bug, unrelated. |
+| A stale cached validator set | No | There is no cache. `api.GetJSON` sets `Cache-Control: no-cache, no-store`; only the HTTP connection is pooled. |
+| The API returning non-historical priorities | No | CometBFT's recurrence `priority(h) = priority(h-1) + vp − total(if proposer)` holds **exactly**, 24/24 and 25/25, before and after. |
+| The pagination bug (below) | No | Amoy's 25 validators fit in one page. Both builds byte-identical on Amoy. |
+
+---
+
+## Fixed
+
+### #108 → v7.0.2 — pagination, and a swallowed parse error
+
+`getValidators` sent `/validators` with no page parameters and never read
+`Result.Total`, so CometBFT capped it at its default page size of 30:
+
+```
+mainnet  /validators (no params):  count=30  total=105  returned=30
+amoy     /validators (no params):  count=25  total=25   returned=25
+```
+
+**Mainnet has 105 validators and this saw 30** — hence only ever 30 signer
+series there. Amoy fit inside the page, which is why the bug hid for so long.
+Switched to `getValidatorsAtHeight`, which already paginated correctly and sat
+directly below it; the unpaginated version is removed.
+
+Verified by running both builds against live mainnet for ~100s:
+
+| build | signers | off page 1 |
+|---|---|---|
+| v7.0.1 | **30** | **0** |
+| v7.0.2 | **36** | **13** |
+
+Confirmed in production after deploy: the mainnet signer count was pinned at
+exactly 30, then climbed 81 → 94 → toward 105. Mainnet's rate also roughly
+halved, which is *correct* — with the list truncated, any block whose proposer
+was not in the first 30 flagged all 30.
+
+Also stopped discarding the `strconv.Atoi` error in the sort. An unparseable
+priority silently became `0`, which makes every validator compare equal and
+`sort.Slice` unstable. Not hypothetical: this API already returns `""` for
+numeric fields elsewhere, which is what the buffered-checkpoint warnings are.
+
+### #109 → v8.0.0 — consistent address labels
+
+`signer_address` is now `0x`-prefixed lowercase everywhere. Previously the
+`heimdall_*` family emitted bare uppercase and the `rpc_*` family emitted
+0x-prefixed lowercase, so the same validator appeared under two spellings and
+cross-metric joins silently missed.
+
+> **Breaking for consumers.** Any Grafana rule grouping by `signer_address` has a
+> new deduplication key, so alerts open under the old spelling will not be
+> matched by their resolve.
+
+---
+
+## What it does now
+
+`panoptichain_heimdall_missed_block_proposal` **keeps its name and its
+per-validator shape**; only how it is computed changed. One metric is added
+alongside it:
+
+| metric | what it is |
+|---|---|
+| `panoptichain_heimdall_missed_block_proposal` | Unchanged name. Per validator, now the validators actually selected for a failed round. |
+| `panoptichain_heimdall_failed_proposal_round` | New. Per network, the consensus round summed per block. Read straight from the commit, so it does not depend on predicting the proposer at all — use this one when attribution is in doubt. |
+
+A missed block proposal **is** a failed round: a proposer was selected and did
+not propose, so consensus moved on. The round is in the commit
+(`/commit?height=H` → `signed_header.commit.round`), which panoptichain already
+fetched for `getMissedVotes`. Round 0 means nothing was missed, which is the
+overwhelming majority, so the validator set is only fetched when round > 0 —
+in normal operation this costs one extra commit fetch per block.
+
+Attribution replays `IncrementProposerPriority` faithfully: rescale the window
+to `2 * totalVotingPower`, shift by the average, then per round add each
+validator's voting power, take the highest priority (ties on the lower
+address), and subtract the total from the winner. `cometBFTProposers` in
+`provider/heimdall.go`. The winners of rounds `0..round-1` are the validators
+that missed; the winner of round `round` is the one that actually proposed.
+
+### Measured on Amoy, 291 blocks
+
+| metric | total | signers | per block |
+|---|---|---|---|
+| `missed_block_proposal`, old implementation | 129 | 21 | **0.44** |
+| `missed_block_proposal`, new implementation | 4 | 3 | **0.013** |
+| `failed_proposal_round` (new metric) | 4 | — | **0.013** |
+
+The attributed count matches the exact round count exactly (4 = 4) with zero
+replay failures, so the attribution is sound. The old metric reported **129
+misses where 4 happened** — and this is Amoy *after* it recovered. During the
+incident it read ~10.4 per block against a true rate near zero.
+
+### What this would have done during the incident
+
+`failed_proposal_round` never depends on the priority ordering, so the entire
+failure mode above simply does not apply to it. Rounds during the incident were
+1 non-zero in 12 blocks; the metric would have read ~0.08/block and the alert
+would never have fired. Which is correct — the chain was healthy throughout.
+
+## Still open
+
+The header/priority discrepancy found while verifying this is **not explained**.
+At height 46559364 the validator whose priority actually dropped by exactly
+`totalVotingPower` was `4AD84F70…` — the correct argmax — but the block header
+names `6DC2DD54…`. Across 8 samples the prediction matched `proposer(h)` 4
+times, `proposer(h+1)` once, and neither 3 times, with every failure inside the
+incident window.
+
+This does not affect `failed_proposal_round`, which reads the round directly.
+It could affect `missed_block_proposal`'s attribution during a similar event. Worth
+understanding before relying on per-validator attribution for anything that
+pages.
+
+## Reproducing it
+
+The over-count reproduces in a fresh local process against the public
+endpoints — it is deterministic, not production state.
+
+```yaml
+# config.yml
+http: { address: 127.0.0.1, port: 9599, pprof_port: 6599, path: /metrics }
+logs: { pretty: false, verbosity: info }
+namespace: panoptichain
+networks: [ { name: Polygon Amoy } ]
+providers:
+  heimdall:
+    - heimdall_url: https://heimdall-api-amoy.polygon.technology
+      interval: 5s
+      label: polygon.technology
+      name: Polygon Amoy
+      tendermint_url: https://tendermint-api-amoy.polygon.technology
+```
+
+```sh
+go build -o pano ./cmd && ./pano config.yml
+# after ~5 min:
+curl -s localhost:9599/metrics \
+  | sed -n 's/^panoptichain_heimdall_missed_block_proposal{.*signer_address="\([^"]*\)"} \(.*\)$/\1 \2/p'
+```
+
+Divide the total by `panoptichain_heimdall_block_interval_count` to get misses
+per block. Healthy mainnet is ~1.5; Amoy during the incident was ~10.4.
+
+To check the algorithm directly at a given height, without running anything —
+this is what settled the investigation:
+
+```sh
+H=<heimdall height>
+B=https://tendermint-api-amoy.polygon.technology
+curl -s "$B/block?height=$H" | jq -r .result.block.header.proposer_address
+curl -s "$B/validators?height=$((H-1))" \
+  | jq -r '.result.validators | sort_by(-(.proposer_priority|tonumber)) | .[].address'
+```
+
+The proposer's position in that list is what the metric counts. Near the top is
+healthy; double digits means the ordering has stopped predicting the proposer.

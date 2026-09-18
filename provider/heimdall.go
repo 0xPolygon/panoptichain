@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -665,83 +665,133 @@ func (h *HeimdallProvider) refreshMissedCheckpointProposal(ctx context.Context) 
 	return nil
 }
 
+func cometBFTProposers(validators []*observer.HeimdallValidator, rounds int) ([]string, error) {
+	if len(validators) == 0 {
+		return nil, fmt.Errorf("empty validator set")
+	}
+
+	type val struct {
+		address  string
+		priority int64
+		power    int64
+	}
+
+	vals := make([]val, 0, len(validators))
+	var total int64
+	for _, v := range validators {
+		p, err := strconv.ParseInt(v.ProposerPriority, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("proposer_priority %q for %s: %w", v.ProposerPriority, v.Address, err)
+		}
+		w, err := strconv.ParseInt(v.VotingPower, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("voting_power %q for %s: %w", v.VotingPower, v.Address, err)
+		}
+		vals = append(vals, val{address: v.Address, priority: p, power: w})
+		total += w
+	}
+
+	// RescalePriorities(PriorityWindowSizeFactor * totalVotingPower). Integer
+	// division truncating toward zero, matching Go's int64 `/`.
+	if diffMax := 2 * total; diffMax > 0 {
+		min, max := vals[0].priority, vals[0].priority
+		for _, v := range vals {
+			if v.priority < min {
+				min = v.priority
+			}
+			if v.priority > max {
+				max = v.priority
+			}
+		}
+		if diff := max - min; diff > diffMax {
+			ratio := (diff + diffMax - 1) / diffMax
+			for i := range vals {
+				vals[i].priority /= ratio
+			}
+		}
+	}
+
+	// shiftByAvgProposerPriority. CometBFT computes the average with big.Int
+	// Div, which floors; Go's int64 `/` truncates toward zero, so they differ
+	// for a negative sum. Use big.Int to match exactly.
+	sum := big.NewInt(0)
+	for _, v := range vals {
+		sum.Add(sum, big.NewInt(v.priority))
+	}
+	avg := new(big.Int).Div(sum, big.NewInt(int64(len(vals)))).Int64()
+	for i := range vals {
+		vals[i].priority -= avg
+	}
+
+	winners := make([]string, 0, rounds+1)
+	for r := 0; r <= rounds; r++ {
+		best := -1
+		for i := range vals {
+			vals[i].priority += vals[i].power
+		}
+		for i := range vals {
+			switch {
+			case best < 0 || vals[i].priority > vals[best].priority:
+				best = i
+			case vals[i].priority == vals[best].priority && vals[i].address < vals[best].address:
+				// CompareProposerPriority breaks ties on the lower address.
+				best = i
+			}
+		}
+		vals[best].priority -= total
+		winners = append(winners, vals[best].address)
+	}
+
+	return winners, nil
+}
+
+// refreshMissedBlockProposal records, per block, the consensus round it committed
+// in and which validators were selected in the rounds before that and failed
+// to propose.
+//
+// A block that commits in round 0 missed nothing, which is the overwhelming
+// majority, so the validator set is only fetched when round > 0. In normal
+// operation this costs one extra commit fetch per block and nothing else.
 func (h *HeimdallProvider) refreshMissedBlockProposal(ctx context.Context) error {
-	missedBlockProposal := make(observer.HeimdallMissedBlockProposal)
+	rounds := make(observer.HeimdallMissedBlockProposal)
+
 	for i := h.prevBlockNumber + 1; i <= h.blockNumber && h.prevBlockNumber != 0; i++ {
-		if h.scanDeadlineReached(ctx, i, h.blockNumber, "missed_block_proposal") {
+		if h.scanDeadlineReached(ctx, i, h.blockNumber, "proposal_round") {
 			break
 		}
 
-		block := h.bufferedBlock(ctx, i)
-		if block == nil {
-			h.logger.Debug().
-				Uint64("height", i).
-				Msg("Failed to get current block")
+		commit, err := h.getCommit(ctx, i)
+		if err != nil {
+			h.logger.Debug().Err(err).Uint64("height", i).Msg("Failed to get commit")
 			continue
 		}
-		proposer := block.ProposerAddress()
 
-		// PAGINATED, deliberately. getValidators sends /validators with no
-		// page parameters and never reads Result.Total, so CometBFT caps the
-		// response at its default page size of 30. Mainnet reports
-		// total=105 and returns 30, which silently limited this accounting to
-		// the first page -- and is why the metric only ever carried 30 signer
-		// series there. Amoy, at 25, fitted inside the page and looked fine.
+		round := commit.Result.SignedHeader.Commit.Round
+		if round <= 0 {
+			rounds[i] = observer.HeimdallProposalRound{Round: 0}
+			continue
+		}
+
 		validators, err := h.getValidatorsAtHeight(ctx, i-1)
 		if err != nil {
-			h.logger.Debug().
-				Err(err).
-				Uint64("height", i).
-				Msg("Failed to get validators")
+			h.logger.Debug().Err(err).Uint64("height", i).Msg("Failed to get validators for proposal round")
+			// The round itself is still known and still a real miss, so record
+			// it unattributed rather than dropping it.
+			rounds[i] = observer.HeimdallProposalRound{Round: round}
 			continue
 		}
 
-		// Sort validators by proposer priority, descending.
-		//
-		// PARSE ERRORS ARE NOT IGNORED. This used to be `pi, _ :=
-		// strconv.Atoi(...)`, which turns any unparseable priority into 0. If
-		// the upstream ever returns an empty or non-numeric proposer_priority
-		// -- and it already returns "" for numeric fields elsewhere, see the
-		// buffered-checkpoint unmarshal failures -- every validator would
-		// compare equal, sort.Slice is not stable, and the proposer would land
-		// at an arbitrary index. That silently turns this metric into noise
-		// with no error anywhere. Skip the block instead.
-		priorities := make(map[string]int64, len(validators))
-		malformed := false
-		for _, validator := range validators {
-			p, err := strconv.ParseInt(validator.ProposerPriority, 10, 64)
-			if err != nil {
-				h.logger.Warn().
-					Err(err).
-					Uint64("height", i).
-					Str("address", validator.Address).
-					Str("proposer_priority", validator.ProposerPriority).
-					Msg("Failed to parse validator proposer priority")
-				malformed = true
-				break
-			}
-			priorities[validator.Address] = p
-		}
-		if malformed {
+		winners, err := cometBFTProposers(validators, round)
+		if err != nil {
+			h.logger.Warn().Err(err).Uint64("height", i).Msg("Failed to replay proposer selection")
+			rounds[i] = observer.HeimdallProposalRound{Round: round}
 			continue
 		}
 
-		sort.Slice(validators, func(a, b int) bool {
-			return priorities[validators[a].Address] > priorities[validators[b].Address]
-		})
-
-		var proposers []string
-		for _, validator := range validators {
-			if validator.Address == proposer {
-				break
-			}
-			proposers = append(proposers, validator.Address)
-		}
-
-		missedBlockProposal[i] = proposers
+		rounds[i] = observer.HeimdallProposalRound{Round: round, Missed: winners[:round]}
 	}
 
-	h.missedBlockProposal = missedBlockProposal
+	h.missedBlockProposal = rounds
 
 	return nil
 }

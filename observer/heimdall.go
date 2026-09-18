@@ -421,28 +421,56 @@ func (o *MilestoneLatestObserver) GetCollectors() []prometheus.Collector {
 	}
 }
 
-// HeimdallMissedBlockProposal maps the block number to the list of proposers
-// that missed proposing the block.
-type HeimdallMissedBlockProposal map[uint64][]string
+// HeimdallProposalRound is what a missed block proposal actually is: the
+// consensus round a block committed in, plus the validators CometBFT selected
+// in the rounds before it that did not propose. Round 0 means nothing missed.
+//
+// This REPLACES the previous implementation, which inferred misses from
+// proposer-priority ordering. That inference approximated CometBFT's selection
+// and was wrong by ~30x even on a healthy chain -- see
+// missed-block-proposals.md. The metric name is deliberately unchanged so
+// existing dashboards and alerts keep working; only the values become correct.
+type HeimdallProposalRound struct {
+	Round  int
+	Missed []string
+}
+
+type HeimdallMissedBlockProposal map[uint64]HeimdallProposalRound
 
 type HeimdallMissedBlockProposalObserver struct {
-	missedBlockProposal *prometheus.CounterVec
+	// Failed rounds per network. Derived straight from the commit, so it does
+	// not depend on predicting the proposer and is correct regardless of the
+	// priority-ordering question.
+	failedRounds *prometheus.CounterVec
+
+	// The same misses attributed to a validator, by replaying CometBFT's
+	// selection. Attribution is only as good as that replay, which is why the
+	// unattributed counter above exists next to it.
+	missedProposal *prometheus.CounterVec
 }
 
 func (o *HeimdallMissedBlockProposalObserver) Notify(ctx context.Context, m Message) {
 	logger := NewLogger(o, m)
 
-	missedBlockProposal := m.Data().(HeimdallMissedBlockProposal)
-	for blockNumber, proposers := range missedBlockProposal {
-		if len(proposers) > 0 {
-			logger.Debug().
-				Uint64("block_number", blockNumber).
-				Strs("proposers", proposers).
-				Msg("Updating Heimdall missed block proposal")
+	rounds := m.Data().(HeimdallMissedBlockProposal)
+	for blockNumber, r := range rounds {
+		// Added unconditionally, including Add(0). A counter that only comes
+		// into existence on the first failed round is absent rather than zero
+		// on a healthy chain, which cannot be rate()'d or alerted on.
+		o.failedRounds.WithLabelValues(m.Network().GetName(), m.Provider()).Add(float64(r.Round))
+
+		if r.Round == 0 {
+			continue
 		}
 
-		for _, proposer := range proposers {
-			o.missedBlockProposal.WithLabelValues(m.Network().GetName(), m.Provider(), CanonicalAddress(proposer)).Inc()
+		logger.Debug().
+			Uint64("block_number", blockNumber).
+			Int("round", r.Round).
+			Strs("missed", r.Missed).
+			Msg("Block committed in a non-zero round")
+
+		for _, proposer := range r.Missed {
+			o.missedProposal.WithLabelValues(m.Network().GetName(), m.Provider(), CanonicalAddress(proposer)).Inc()
 		}
 	}
 }
@@ -450,16 +478,22 @@ func (o *HeimdallMissedBlockProposalObserver) Notify(ctx context.Context, m Mess
 func (o *HeimdallMissedBlockProposalObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.HeimdallMissedBlockProposal, o)
 
-	o.missedBlockProposal = metrics.NewCounter(
+	o.failedRounds = metrics.NewCounter(
+		metrics.Heimdall,
+		"failed_proposal_round",
+		"Consensus rounds that failed to produce a block, summed per block",
+	)
+
+	o.missedProposal = metrics.NewCounter(
 		metrics.Heimdall,
 		"missed_block_proposal",
-		"Missed block proposals",
+		"Validators selected as proposer for a round that did not propose",
 		"signer_address",
 	)
 }
 
 func (o *HeimdallMissedBlockProposalObserver) GetCollectors() []prometheus.Collector {
-	return []prometheus.Collector{o.missedBlockProposal}
+	return []prometheus.Collector{o.failedRounds, o.missedProposal}
 }
 
 type HeimdallCheckpoint struct {
@@ -578,7 +612,11 @@ type HeimdallCommitSignature struct {
 }
 
 type HeimdallCommitData struct {
-	Height     string                    `json:"height"`
+	Height string `json:"height"`
+	// Round is the consensus round the block committed in. Non-zero means one
+	// or more selected proposers failed to propose and consensus moved on --
+	// which is the literal definition of a missed block proposal.
+	Round      int                       `json:"round"`
 	Signatures []HeimdallCommitSignature `json:"signatures"`
 }
 
