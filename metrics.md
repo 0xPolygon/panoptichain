@@ -594,6 +594,10 @@ Variable Labels:
 ### panoptichain_heimdall_missed_block_proposal
 Missed block proposals
 
+> See [missed-block-proposals.md](missed-block-proposals.md) — this metric
+> infers misses from proposer-priority ordering and has a known failure mode
+> when a validator joins with an outlier priority.
+
 Metric Type: CounterVec
 
 Variable Labels:
