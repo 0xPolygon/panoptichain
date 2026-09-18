@@ -158,7 +158,7 @@ var observersMap = map[string]Observer{
 	"heimdall_block":                      new(HeimdallBlockObserver),
 	"heimdall_block_interval":             new(HeimdallBlockIntervalObserver),
 	"heimdall_checkpoint":                 new(HeimdallCheckpointObserver),
-	"heimdall_proposal_round":             new(HeimdallProposalRoundObserver),
+	"heimdall_missed_block_proposal":      new(HeimdallMissedBlockProposalObserver),
 	"heimdall_missed_checkpoint_proposal": new(HeimdallMissedCheckpointProposalObserver),
 	"heimdall_missed_vote":                new(HeimdallMissedVoteObserver),
 	"heimdall_signature_count":            new(HeimdallSignatureCountObserver),

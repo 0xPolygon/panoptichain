@@ -41,10 +41,10 @@ type HeimdallProvider struct {
 	interval      time.Duration
 	logger        zerolog.Logger
 
-	blockNumber     uint64
-	prevBlockNumber uint64
-	blockBuffer     *blockbuffer.BlockBuffer
-	proposalRounds  observer.HeimdallProposalRounds
+	blockNumber         uint64
+	prevBlockNumber     uint64
+	blockBuffer         *blockbuffer.BlockBuffer
+	missedBlockProposal observer.HeimdallMissedBlockProposal
 
 	checkpoint                *observer.HeimdallCheckpoint
 	checkpointProposers       *orderedmap.OrderedMap[string, struct{}]
@@ -125,7 +125,7 @@ func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	h.refreshCheckpoint(ctx)
 	h.refreshBufferedCheckpoint(ctx)
 	h.refreshMissedCheckpointProposal(ctx)
-	h.refreshProposalRounds(ctx)
+	h.refreshMissedBlockProposal(ctx)
 	h.refreshSpan(ctx)
 	h.refreshActiveSpan(ctx)
 	h.refreshMissedVotes(ctx)
@@ -179,9 +179,9 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.HeimdallBlockInterval, interval)
 	}
 
-	if h.proposalRounds != nil {
-		m := observer.NewMessage(h.network, h.label, h.proposalRounds)
-		h.bus.Publish(ctx, topics.HeimdallProposalRound, m)
+	if h.missedBlockProposal != nil {
+		m := observer.NewMessage(h.network, h.label, h.missedBlockProposal)
+		h.bus.Publish(ctx, topics.HeimdallMissedBlockProposal, m)
 	}
 
 	if h.checkpoint != nil {
@@ -745,15 +745,15 @@ func cometBFTProposers(validators []*observer.HeimdallValidator, rounds int) ([]
 	return winners, nil
 }
 
-// refreshProposalRounds records, per block, the consensus round it committed
+// refreshMissedBlockProposal records, per block, the consensus round it committed
 // in and which validators were selected in the rounds before that and failed
 // to propose.
 //
 // A block that commits in round 0 missed nothing, which is the overwhelming
 // majority, so the validator set is only fetched when round > 0. In normal
 // operation this costs one extra commit fetch per block and nothing else.
-func (h *HeimdallProvider) refreshProposalRounds(ctx context.Context) error {
-	rounds := make(observer.HeimdallProposalRounds)
+func (h *HeimdallProvider) refreshMissedBlockProposal(ctx context.Context) error {
+	rounds := make(observer.HeimdallMissedBlockProposal)
 
 	for i := h.prevBlockNumber + 1; i <= h.blockNumber && h.prevBlockNumber != 0; i++ {
 		if h.scanDeadlineReached(ctx, i, h.blockNumber, "proposal_round") {
@@ -791,7 +791,7 @@ func (h *HeimdallProvider) refreshProposalRounds(ctx context.Context) error {
 		rounds[i] = observer.HeimdallProposalRound{Round: round, Missed: winners[:round]}
 	}
 
-	h.proposalRounds = rounds
+	h.missedBlockProposal = rounds
 
 	return nil
 }

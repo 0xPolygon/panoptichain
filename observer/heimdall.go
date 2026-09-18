@@ -425,19 +425,19 @@ func (o *MilestoneLatestObserver) GetCollectors() []prometheus.Collector {
 // consensus round a block committed in, plus the validators CometBFT selected
 // in the rounds before it that did not propose. Round 0 means nothing missed.
 //
-// This runs ALONGSIDE HeimdallMissedBlockProposal, which infers misses from
-// proposer-priority ordering instead. That inference is an approximation of
-// CometBFT's selection and is demonstrably wrong -- see
-// missed-block-proposals.md. Both are emitted so they can be compared in prod
-// before anything is removed.
+// This REPLACES the previous implementation, which inferred misses from
+// proposer-priority ordering. That inference approximated CometBFT's selection
+// and was wrong by ~30x even on a healthy chain -- see
+// missed-block-proposals.md. The metric name is deliberately unchanged so
+// existing dashboards and alerts keep working; only the values become correct.
 type HeimdallProposalRound struct {
 	Round  int
 	Missed []string
 }
 
-type HeimdallProposalRounds map[uint64]HeimdallProposalRound
+type HeimdallMissedBlockProposal map[uint64]HeimdallProposalRound
 
-type HeimdallProposalRoundObserver struct {
+type HeimdallMissedBlockProposalObserver struct {
 	// Failed rounds per network. Derived straight from the commit, so it does
 	// not depend on predicting the proposer and is correct regardless of the
 	// priority-ordering question.
@@ -449,10 +449,10 @@ type HeimdallProposalRoundObserver struct {
 	missedProposal *prometheus.CounterVec
 }
 
-func (o *HeimdallProposalRoundObserver) Notify(ctx context.Context, m Message) {
+func (o *HeimdallMissedBlockProposalObserver) Notify(ctx context.Context, m Message) {
 	logger := NewLogger(o, m)
 
-	rounds := m.Data().(HeimdallProposalRounds)
+	rounds := m.Data().(HeimdallMissedBlockProposal)
 	for blockNumber, r := range rounds {
 		// Added unconditionally, including Add(0). A counter that only comes
 		// into existence on the first failed round is absent rather than zero
@@ -475,8 +475,8 @@ func (o *HeimdallProposalRoundObserver) Notify(ctx context.Context, m Message) {
 	}
 }
 
-func (o *HeimdallProposalRoundObserver) Register(eb *EventBus) {
-	eb.Subscribe(topics.HeimdallProposalRound, o)
+func (o *HeimdallMissedBlockProposalObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.HeimdallMissedBlockProposal, o)
 
 	o.failedRounds = metrics.NewCounter(
 		metrics.Heimdall,
@@ -486,13 +486,13 @@ func (o *HeimdallProposalRoundObserver) Register(eb *EventBus) {
 
 	o.missedProposal = metrics.NewCounter(
 		metrics.Heimdall,
-		"missed_proposal",
+		"missed_block_proposal",
 		"Validators selected as proposer for a round that did not propose",
 		"signer_address",
 	)
 }
 
-func (o *HeimdallProposalRoundObserver) GetCollectors() []prometheus.Collector {
+func (o *HeimdallMissedBlockProposalObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.failedRounds, o.missedProposal}
 }
 

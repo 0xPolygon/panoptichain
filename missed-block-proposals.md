@@ -1,9 +1,10 @@
-# Missed block proposals: why the old metric was wrong, and what replaced it
+# Missed block proposals: why the old implementation was wrong
 
-Notes from an 11-hour investigation on 2026-09-17. `missed_block_proposal`
-inferred misses from proposer-priority ordering and was wrong by ~30x even on a
-healthy chain. It has been replaced by `failed_proposal_round` and
-`missed_proposal`, which read the consensus round directly.
+Notes from an 11-hour investigation on 2026-09-17.
+`panoptichain_heimdall_missed_block_proposal` used to infer misses from
+proposer-priority ordering and was wrong by ~30x even on a healthy chain. It
+now reads the consensus round directly. **Same metric name — only the values
+changed**, so existing dashboards and alerts keep working.
 
 ---
 
@@ -147,14 +148,16 @@ cross-metric joins silently missed.
 
 ---
 
-## What replaced it
+## What it does now
 
-`missed_block_proposal` is **removed**. Two metrics take its place:
+`panoptichain_heimdall_missed_block_proposal` **keeps its name and its
+per-validator shape**; only how it is computed changed. One metric is added
+alongside it:
 
 | metric | what it is |
 |---|---|
-| `panoptichain_heimdall_failed_proposal_round` | Per network. The consensus round summed per block. Read straight from the commit, so it does not depend on predicting the proposer at all. |
-| `panoptichain_heimdall_missed_proposal` | Per validator. The same misses attributed by replaying CometBFT's selection. |
+| `panoptichain_heimdall_missed_block_proposal` | Unchanged name. Per validator, now the validators actually selected for a failed round. |
+| `panoptichain_heimdall_failed_proposal_round` | New. Per network, the consensus round summed per block. Read straight from the commit, so it does not depend on predicting the proposer at all — use this one when attribution is in doubt. |
 
 A missed block proposal **is** a failed round: a proposer was selected and did
 not propose, so consensus moved on. The round is in the commit
@@ -174,9 +177,9 @@ that missed; the winner of round `round` is the one that actually proposed.
 
 | metric | total | signers | per block |
 |---|---|---|---|
-| `missed_block_proposal` (old) | 129 | 21 | **0.44** |
-| `missed_proposal` (new) | 4 | 3 | **0.013** |
-| `failed_proposal_round` (new) | 4 | — | **0.013** |
+| `missed_block_proposal`, old implementation | 129 | 21 | **0.44** |
+| `missed_block_proposal`, new implementation | 4 | 3 | **0.013** |
+| `failed_proposal_round` (new metric) | 4 | — | **0.013** |
 
 The attributed count matches the exact round count exactly (4 = 4) with zero
 replay failures, so the attribution is sound. The old metric reported **129
@@ -200,7 +203,7 @@ times, `proposer(h+1)` once, and neither 3 times, with every failure inside the
 incident window.
 
 This does not affect `failed_proposal_round`, which reads the round directly.
-It could affect `missed_proposal`'s attribution during a similar event. Worth
+It could affect `missed_block_proposal`'s attribution during a similar event. Worth
 understanding before relying on per-validator attribution for anything that
 pages.
 
