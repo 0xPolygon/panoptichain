@@ -588,19 +588,6 @@ Variable Labels:
 - network
 - provider
 
-## HeimdallMissedBlockProposalObserver
-
-
-### panoptichain_heimdall_missed_block_proposal
-Missed block proposals
-
-Metric Type: CounterVec
-
-Variable Labels:
-- network
-- provider
-- signer_address
-
 ## HeimdallMissedCheckpointProposalObserver
 
 
@@ -628,6 +615,28 @@ Variable Labels:
 - validator_id
 - signer_address
 - flag
+
+## HeimdallProposalRoundObserver
+
+
+### panoptichain_heimdall_failed_proposal_round
+Consensus rounds that failed to produce a block, summed per block
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_missed_proposal
+Validators selected as proposer for a round that did not propose
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- signer_address
 
 ## HeimdallSignatureCountObserver
 
