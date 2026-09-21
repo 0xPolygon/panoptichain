@@ -4,8 +4,10 @@ package observer
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -232,18 +234,64 @@ func (o *HeimdallSignatureCountObserver) GetCollectors() []prometheus.Collector 
 	return []prometheus.Collector{o.signature}
 }
 
+// ChainID is a uint64 that tolerates the empty string.
+//
+// Heimdall's `bor_chain_id` is a STRING on the wire, not a number, so its
+// zero value serialises as "" rather than "0". An empty buffered checkpoint
+// looks like this, and it is the normal state for a chain between
+// checkpoints:
+//
+//	{"checkpoint":{"id":"0","bor_chain_id":"","timestamp":"0", ...}}
+//
+// With a plain `uint64` and a `,string` tag, encoding/json rejects that whole
+// response:
+//
+//	json: invalid use of ,string struct tag, trying to unmarshal "" into uint64
+//
+// which discarded the entire checkpoint, not just this one field. On Amoy that
+// fired roughly every 12 seconds, continuously.
+//
+// The sibling numeric fields do not need this: they are genuine numbers and
+// serialise as "0" when unset. Only bor_chain_id is a string.
+type ChainID uint64
+
+func (c *ChainID) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+
+	// null, or the "" the API sends when no checkpoint is buffered.
+	if s == "null" || s == `""` || s == "" {
+		*c = 0
+		return nil
+	}
+
+	s = strings.Trim(s, `"`)
+	if s == "" {
+		*c = 0
+		return nil
+	}
+
+	v, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("bor_chain_id %q: %w", s, err)
+	}
+
+	*c = ChainID(v)
+
+	return nil
+}
+
 type HeimdallMilestoneCount struct {
 	Count uint64 `json:"count,string"`
 }
 
 type HeimdallMilestone struct {
-	Proposer    string `json:"proposer"`
-	StartBlock  uint64 `json:"start_block,string"`
-	EndBlock    uint64 `json:"end_block,string"`
-	Hash        string `json:"hash"`
-	BorChainID  uint64 `json:"bor_chain_id,string"`
-	MilestoneID string `json:"milestone_id"`
-	Timestamp   int64  `json:"timestamp,string"`
+	Proposer    string  `json:"proposer"`
+	StartBlock  uint64  `json:"start_block,string"`
+	EndBlock    uint64  `json:"end_block,string"`
+	Hash        string  `json:"hash"`
+	BorChainID  ChainID `json:"bor_chain_id"`
+	MilestoneID string  `json:"milestone_id"`
+	Timestamp   int64   `json:"timestamp,string"`
 	Count       int64
 
 	// Votes contains the milestone votes from the block where this milestone was finalized.
@@ -497,13 +545,13 @@ func (o *HeimdallMissedBlockProposalObserver) GetCollectors() []prometheus.Colle
 }
 
 type HeimdallCheckpoint struct {
-	ID         uint64 `json:"id,string"`
-	StartBlock uint64 `json:"start_block,string"`
-	EndBlock   uint64 `json:"end_block,string"`
-	RootHash   string `json:"root_hash"`
-	BorChainID uint64 `json:"bor_chain_id,string"`
-	Timestamp  uint64 `json:"timestamp,string"`
-	Proposer   string `json:"proposer"`
+	ID         uint64  `json:"id,string"`
+	StartBlock uint64  `json:"start_block,string"`
+	EndBlock   uint64  `json:"end_block,string"`
+	RootHash   string  `json:"root_hash"`
+	BorChainID ChainID `json:"bor_chain_id"`
+	Timestamp  uint64  `json:"timestamp,string"`
+	Proposer   string  `json:"proposer"`
 }
 
 type HeimdallCheckpointV2 struct {
