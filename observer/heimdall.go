@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -989,4 +990,159 @@ func (o *HeimdallBufferedCheckpointObserver) Notify(ctx context.Context, m Messa
 
 func (o *HeimdallBufferedCheckpointObserver) GetCollectors() []prometheus.Collector {
 	return []prometheus.Collector{o.exists, o.id, o.startBlock, o.endBlock, o.timeSince}
+}
+
+// HeimdallFeeBalance is one validator's Heimdall fee account balance.
+//
+// Validators fund this account on Ethereum (StakeManager.topUpForFee) and
+// Heimdall debits a flat fee per transaction from it -- not gas-metered, see
+// auth params tx_fees, 0.001 POL on mainnet -- for every checkpoint, milestone,
+// span and clerk ack the signer submits. So the balance is transactions
+// remaining, and at zero the validator cannot participate.
+type HeimdallFeeBalance struct {
+	ValidatorID   uint64
+	SignerAddress string
+	// Denom becomes a metric label rather than being summed away, so a second
+	// denomination would show up as its own series instead of silently
+	// inflating the POL balance.
+	Denom string
+	// Amount is in the denomination's base unit (wei for pol), matching the
+	// rpc_ balance gauges.
+	Amount *big.Int
+}
+
+// HeimdallFeeBalances is one sweep's full result, carrying every validator it
+// resolved so the observer can retire those that left the set.
+type HeimdallFeeBalances struct {
+	Balances []HeimdallFeeBalance
+	// Failed is how many validators the sweep could not resolve -- query error
+	// or deadline. A partial sweep must not retire the series it never reached,
+	// so this gates the reconciliation.
+	Failed int
+}
+
+// HeimdallValidatorFeeBalanceObserver tracks each validator's Heimdall fee
+// account balance, which is what the staking portal shows as "Heimdall Fees".
+type HeimdallValidatorFeeBalanceObserver struct {
+	balance *prometheus.GaugeVec
+	swept   *prometheus.GaugeVec
+	failed  *prometheus.GaugeVec
+
+	// mu guards seen: one observer serves every configured endpoint and the
+	// event bus notifies in its own goroutine, so mainnet and Amoy can land
+	// here at once.
+	mu sync.Mutex
+	// seen holds the label values currently set, keyed by network and provider,
+	// so a departed validator's series is deleted rather than left frozen at
+	// its last balance -- a stale low balance would alert forever.
+	seen map[string]map[feeBalanceKey]struct{}
+}
+
+// feeBalanceKey identifies one fee balance series within a network/provider.
+type feeBalanceKey struct {
+	validatorID   string
+	signerAddress string
+	denom         string
+}
+
+func (o *HeimdallValidatorFeeBalanceObserver) Register(eb *EventBus) {
+	eb.Subscribe(topics.ValidatorFeeBalance, o)
+
+	o.balance = metrics.NewGauge(
+		metrics.Heimdall,
+		"validator_fee_balance",
+		"Validator Heimdall fee account balance, in the denomination's base unit (wei for pol)",
+		"validator_id", "signer_address", "denom",
+	)
+	o.swept = metrics.NewGauge(
+		metrics.Heimdall,
+		"validator_fee_balance_swept",
+		"Number of validators whose Heimdall fee balance was resolved in the last sweep",
+	)
+	o.failed = metrics.NewGauge(
+		metrics.Heimdall,
+		"validator_fee_balance_failed",
+		"Number of validators whose Heimdall fee balance could not be resolved in the last sweep",
+	)
+
+	o.seen = make(map[string]map[feeBalanceKey]struct{})
+}
+
+func (o *HeimdallValidatorFeeBalanceObserver) Notify(ctx context.Context, m Message) {
+	logger := NewLogger(o, m)
+
+	data, ok := m.Data().(*HeimdallFeeBalances)
+	if !ok || data == nil {
+		return
+	}
+
+	network := m.Network().GetName()
+	provider := m.Provider()
+	scope := network + "\x00" + provider
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.seen == nil {
+		o.seen = make(map[string]map[feeBalanceKey]struct{})
+	}
+	if o.seen[scope] == nil {
+		o.seen[scope] = make(map[feeBalanceKey]struct{})
+	}
+
+	o.swept.WithLabelValues(network, provider).Set(float64(len(data.Balances)))
+	o.failed.WithLabelValues(network, provider).Set(float64(data.Failed))
+
+	curr := make(map[feeBalanceKey]struct{}, len(data.Balances))
+	for _, b := range data.Balances {
+		if b.Amount == nil {
+			continue
+		}
+
+		key := feeBalanceKey{
+			validatorID:   strconv.FormatUint(b.ValidatorID, 10),
+			signerAddress: CanonicalAddress(b.SignerAddress),
+			denom:         b.Denom,
+		}
+		curr[key] = struct{}{}
+
+		amount, _ := new(big.Float).SetInt(b.Amount).Float64()
+		o.balance.
+			WithLabelValues(network, provider, key.validatorID, key.signerAddress, key.denom).
+			Set(amount)
+	}
+
+	// Only reconcile on a complete sweep: a partial one says nothing about the
+	// validators it never reached, and deleting their series would blank the
+	// gauge -- and any alert on it -- every time the API is slow.
+	if data.Failed > 0 {
+		logger.Debug().
+			Int("failed", data.Failed).
+			Msg("Partial Heimdall fee balance sweep; keeping existing series")
+
+		for key := range curr {
+			o.seen[scope][key] = struct{}{}
+		}
+
+		return
+	}
+
+	for key := range o.seen[scope] {
+		if _, ok := curr[key]; ok {
+			continue
+		}
+
+		logger.Info().
+			Str("validator_id", key.validatorID).
+			Str("signer_address", key.signerAddress).
+			Msg("Retiring Heimdall fee balance series for a validator no longer in the set")
+
+		o.balance.DeleteLabelValues(network, provider, key.validatorID, key.signerAddress, key.denom)
+	}
+
+	o.seen[scope] = curr
+}
+
+func (o *HeimdallValidatorFeeBalanceObserver) GetCollectors() []prometheus.Collector {
+	return []prometheus.Collector{o.balance, o.swept, o.failed}
 }

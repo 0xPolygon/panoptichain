@@ -29,6 +29,17 @@ const DefaultAccountBalanceBatchSize uint64 = 1000
 // staying well under a typical poll interval.
 const DefaultAccountBalanceTimeout = 10 * time.Second
 
+// DefaultFeeBalanceInterval is how often the Heimdall fee balance sweep runs
+// when an endpoint does not override it. Heimdall charges a flat fee per
+// transaction (0.001 POL on mainnet), so even a busy validator moves its
+// balance by a few POL per day -- five minutes is far finer than the signal.
+const DefaultFeeBalanceInterval = 5 * time.Minute
+
+// DefaultFeeBalanceTimeout bounds one sweep when an endpoint does not override
+// it. A healthy sweep of the ~100 PoS validators takes a couple of seconds, so
+// 30s leaves headroom without letting a degraded API starve RefreshState.
+const DefaultFeeBalanceTimeout = 30 * time.Second
+
 // Runner configures the execution interval of the job system.
 type Runner struct {
 	Interval *time.Duration `mapstructure:"interval" validate:"required"`
@@ -151,6 +162,17 @@ type HeimdallEndpoint struct {
 	HeimdallURL   string         `mapstructure:"heimdall_url" validate:"url,required"`
 	Label         string         `mapstructure:"label" validate:"required"`
 	Interval      *time.Duration `mapstructure:"interval"`
+
+	// FeeBalances enables the per-validator Heimdall fee balance sweep. Nil
+	// means enabled.
+	FeeBalances *bool `mapstructure:"fee_balances"`
+	// FeeBalanceInterval is how often the sweep runs, deliberately decoupled
+	// from Interval: it costs one request per validator, for balances that
+	// drain by a flat per-transaction fee.
+	FeeBalanceInterval *time.Duration `mapstructure:"fee_balance_interval" validate:"omitempty,gt=0"`
+	// FeeBalanceTimeout bounds one sweep, keeping a slow Heimdall API from
+	// spending the cycle deadline here and starving the steps that follow.
+	FeeBalanceTimeout *time.Duration `mapstructure:"fee_balance_timeout" validate:"omitempty,gt=0"`
 }
 
 // SensorNetwork configures the sensor network provider. This fetches data from

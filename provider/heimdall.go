@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -31,6 +32,10 @@ var ErrInvalidSpan = errors.New("invalid span: zero ID with zero blocks")
 // heimdallBlockBufferSize is how many blocks the block buffer retains. Once
 // full it evicts the lowest number, so fillRange clamps to this window.
 const heimdallBlockBufferSize = 128
+
+// feeDenom is the denomination an empty fee account is reported under, so an
+// exhausted one still produces a series alongside the funded ones.
+const feeDenom = "pol"
 
 type HeimdallProvider struct {
 	tendermintURL string
@@ -81,7 +86,26 @@ type HeimdallProvider struct {
 	refreshStateTime *time.Duration
 
 	bufferedCheckpoint *observer.HeimdallCheckpoint
+
+	// feeBalances holds the most recent sweep, published on the cycle it ran.
+	// nil between sweeps: the gauges are absolute and Prometheus retains them.
+	feeBalances *observer.HeimdallFeeBalances
+	// feeBalancesEnabled is false when the endpoint opted out.
+	feeBalancesEnabled bool
+	// feeBalanceInterval is how often the sweep runs, independent of the
+	// provider's polling interval.
+	feeBalanceInterval time.Duration
+	// feeBalanceTimeout bounds one sweep, so a degraded Heimdall API cannot
+	// spend the cycle deadline here and starve the refresh steps after it.
+	feeBalanceTimeout time.Duration
+	// nextFeeBalanceSweep is when the next sweep is due; zero sweeps at once.
+	nextFeeBalanceSweep time.Time
 }
+
+// feeBalanceConcurrency bounds the sweep's in-flight requests. It is one
+// request per validator against a single host, so this is what keeps a
+// ~100-validator set from arriving as a burst.
+const feeBalanceConcurrency = 8
 
 // NewHeimdallProvider builds a Heimdall provider, reusing the rpcProviders entry
 // matching this endpoint's network (if any) to read the current Bor block height.
@@ -91,6 +115,18 @@ func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.He
 	borProviders := rpcProvidersByNetwork(rpcProviders)[n.GetName()]
 	if len(borProviders) == 0 {
 		logger.Warn().Msg("No RPC provider configured for this network; active span metrics will not be emitted")
+	}
+
+	feeBalancesEnabled := cfg.FeeBalances == nil || *cfg.FeeBalances
+
+	feeBalanceInterval := config.DefaultFeeBalanceInterval
+	if cfg.FeeBalanceInterval != nil {
+		feeBalanceInterval = *cfg.FeeBalanceInterval
+	}
+
+	feeBalanceTimeout := config.DefaultFeeBalanceTimeout
+	if cfg.FeeBalanceTimeout != nil {
+		feeBalanceTimeout = *cfg.FeeBalanceTimeout
 	}
 
 	return &HeimdallProvider{
@@ -107,6 +143,10 @@ func NewHeimdallProvider(n network.Network, eb *observer.EventBus, cfg config.He
 		refreshStateTime:    new(time.Duration),
 		spans:               &observer.HeimdallSpans{},
 		validatorSets:       &observer.HeimdallValidatorSets{},
+
+		feeBalancesEnabled: feeBalancesEnabled,
+		feeBalanceInterval: feeBalanceInterval,
+		feeBalanceTimeout:  feeBalanceTimeout,
 	}
 }
 
@@ -129,6 +169,7 @@ func (h *HeimdallProvider) RefreshState(ctx context.Context) error {
 	h.refreshSpan(ctx)
 	h.refreshActiveSpan(ctx)
 	h.refreshMissedVotes(ctx)
+	h.refreshFeeBalances(ctx)
 
 	return nil
 }
@@ -232,6 +273,13 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 			m := observer.NewMessage(h.network, h.label, mv)
 			h.bus.Publish(ctx, topics.MissedVote, m)
 		}
+	}
+
+	// Only on the cycles the sweep ran; the gauges are absolute, so there is
+	// nothing to say in between.
+	if h.feeBalances != nil {
+		h.bus.Publish(ctx, topics.ValidatorFeeBalance, observer.NewMessage(h.network, h.label, h.feeBalances))
+		h.feeBalances = nil
 	}
 
 	h.bus.Publish(ctx, topics.RefreshStateTime, observer.NewMessage(h.network, h.label, h.refreshStateTime))
@@ -1361,4 +1409,152 @@ func (h *HeimdallProvider) votesMatchMilestone(mv *observer.HeimdallMilestoneVot
 	}
 
 	return false
+}
+
+// heimdallBankBalances is the Cosmos bank balances response -- the same
+// endpoint the staking portal reads for "Heimdall Fees".
+type heimdallBankBalances struct {
+	Balances []struct {
+		Denom  string `json:"denom"`
+		Amount string `json:"amount"`
+	} `json:"balances"`
+}
+
+// refreshFeeBalances sweeps every validator's Heimdall fee account balance.
+//
+// It keeps its own cadence rather than running every cycle: one request per
+// validator, for a balance that drains by a flat per-transaction fee and so
+// moves far too slowly to poll at the provider's interval. It also takes its
+// own deadline, so a slow Heimdall API cannot spend the whole cycle here.
+func (h *HeimdallProvider) refreshFeeBalances(ctx context.Context) {
+	if !h.feeBalancesEnabled {
+		return
+	}
+
+	now := time.Now()
+	if now.Before(h.nextFeeBalanceSweep) {
+		return
+	}
+
+	if h.validatorSets == nil || len(h.validatorSets.Curr) == 0 {
+		// refreshValidatorSet failed this cycle. Leave the cadence alone so the
+		// next cycle retries rather than waiting a full interval.
+		h.logger.Debug().Msg("No validator set; skipping Heimdall fee balance sweep")
+		return
+	}
+
+	// Scheduled from the start of this sweep, so a slow one does not push the
+	// cadence out.
+	h.nextFeeBalanceSweep = now.Add(h.feeBalanceInterval)
+
+	sweepCtx, cancel := context.WithTimeout(ctx, h.feeBalanceTimeout)
+	defer cancel()
+
+	validators := make([]api.Validator, 0, len(h.validatorSets.Curr))
+	for _, v := range h.validatorSets.Curr {
+		validators = append(validators, v)
+	}
+
+	type result struct {
+		balances []observer.HeimdallFeeBalance
+		err      error
+	}
+
+	results := make([]result, len(validators))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, feeBalanceConcurrency)
+
+	for i, v := range validators {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-sweepCtx.Done():
+				results[i] = result{err: sweepCtx.Err()}
+				return
+			}
+
+			balances, err := h.getFeeBalance(sweepCtx, v)
+			results[i] = result{balances: balances, err: err}
+		}()
+	}
+
+	wg.Wait()
+
+	out := &observer.HeimdallFeeBalances{
+		Balances: make([]observer.HeimdallFeeBalance, 0, len(validators)),
+	}
+
+	var firstErr error
+	for _, r := range results {
+		if r.err != nil {
+			out.Failed++
+			if firstErr == nil {
+				firstErr = r.err
+			}
+			continue
+		}
+		out.Balances = append(out.Balances, r.balances...)
+	}
+
+	if out.Failed > 0 {
+		h.logger.Warn().
+			Err(firstErr).
+			Int("failed", out.Failed).
+			Int("validators", len(validators)).
+			Dur("elapsed", time.Since(now)).
+			Msg("Heimdall fee balance sweep did not resolve every validator")
+	}
+
+	h.feeBalances = out
+}
+
+// getFeeBalance reads one validator's Heimdall fee account. An empty list
+// becomes an explicit zero rather than being dropped: an exhausted account is
+// the condition worth alerting on, so it must not go missing.
+func (h *HeimdallProvider) getFeeBalance(ctx context.Context, v api.Validator) ([]observer.HeimdallFeeBalance, error) {
+	path, err := url.JoinPath(h.heimdallURL, "cosmos", "bank", "v1beta1", "balances", v.Signer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to join balances path: %w", err)
+	}
+
+	var body heimdallBankBalances
+	if err := api.GetJSON(ctx, path, &body); err != nil {
+		return nil, fmt.Errorf("failed to get fee balance for validator %d: %w", v.ID, err)
+	}
+
+	if len(body.Balances) == 0 {
+		return []observer.HeimdallFeeBalance{{
+			ValidatorID:   v.ID,
+			SignerAddress: v.Signer,
+			Denom:         feeDenom,
+			Amount:        new(big.Int),
+		}}, nil
+	}
+
+	out := make([]observer.HeimdallFeeBalance, 0, len(body.Balances))
+	for _, b := range body.Balances {
+		amount, ok := new(big.Int).SetString(b.Amount, 10)
+		if !ok {
+			h.logger.Warn().
+				Uint64("validator_id", v.ID).
+				Str("denom", b.Denom).
+				Str("amount", b.Amount).
+				Msg("Failed to parse Heimdall fee balance amount")
+			continue
+		}
+
+		out = append(out, observer.HeimdallFeeBalance{
+			ValidatorID:   v.ID,
+			SignerAddress: v.Signer,
+			Denom:         b.Denom,
+			Amount:        amount,
+		})
+	}
+
+	return out, nil
 }

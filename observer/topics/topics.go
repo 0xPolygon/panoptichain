@@ -52,4 +52,5 @@ const (
 	ActiveSpan                                         // *observer.HeimdallSpan (span containing the current Bor block; nil when Bor height unavailable)
 	RequesterUsage                                     // *observer.UsageSummary (most recent complete hour; nil when the hour has no usage)
 	HeimdallMissedBlockProposal                        // observer.HeimdallMissedBlockProposal
+	ValidatorFeeBalance                                // observer.HeimdallFeeBalances (nil when the sweep did not run this cycle)
 )
