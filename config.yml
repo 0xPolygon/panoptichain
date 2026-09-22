@@ -430,6 +430,27 @@
     ## @param version - integer - optional - default: 1
     ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_VERSION - integer - optional - default: 1
     ## The Heimdall version.
+    ##
+    ## @param fee_balances - boolean - optional - default: true
+    ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_FEE_BALANCES - boolean - optional - default: true
+    ## Whether to sweep each validator's Heimdall fee account balance. This is
+    ## the balance the staking portal shows as "Heimdall Fees": validators fund
+    ## it on Ethereum and Heimdall debits a flat fee from it for every
+    ## transaction they send, so an exhausted account means the validator can
+    ## no longer submit checkpoints, milestones or spans.
+    ##
+    ## @param fee_balance_interval - string - optional - default: 5m
+    ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_FEE_BALANCE_INTERVAL - string - optional - default: 5m
+    ## How often the fee balance sweep runs. Deliberately decoupled from
+    ## `interval`: the sweep costs one request per validator, while the
+    ## balances drain by a flat per-transaction fee and so move far too slowly
+    ## to be worth polling every cycle.
+    ##
+    ## @param fee_balance_timeout - string - optional - default: 30s
+    ## @env PANOPTICHAIN_PROVIDERS_HEIMDALL_0_FEE_BALANCE_TIMEOUT - string - optional - default: 30s
+    ## Bounds how long the fee balance sweep may run, so a slow Heimdall API
+    ## cannot spend the cycle deadline here and starve the refresh steps that
+    ## follow it.
   #
   # heimdall:
   #   - name: "Polygon Mainnet"
@@ -438,6 +459,9 @@
   #     label: "polygon.technology"
   #     interval: 5s
   #     version: 1
+  #     fee_balances: true
+  #     fee_balance_interval: 5m
+  #     fee_balance_timeout: 30s
   #
   #   - name: "Polygon Amoy"
   #     tendermint_url: "https://tendermint-api-amoy.polygon.technology"

@@ -650,6 +650,39 @@ Variable Labels:
 - network
 - provider
 
+## HeimdallValidatorFeeBalanceObserver
+
+
+### panoptichain_heimdall_validator_fee_balance
+Validator Heimdall fee account balance, in the denomination's base unit (wei for pol)
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+- validator_id
+- signer_address
+- denom
+
+### panoptichain_heimdall_validator_fee_balance_swept
+Number of validators whose Heimdall fee balance was resolved in the last sweep
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
+### panoptichain_heimdall_validator_fee_balance_failed
+Number of validators whose Heimdall fee balance could not be resolved in the last sweep
+
+Metric Type: GaugeVec
+
+Variable Labels:
+- network
+- provider
+
 ## HeimdallValidatorSetChangeObserver
 
 

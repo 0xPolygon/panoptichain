@@ -29,6 +29,19 @@ const DefaultAccountBalanceBatchSize uint64 = 1000
 // staying well under a typical poll interval.
 const DefaultAccountBalanceTimeout = 10 * time.Second
 
+// DefaultFeeBalanceInterval is how often the Heimdall fee balance sweep runs
+// when an endpoint does not override it. Heimdall charges a flat fee per
+// transaction (0.001 POL on mainnet), so even the busiest validator moves its
+// balance by a few POL per day; five minutes is far finer than the signal.
+const DefaultFeeBalanceInterval = 5 * time.Minute
+
+// DefaultFeeBalanceTimeout bounds the Heimdall fee balance sweep per refresh
+// cycle when an endpoint does not override it. A healthy sweep of the ~100
+// PoS validators takes a couple of seconds at the configured concurrency, so
+// 30s leaves ample headroom without letting a degraded API starve the rest of
+// RefreshState.
+const DefaultFeeBalanceTimeout = 30 * time.Second
+
 // Runner configures the execution interval of the job system.
 type Runner struct {
 	Interval *time.Duration `mapstructure:"interval" validate:"required"`
@@ -151,6 +164,19 @@ type HeimdallEndpoint struct {
 	HeimdallURL   string         `mapstructure:"heimdall_url" validate:"url,required"`
 	Label         string         `mapstructure:"label" validate:"required"`
 	Interval      *time.Duration `mapstructure:"interval"`
+
+	// FeeBalances enables the per-validator Heimdall fee balance sweep. Nil
+	// means enabled.
+	FeeBalances *bool `mapstructure:"fee_balances"`
+	// FeeBalanceInterval is how often the fee balance sweep runs. It is
+	// deliberately decoupled from Interval: the sweep costs one request per
+	// validator, while the balances themselves drain by a flat per-transaction
+	// fee and so move far too slowly to be worth polling every cycle.
+	FeeBalanceInterval *time.Duration `mapstructure:"fee_balance_interval" validate:"omitempty,gt=0"`
+	// FeeBalanceTimeout bounds how long the fee balance sweep may run. It keeps
+	// a slow Heimdall API from spending the whole cycle deadline here and
+	// starving the refresh steps that follow.
+	FeeBalanceTimeout *time.Duration `mapstructure:"fee_balance_timeout" validate:"omitempty,gt=0"`
 }
 
 // SensorNetwork configures the sensor network provider. This fetches data from
