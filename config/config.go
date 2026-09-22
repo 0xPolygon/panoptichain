@@ -31,15 +31,13 @@ const DefaultAccountBalanceTimeout = 10 * time.Second
 
 // DefaultFeeBalanceInterval is how often the Heimdall fee balance sweep runs
 // when an endpoint does not override it. Heimdall charges a flat fee per
-// transaction (0.001 POL on mainnet), so even the busiest validator moves its
-// balance by a few POL per day; five minutes is far finer than the signal.
+// transaction (0.001 POL on mainnet), so even a busy validator moves its
+// balance by a few POL per day -- five minutes is far finer than the signal.
 const DefaultFeeBalanceInterval = 5 * time.Minute
 
-// DefaultFeeBalanceTimeout bounds the Heimdall fee balance sweep per refresh
-// cycle when an endpoint does not override it. A healthy sweep of the ~100
-// PoS validators takes a couple of seconds at the configured concurrency, so
-// 30s leaves ample headroom without letting a degraded API starve the rest of
-// RefreshState.
+// DefaultFeeBalanceTimeout bounds one sweep when an endpoint does not override
+// it. A healthy sweep of the ~100 PoS validators takes a couple of seconds, so
+// 30s leaves headroom without letting a degraded API starve RefreshState.
 const DefaultFeeBalanceTimeout = 30 * time.Second
 
 // Runner configures the execution interval of the job system.
@@ -168,14 +166,12 @@ type HeimdallEndpoint struct {
 	// FeeBalances enables the per-validator Heimdall fee balance sweep. Nil
 	// means enabled.
 	FeeBalances *bool `mapstructure:"fee_balances"`
-	// FeeBalanceInterval is how often the fee balance sweep runs. It is
-	// deliberately decoupled from Interval: the sweep costs one request per
-	// validator, while the balances themselves drain by a flat per-transaction
-	// fee and so move far too slowly to be worth polling every cycle.
+	// FeeBalanceInterval is how often the sweep runs, deliberately decoupled
+	// from Interval: it costs one request per validator, for balances that
+	// drain by a flat per-transaction fee.
 	FeeBalanceInterval *time.Duration `mapstructure:"fee_balance_interval" validate:"omitempty,gt=0"`
-	// FeeBalanceTimeout bounds how long the fee balance sweep may run. It keeps
-	// a slow Heimdall API from spending the whole cycle deadline here and
-	// starving the refresh steps that follow.
+	// FeeBalanceTimeout bounds one sweep, keeping a slow Heimdall API from
+	// spending the cycle deadline here and starving the steps that follow.
 	FeeBalanceTimeout *time.Duration `mapstructure:"fee_balance_timeout" validate:"omitempty,gt=0"`
 }
 

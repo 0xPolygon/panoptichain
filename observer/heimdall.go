@@ -994,33 +994,30 @@ func (o *HeimdallBufferedCheckpointObserver) GetCollectors() []prometheus.Collec
 
 // HeimdallFeeBalance is one validator's Heimdall fee account balance.
 //
-// A validator funds this account on Ethereum (StakeManager.topUpForFee, and the
-// heimdallFee paid at stake time), and Heimdall debits it a flat fee for every
-// transaction the signer sends: checkpoints, milestones, spans, clerk acks. The
-// fee is a fixed amount per transaction, not gas-metered -- see auth params
-// tx_fees, 0.001 POL on mainnet -- so the balance falls linearly in the number
-// of transactions the validator has left before it can no longer participate.
+// Validators fund this account on Ethereum (StakeManager.topUpForFee) and
+// Heimdall debits a flat fee per transaction from it -- not gas-metered, see
+// auth params tx_fees, 0.001 POL on mainnet -- for every checkpoint, milestone,
+// span and clerk ack the signer submits. So the balance is transactions
+// remaining, and at zero the validator cannot participate.
 type HeimdallFeeBalance struct {
 	ValidatorID   uint64
 	SignerAddress string
-	// Denom is the Cosmos bank denomination, "pol" on mainnet. It is carried
-	// through to a metric label rather than summed away, so a future second
-	// denomination shows up as its own series instead of silently inflating
-	// the POL balance.
+	// Denom becomes a metric label rather than being summed away, so a second
+	// denomination would show up as its own series instead of silently
+	// inflating the POL balance.
 	Denom string
-	// Amount is the balance in the denomination's base unit (wei for pol),
-	// matching the spelling of the rpc_ balance gauges.
+	// Amount is in the denomination's base unit (wei for pol), matching the
+	// rpc_ balance gauges.
 	Amount *big.Int
 }
 
-// HeimdallFeeBalances is the full result of one fee balance sweep. It always
-// carries every validator the sweep resolved, so the observer can retire the
-// series of validators that have left the set.
+// HeimdallFeeBalances is one sweep's full result, carrying every validator it
+// resolved so the observer can retire those that left the set.
 type HeimdallFeeBalances struct {
 	Balances []HeimdallFeeBalance
-	// Failed is how many validators the sweep could not resolve, because the
-	// query failed or the deadline was reached first. A partial sweep must not
-	// retire the series it did not get to, so this gates the reconciliation.
+	// Failed is how many validators the sweep could not resolve -- query error
+	// or deadline. A partial sweep must not retire the series it never reached,
+	// so this gates the reconciliation.
 	Failed int
 }
 
@@ -1031,14 +1028,13 @@ type HeimdallValidatorFeeBalanceObserver struct {
 	swept   *prometheus.GaugeVec
 	failed  *prometheus.GaugeVec
 
-	// mu guards seen. One observer instance serves every configured Heimdall
-	// endpoint, and the event bus notifies in its own goroutine, so mainnet and
-	// Amoy can land here at the same time.
+	// mu guards seen: one observer serves every configured endpoint and the
+	// event bus notifies in its own goroutine, so mainnet and Amoy can land
+	// here at once.
 	mu sync.Mutex
 	// seen holds the label values currently set, keyed by network and provider,
-	// so a validator that leaves the set has its series deleted rather than
-	// left frozen at its last balance -- a stale low balance would otherwise
-	// page forever.
+	// so a departed validator's series is deleted rather than left frozen at
+	// its last balance -- a stale low balance would alert forever.
 	seen map[string]map[feeBalanceKey]struct{}
 }
 
@@ -1116,9 +1112,9 @@ func (o *HeimdallValidatorFeeBalanceObserver) Notify(ctx context.Context, m Mess
 			Set(amount)
 	}
 
-	// Only reconcile on a complete sweep. A partial one says nothing about the
+	// Only reconcile on a complete sweep: a partial one says nothing about the
 	// validators it never reached, and deleting their series would blank the
-	// gauge (and so any alert on it) every time the API is slow.
+	// gauge -- and any alert on it -- every time the API is slow.
 	if data.Failed > 0 {
 		logger.Debug().
 			Int("failed", data.Failed).

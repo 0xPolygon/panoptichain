@@ -33,9 +33,8 @@ var ErrInvalidSpan = errors.New("invalid span: zero ID with zero blocks")
 // full it evicts the lowest number, so fillRange clamps to this window.
 const heimdallBlockBufferSize = 128
 
-// feeDenom is the denomination a validator's Heimdall fee account is reported
-// under when the account holds nothing, so that an exhausted account still
-// produces a series on the denomination the funded ones use.
+// feeDenom is the denomination an empty fee account is reported under, so an
+// exhausted one still produces a series alongside the funded ones.
 const feeDenom = "pol"
 
 type HeimdallProvider struct {
@@ -88,11 +87,10 @@ type HeimdallProvider struct {
 
 	bufferedCheckpoint *observer.HeimdallCheckpoint
 
-	// feeBalances is the result of the most recent fee balance sweep, published
-	// on the cycle the sweep ran. nil between sweeps: the gauges are absolute
-	// and Prometheus retains them, so there is nothing to re-publish.
+	// feeBalances holds the most recent sweep, published on the cycle it ran.
+	// nil between sweeps: the gauges are absolute and Prometheus retains them.
 	feeBalances *observer.HeimdallFeeBalances
-	// feeBalancesEnabled is false when the endpoint opted out of the sweep.
+	// feeBalancesEnabled is false when the endpoint opted out.
 	feeBalancesEnabled bool
 	// feeBalanceInterval is how often the sweep runs, independent of the
 	// provider's polling interval.
@@ -100,15 +98,13 @@ type HeimdallProvider struct {
 	// feeBalanceTimeout bounds one sweep, so a degraded Heimdall API cannot
 	// spend the cycle deadline here and starve the refresh steps after it.
 	feeBalanceTimeout time.Duration
-	// nextFeeBalanceSweep is when the next sweep is due. The zero value makes
-	// the first cycle sweep.
+	// nextFeeBalanceSweep is when the next sweep is due; zero sweeps at once.
 	nextFeeBalanceSweep time.Time
 }
 
-// feeBalanceConcurrency is how many validator balance queries the fee balance
-// sweep has in flight at once. The sweep is one request per validator against
-// a single host, so this is the knob that keeps a ~100-validator set from
-// arriving as a burst.
+// feeBalanceConcurrency bounds the sweep's in-flight requests. It is one
+// request per validator against a single host, so this is what keeps a
+// ~100-validator set from arriving as a burst.
 const feeBalanceConcurrency = 8
 
 // NewHeimdallProvider builds a Heimdall provider, reusing the rpcProviders entry
@@ -279,8 +275,8 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		}
 	}
 
-	// Only published on the cycles the sweep actually ran; the observer's
-	// gauges are absolute, so there is nothing to say in between.
+	// Only on the cycles the sweep ran; the gauges are absolute, so there is
+	// nothing to say in between.
 	if h.feeBalances != nil {
 		h.bus.Publish(ctx, topics.ValidatorFeeBalance, observer.NewMessage(h.network, h.label, h.feeBalances))
 		h.feeBalances = nil
@@ -1415,8 +1411,8 @@ func (h *HeimdallProvider) votesMatchMilestone(mv *observer.HeimdallMilestoneVot
 	return false
 }
 
-// heimdallBankBalances is the Cosmos bank module's balances response, the same
-// endpoint the staking portal reads to show a validator's "Heimdall Fees".
+// heimdallBankBalances is the Cosmos bank balances response -- the same
+// endpoint the staking portal reads for "Heimdall Fees".
 type heimdallBankBalances struct {
 	Balances []struct {
 		Denom  string `json:"denom"`
@@ -1426,11 +1422,10 @@ type heimdallBankBalances struct {
 
 // refreshFeeBalances sweeps every validator's Heimdall fee account balance.
 //
-// It runs on its own cadence rather than every cycle: the sweep costs one
-// request per validator, whereas the balances drain by a flat per-transaction
-// fee and so change far too slowly to be worth polling at the provider's
-// interval. The sweep also gets its own deadline, so a slow Heimdall API
-// cannot spend the whole cycle here.
+// It keeps its own cadence rather than running every cycle: one request per
+// validator, for a balance that drains by a flat per-transaction fee and so
+// moves far too slowly to poll at the provider's interval. It also takes its
+// own deadline, so a slow Heimdall API cannot spend the whole cycle here.
 func (h *HeimdallProvider) refreshFeeBalances(ctx context.Context) {
 	if !h.feeBalancesEnabled {
 		return
@@ -1442,14 +1437,14 @@ func (h *HeimdallProvider) refreshFeeBalances(ctx context.Context) {
 	}
 
 	if h.validatorSets == nil || len(h.validatorSets.Curr) == 0 {
-		// refreshValidatorSet failed this cycle. Leave nextFeeBalanceSweep
-		// alone so the next cycle retries rather than waiting a full interval.
+		// refreshValidatorSet failed this cycle. Leave the cadence alone so the
+		// next cycle retries rather than waiting a full interval.
 		h.logger.Debug().Msg("No validator set; skipping Heimdall fee balance sweep")
 		return
 	}
 
-	// Schedule the next sweep from the start of this one, so a slow sweep does
-	// not push the cadence out.
+	// Scheduled from the start of this sweep, so a slow one does not push the
+	// cadence out.
 	h.nextFeeBalanceSweep = now.Add(h.feeBalanceInterval)
 
 	sweepCtx, cancel := context.WithTimeout(ctx, h.feeBalanceTimeout)
@@ -1518,10 +1513,9 @@ func (h *HeimdallProvider) refreshFeeBalances(ctx context.Context) {
 	h.feeBalances = out
 }
 
-// getFeeBalance reads one validator's Heimdall fee account. A validator with no
-// balance at all returns an empty list, which is reported as an explicit zero
-// in the chain's denomination rather than dropped -- an exhausted fee account
-// is exactly the condition worth alerting on, so it must not go missing.
+// getFeeBalance reads one validator's Heimdall fee account. An empty list
+// becomes an explicit zero rather than being dropped: an exhausted account is
+// the condition worth alerting on, so it must not go missing.
 func (h *HeimdallProvider) getFeeBalance(ctx context.Context, v api.Validator) ([]observer.HeimdallFeeBalance, error) {
 	path, err := url.JoinPath(h.heimdallURL, "cosmos", "bank", "v1beta1", "balances", v.Signer)
 	if err != nil {
