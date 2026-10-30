@@ -63,7 +63,7 @@ type HeimdallProvider struct {
 	// spanUpdates holds the Prev/Curr snapshots to publish this cycle. refreshSpan
 	// walks every span from the last known one up to the latest, so each
 	// consecutive pair is published and overlap detection sees the full sequence.
-	spanUpdates []*observer.HeimdallSpans
+	spanUpdates observer.HeimdallSpanUpdates
 
 	// borProviders are the RPC providers for this network, used to read the
 	// current Bor block height (no second Bor connection). Empty when none is
@@ -248,8 +248,10 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.Milestone, m)
 	}
 
-	for _, s := range h.spanUpdates {
-		m := observer.NewMessage(h.network, h.label, s)
+	// One message for the whole walk: the bus notifies each message on its own
+	// goroutine, so separate messages could apply out of order.
+	if len(h.spanUpdates) > 0 {
+		m := observer.NewMessage(h.network, h.label, h.spanUpdates)
 		h.bus.Publish(ctx, topics.Span, m)
 	}
 

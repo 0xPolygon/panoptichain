@@ -644,6 +644,14 @@ type HeimdallSpans struct {
 	Prev *HeimdallSpan
 }
 
+// HeimdallSpanUpdates holds every Prev/Curr pair from one refresh, oldest
+// first. It travels as a single message because the EventBus notifies each
+// message on its own goroutine: published separately, the pairs can land out
+// of order and leave the span gauges on an older span. That matters during
+// producer rotations, where a higher span ID can cover a lower block range than
+// the one before it.
+type HeimdallSpanUpdates []*HeimdallSpans
+
 // ValidatorMap maps validator IDs to validators.
 type ValidatorMap = map[uint64]api.Validator
 
@@ -739,11 +747,19 @@ func (o *HeimdallSpanObserver) Register(eb *EventBus) {
 
 func (o *HeimdallSpanObserver) Notify(ctx context.Context, m Message) {
 	logger := NewLogger(o, m)
-	data := m.Data().(*HeimdallSpans)
+	updates := m.Data().(HeimdallSpanUpdates)
 
 	network := m.Network().GetName()
 	provider := m.Provider()
 
+	// Apply in order so overlap detection sees each consecutive pair and the
+	// gauges finish on the newest span.
+	for _, data := range updates {
+		o.observe(logger, network, provider, data)
+	}
+}
+
+func (o *HeimdallSpanObserver) observe(logger zerolog.Logger, network, provider string, data *HeimdallSpans) {
 	curr := data.Curr
 	if curr == nil {
 		return
