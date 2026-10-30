@@ -644,13 +644,21 @@ type HeimdallSpans struct {
 	Prev *HeimdallSpan
 }
 
-// HeimdallSpanUpdates holds every Prev/Curr pair from one refresh, oldest
-// first. It travels as a single message because the EventBus notifies each
-// message on its own goroutine: published separately, the pairs can land out
-// of order and leave the span gauges on an older span. That matters during
-// producer rotations, where a higher span ID can cover a lower block range than
-// the one before it.
-type HeimdallSpanUpdates []*HeimdallSpans
+// HeimdallSpanUpdates is published every refresh once a span is known.
+//
+// Latest is the newest span the provider has seen, and the gauges are set from
+// it every time. Publishing it every cycle makes the gauges self-correcting:
+// the EventBus notifies each message on its own goroutine, so messages can be
+// applied out of order, and a stale write is overwritten by the next refresh
+// instead of sticking until the next span is created.
+//
+// Pairs holds each new consecutive Prev/Curr pair from this refresh, oldest
+// first, and is empty on idle cycles. Overlaps are counted from Pairs only, so
+// the same overlap is never counted twice.
+type HeimdallSpanUpdates struct {
+	Pairs  []*HeimdallSpans
+	Latest *HeimdallSpan
+}
 
 // ValidatorMap maps validator IDs to validators.
 type ValidatorMap = map[uint64]api.Validator
@@ -747,39 +755,42 @@ func (o *HeimdallSpanObserver) Register(eb *EventBus) {
 
 func (o *HeimdallSpanObserver) Notify(ctx context.Context, m Message) {
 	logger := NewLogger(o, m)
-	updates := m.Data().(HeimdallSpanUpdates)
+	data := m.Data().(*HeimdallSpanUpdates)
 
 	network := m.Network().GetName()
 	provider := m.Provider()
 
-	// Apply in order so overlap detection sees each consecutive pair and the
-	// gauges finish on the newest span.
-	for _, data := range updates {
-		o.observe(logger, network, provider, data)
-	}
-}
+	// Count overlaps in order so each consecutive pair is compared once.
+	for _, pair := range data.Pairs {
+		o.countOverlap(network, provider, pair)
 
-func (o *HeimdallSpanObserver) observe(logger zerolog.Logger, network, provider string, data *HeimdallSpans) {
-	curr := data.Curr
-	if curr == nil {
+		// Warn once per new span rather than on every refresh.
+		if pair.Curr != nil && len(pair.Curr.SelectedProducers) != 1 {
+			logger.Warn().
+				Uint64("span_id", pair.Curr.ID).
+				Int("selected_producers", len(pair.Curr.SelectedProducers)).
+				Msg("Unexpected number of selected producers")
+		}
+	}
+
+	latest := data.Latest
+	if latest == nil {
 		return
 	}
 
-	o.spanID.WithLabelValues(network, provider).Set(float64(curr.ID))
-	o.startBlock.WithLabelValues(network, provider).Set(float64(curr.StartBlock))
-	o.endBlock.WithLabelValues(network, provider).Set(float64(curr.EndBlock))
+	o.spanID.WithLabelValues(network, provider).Set(float64(latest.ID))
+	o.startBlock.WithLabelValues(network, provider).Set(float64(latest.StartBlock))
+	o.endBlock.WithLabelValues(network, provider).Set(float64(latest.EndBlock))
 
-	if len(curr.SelectedProducers) != 1 {
-		logger.Warn().
-			Int("selected_producers", len(curr.SelectedProducers)).
-			Msg("Unexpected number of selected producers")
-	} else {
-		producer := float64(curr.SelectedProducers[0].ID)
+	if len(latest.SelectedProducers) == 1 {
+		producer := float64(latest.SelectedProducers[0].ID)
 		o.producer.WithLabelValues(network, provider).Set(producer)
 	}
+}
 
-	prev := data.Prev
-	if prev == nil || curr.ID <= prev.ID {
+func (o *HeimdallSpanObserver) countOverlap(network, provider string, pair *HeimdallSpans) {
+	curr, prev := pair.Curr, pair.Prev
+	if curr == nil || prev == nil || curr.ID <= prev.ID {
 		return
 	}
 
