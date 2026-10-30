@@ -60,10 +60,16 @@ type HeimdallProvider struct {
 	latestMilestone    *observer.HeimdallMilestone
 
 	spans *observer.HeimdallSpans
-	// spanUpdates holds the Prev/Curr snapshots to publish this cycle. refreshSpan
-	// walks every span from the last known one up to the latest, so each
-	// consecutive pair is published and overlap detection sees the full sequence.
+	// spanUpdates holds this cycle's new Prev/Curr pairs, oldest first.
+	// refreshSpan walks every span from the last known one up to the latest, and
+	// publishSpans sends all the pairs in one message so overlap detection sees
+	// the full sequence in order.
 	spanUpdates []*observer.HeimdallSpans
+	// latestSpan is the highest span /bor/spans/latest has returned. It sets the
+	// span gauges, so they show the newest span even when the walk to it is cut
+	// short by the cycle deadline. It never moves back, so one stale response
+	// from a lagging Heimdall backend can't regress the gauges.
+	latestSpan *observer.HeimdallSpan
 
 	// borProviders are the RPC providers for this network, used to read the
 	// current Bor block height (no second Bor connection). Empty when none is
@@ -248,14 +254,11 @@ func (h *HeimdallProvider) PublishEvents(ctx context.Context) error {
 		h.bus.Publish(ctx, topics.Milestone, m)
 	}
 
-	for _, s := range h.spanUpdates {
-		m := observer.NewMessage(h.network, h.label, s)
-		h.bus.Publish(ctx, topics.Span, m)
-	}
+	h.publishSpans(ctx)
 
 	// Publish every cycle (observer handles nil) so it tracks the chain into new
-	// spans, unlike the latest span above (published only on change). Skipped
-	// entirely when the feature is off (no RPC provider for this network).
+	// spans. Skipped entirely when the feature is off (no RPC provider for this
+	// network).
 	if len(h.borProviders) > 0 {
 		h.bus.Publish(ctx, topics.ActiveSpan, observer.NewMessage(h.network, h.label, h.activeSpan))
 	}
@@ -852,6 +855,9 @@ func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if h.latestSpan == nil || latest.ID > h.latestSpan.ID {
+		h.latestSpan = latest
+	}
 
 	// Set current span on startup
 	if h.spans.Curr == nil {
@@ -860,9 +866,9 @@ func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
 		return nil
 	}
 
-	// No new span: nothing to publish. The span gauges retain their last value,
-	// so republishing would only make the observer re-count the same overlap
-	// every idle cycle.
+	// No new span: no pairs to record. publishSpans still republishes the
+	// latest span so the gauges stay correct, but with no pairs the observer
+	// does not re-count an overlap it has already seen.
 	if latest.ID <= h.spans.Curr.ID {
 		return nil
 	}
@@ -870,8 +876,8 @@ func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
 	// Walk every new span up to the latest so overlap detection sees each
 	// consecutive pair (mirrors refreshMilestone). The per-cycle deadline bounds
 	// the work; a catch-up truncated by the deadline resumes from the advanced
-	// Curr next cycle. Each step is published as its own Prev/Curr snapshot; the
-	// final one carries the latest span forward.
+	// Curr next cycle. Each step records a Prev/Curr pair, and publishSpans sends
+	// them all in one message.
 	for id := h.spans.Curr.ID + 1; id <= latest.ID; id++ {
 		if ctx.Err() != nil {
 			h.logger.Warn().
@@ -917,6 +923,21 @@ func (h *HeimdallProvider) refreshSpan(ctx context.Context) error {
 // spans records every consecutive pair in order.
 func (h *HeimdallProvider) recordSpanUpdate() {
 	h.spanUpdates = append(h.spanUpdates, &observer.HeimdallSpans{Prev: h.spans.Prev, Curr: h.spans.Curr})
+}
+
+// publishSpans sends this cycle's span pairs and the latest span as one
+// message. It runs every cycle, not only when a new span appears, so a gauge
+// write that lands out of order on the bus is corrected by the next refresh.
+func (h *HeimdallProvider) publishSpans(ctx context.Context) {
+	if h.latestSpan == nil {
+		return
+	}
+
+	m := observer.NewMessage(h.network, h.label, &observer.HeimdallSpanUpdates{
+		Pairs:  h.spanUpdates,
+		Latest: h.latestSpan,
+	})
+	h.bus.Publish(ctx, topics.Span, m)
 }
 
 func (h *HeimdallProvider) getLatestSpan(ctx context.Context) (*observer.HeimdallSpan, error) {
