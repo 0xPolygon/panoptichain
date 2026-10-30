@@ -796,9 +796,22 @@ func (o *HeimdallSpanObserver) countOverlap(network, provider string, pair *Heim
 
 	if curr.StartBlock <= prev.EndBlock || curr.StartBlock == prev.StartBlock {
 		o.overlaps.WithLabelValues(network, provider).Add(1)
-		blocks := prev.EndBlock - curr.StartBlock + 1
+		blocks := overlappedBlocks(prev, curr)
 		o.overlapped.WithLabelValues(network, provider).Add(float64(blocks))
 	}
+}
+
+// overlappedBlocks returns how many blocks two spans share. A replacement span
+// issued during a producer rotation can start before the previous span, so
+// prev.EndBlock - curr.StartBlock overcounts; this is the size of the actual
+// intersection, and 0 when the ranges are disjoint.
+func overlappedBlocks(prev, curr *HeimdallSpan) uint64 {
+	lo := max(prev.StartBlock, curr.StartBlock)
+	hi := min(prev.EndBlock, curr.EndBlock)
+	if lo > hi {
+		return 0
+	}
+	return hi - lo + 1
 }
 
 func (o *HeimdallSpanObserver) GetCollectors() []prometheus.Collector {
