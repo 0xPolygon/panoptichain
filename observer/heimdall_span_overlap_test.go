@@ -82,7 +82,10 @@ func TestSpanObserver_OverlapCounters(t *testing.T) {
 		// The counters live on the process-wide registry, so give each case its
 		// own provider label to read them independently.
 		provider := "overlap-" + c.name
-		o.Notify(context.Background(), NewMessage(testNetwork, provider, &HeimdallSpans{Prev: c.prev, Curr: c.curr}))
+		o.Notify(context.Background(), NewMessage(testNetwork, provider, &HeimdallSpanUpdates{
+			Pairs:  []*HeimdallSpans{{Prev: c.prev, Curr: c.curr}},
+			Latest: c.curr,
+		}))
 
 		labels := []string{testNetwork.GetName(), provider}
 		if got := counterValue(t, o.overlaps, labels...); got != c.wantOverlaps {
