@@ -2,6 +2,9 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -118,5 +121,72 @@ func TestPublishSpans_NothingBeforeFirstSpan(t *testing.T) {
 	case u := <-r.got:
 		t.Fatalf("expected no message before the first span, got %+v", u)
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// When the cycle deadline cuts the walk short, the gauges still get the newest
+// span Heimdall reported, not the span the walk stopped on. Otherwise a slow
+// cycle could leave span_end_block behind the chain and false-fire the span-end
+// alert, the same symptom as 2026-10-29.
+func TestPublishSpans_TruncatedWalkPublishesFetchedLatest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/bor/spans/latest" {
+			// The deadline hits while the walk fetches its first span.
+			cancel()
+			http.NotFound(w, r)
+			return
+		}
+		json.NewEncoder(w).Encode(observer.HeimdallSpanV2{Span: *newSpan(103, 1300, 1399)})
+	}))
+	defer server.Close()
+
+	h, r := newRecordingProvider(t, server.URL, newSpan(100, 1000, 1099))
+	h.latestSpan = h.spans.Curr
+
+	if err := h.refreshSpan(ctx); err != nil {
+		t.Fatalf("refreshSpan() error: %v", err)
+	}
+	if h.spans.Curr.ID != 100 {
+		t.Fatalf("setup: expected the walk to stop at 100, Curr is %d", h.spans.Curr.ID)
+	}
+
+	h.publishSpans(context.Background())
+	u := r.next(t)
+	if len(u.Pairs) != 0 {
+		t.Errorf("expected no pairs from a walk that made no progress, got %d", len(u.Pairs))
+	}
+	if u.Latest == nil || u.Latest.ID != 103 {
+		t.Errorf("Latest = %v, want the fetched latest span 103", u.Latest)
+	}
+}
+
+// A lagging Heimdall backend answering /bor/spans/latest with an older span
+// must not move the gauges back.
+func TestPublishSpans_StaleLatestDoesNotRegress(t *testing.T) {
+	latest := newSpan(103, 1300, 1399)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(observer.HeimdallSpanV2{Span: *latest})
+	}))
+	defer server.Close()
+
+	h, r := newRecordingProvider(t, server.URL, newSpan(103, 1300, 1399))
+	if err := h.refreshSpan(context.Background()); err != nil {
+		t.Fatalf("refreshSpan() error: %v", err)
+	}
+	h.publishSpans(context.Background())
+	r.next(t)
+
+	// The next response comes from a backend still on span 101.
+	latest = newSpan(101, 1100, 1199)
+	if err := h.refreshSpan(context.Background()); err != nil {
+		t.Fatalf("refreshSpan() error: %v", err)
+	}
+	h.publishSpans(context.Background())
+
+	if u := r.next(t); u.Latest == nil || u.Latest.ID != 103 {
+		t.Errorf("Latest = %v, want span 103 to hold", u.Latest)
 	}
 }
