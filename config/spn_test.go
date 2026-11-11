@@ -53,3 +53,69 @@ providers:
 		t.Fatalf("requester 1: %+v", requesters[1])
 	}
 }
+
+func initSPNConfig(t *testing.T, extra string) error {
+	t.Helper()
+
+	dir := t.TempDir()
+	body := `
+namespace: test
+providers:
+  succinct_prover_network:
+    - name: "Succinct Prover Network"
+      label: "succinct.xyz"
+      url: "rpc.example.succinct.xyz:443"
+      api_key: "key"
+` + extra
+	if err := os.WriteFile(dir+"/config.yml", []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"cert.pem", "key.pem"} {
+		if err := os.WriteFile(dir+"/"+name, []byte("pem"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(dir)
+
+	return Init()
+}
+
+func TestSuccinctProverNetwork_DecodesClientCertificate(t *testing.T) {
+	err := initSPNConfig(t, `
+      client_cert: "cert.pem"
+      client_key: "key.pem"
+`)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	n := Config().Providers.SuccinctProverNetworks[0]
+	if n.ClientCert == nil || *n.ClientCert != "cert.pem" || n.ClientKey == nil || *n.ClientKey != "key.pem" {
+		t.Fatalf("client certificate not decoded: cert=%v key=%v", n.ClientCert, n.ClientKey)
+	}
+}
+
+// A certificate without its key (or the reverse) would silently connect
+// without mTLS, so it must fail at startup instead.
+func TestSuccinctProverNetwork_ClientCertificateNeedsBothHalves(t *testing.T) {
+	for name, extra := range map[string]string{
+		"cert only": "      client_cert: \"cert.pem\"\n",
+		"key only":  "      client_key: \"key.pem\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := initSPNConfig(t, extra); err == nil {
+				t.Fatal("expected a validation error")
+			}
+		})
+	}
+}
+
+func TestSuccinctProverNetwork_ClientCertificateMustExist(t *testing.T) {
+	err := initSPNConfig(t, `
+      client_cert: "missing.pem"
+      client_key: "key.pem"
+`)
+	if err == nil {
+		t.Fatal("expected a validation error for a missing certificate file")
+	}
+}

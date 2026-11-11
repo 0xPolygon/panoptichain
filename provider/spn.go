@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"fmt"
 	"strings"
 	"time"
 
@@ -32,6 +34,8 @@ type SuccinctProverNetworkProvider struct {
 	requester        *string
 	fulfiller        *string
 	usageRequesters  []config.UsageRequester
+	clientCert       *string
+	clientKey        *string
 	proofRequests    []*spnpb.ProofRequest
 	seen             map[string]time.Time
 	// countedHours is the newest usage hour already reported for each requester,
@@ -47,6 +51,10 @@ type SuccinctProverNetworkProvider struct {
 	// later range total inherits it.
 	countedHours map[string]string
 	usage        []*observer.UsageSummary
+	// rootCAs verifies the server certificate. Nil means the system roots,
+	// which is what every real network uses; tests set it to trust their own
+	// CA.
+	rootCAs *x509.CertPool
 }
 
 func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg config.SuccinctProverNetwork) *SuccinctProverNetworkProvider {
@@ -63,6 +71,8 @@ func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg conf
 		requester:        cfg.Requester,
 		fulfiller:        cfg.Fulfiller,
 		usageRequesters:  cfg.UsageRequesters,
+		clientCert:       cfg.ClientCert,
+		clientKey:        cfg.ClientKey,
 		seen:             make(map[string]time.Time),
 		countedHours:     make(map[string]string),
 	}
@@ -71,10 +81,19 @@ func NewProverNetworkProvider(n network.Network, eb *observer.EventBus, cfg conf
 func (r *SuccinctProverNetworkProvider) RefreshState(ctx context.Context) error {
 	defer timer(r.refreshStateTime)()
 
-	creds := credentials.NewTLS(&tls.Config{})
+	// Clear last cycle's results before anything can fail, so a cycle that
+	// cannot connect publishes nothing rather than republishing stale usage.
+	r.proofRequests = nil
+	r.usage = nil
+
+	creds, err := r.transportCredentials()
+	if err != nil {
+		return err
+	}
+
 	conn, err := grpc.NewClient(r.url, grpc.WithTransportCredentials(creds))
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Failed to create gRPC client")
+		return fmt.Errorf("create gRPC client: %w", err)
 	}
 	defer conn.Close()
 
@@ -84,6 +103,33 @@ func (r *SuccinctProverNetworkProvider) RefreshState(ctx context.Context) error 
 	r.refreshRequesterUsage(ctx, conn)
 
 	return nil
+}
+
+// transportCredentials builds the TLS credentials for one cycle, adding the
+// mTLS client certificate when one is configured. The key pair is loaded from
+// disk each cycle so a rotated certificate (e.g. an updated Kubernetes secret
+// mount) takes effect without a restart. A load failure fails the cycle rather
+// than falling back to no certificate, which the server would reject anyway
+// with a less useful error.
+func (r *SuccinctProverNetworkProvider) transportCredentials() (credentials.TransportCredentials, error) {
+	cfg := &tls.Config{RootCAs: r.rootCAs}
+
+	if r.clientCert != nil && r.clientKey != nil {
+		cert, err := tls.LoadX509KeyPair(*r.clientCert, *r.clientKey)
+		if err != nil {
+			return nil, fmt.Errorf("load mTLS client certificate: %w", err)
+		}
+
+		// Return the certificate unconditionally. With tls.Config.Certificates
+		// instead, Go only sends a certificate whose issuer is in the server's
+		// advertised acceptable CAs, and silently sends none otherwise, which
+		// surfaces as an opaque handshake rejection.
+		cfg.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			return &cert, nil
+		}
+	}
+
+	return credentials.NewTLS(cfg), nil
 }
 
 // refreshRequesterUsage fetches each configured requester's gas usage for the

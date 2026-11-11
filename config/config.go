@@ -213,6 +213,13 @@ type SuccinctProverNetwork struct {
 	// requests are observed, whereas usage is billing-scoped and the addresses
 	// holding a gas budget need not be ones a configured fulfiller serves.
 	UsageRequesters []UsageRequester `mapstructure:"usage_requesters" validate:"dive"`
+	// ClientCert and ClientKey are paths to a PEM client certificate and its
+	// private key, presented to the network for mTLS. They are set together or
+	// not at all; without them the connection is server-authenticated TLS and
+	// the API key is the only credential. The files are re-read every cycle, so
+	// a rotated certificate is picked up without a restart.
+	ClientCert *string `mapstructure:"client_cert" validate:"required_with=ClientKey,omitempty,file"`
+	ClientKey  *string `mapstructure:"client_key" validate:"required_with=ClientCert,omitempty,file"`
 }
 
 // UsageRequester is a requester whose hourly gas usage is reported.
@@ -351,14 +358,21 @@ func Init() error {
 		),
 	)
 
-	if err := viper.Unmarshal(&c, opts); err != nil {
+	// Decode into a fresh value rather than the global: decoding over an
+	// existing config keeps any field the new file leaves unset, so a second
+	// Init (as tests do) would inherit values from the first. The global is
+	// only replaced once the new config is valid.
+	var next *config
+	if err := viper.Unmarshal(&next, opts); err != nil {
 		return err
 	}
 
 	validate := validator.New()
-	if err := validate.Struct(c); err != nil {
+	if err := validate.Struct(next); err != nil {
 		return err
 	}
+
+	c = next
 
 	return nil
 }
