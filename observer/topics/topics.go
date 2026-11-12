@@ -53,4 +53,5 @@ const (
 	RequesterUsage                                     // *observer.UsageSummary (most recent complete hour; nil when the hour has no usage)
 	HeimdallMissedBlockProposal                        // observer.HeimdallMissedBlockProposal
 	ValidatorFeeBalance                                // observer.HeimdallFeeBalances (nil when the sweep did not run this cycle)
+	BorStateSyncEvents                                 // *observer.StateSyncEvents (decoded StateCommitted/StateSyncReplay logs from the finalized-block scan)
 )

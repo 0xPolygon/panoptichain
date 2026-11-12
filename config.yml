@@ -205,6 +205,15 @@
     ## Whether the underlying RPC node supports `txpool_*` API requests. This
     ## is usually only available for Geth based clients.
     ##
+    ## @param state_sync_events - boolean - optional - default false
+    ## @env PANOPTICHAIN_PROVIDERS_RPC_0_STATE_SYNC_EVENTS - boolean - optional - default false
+    ## Whether to scan finalized StateReceiver logs for commit outcome and
+    ## replay counters. Requires `contracts.state_sync_receiver_address`. This
+    ## per-RPC flag controls the `eth_getLogs` cost; the `state_sync_events`
+    ## observer separately controls metric registration and consumption, so
+    ## both must be enabled. Startup begins at the current finalized head with
+    ## no historical backfill; the cursor catches up while the process runs.
+    ##
     ## @param validator_balances - boolean - optional - default true
     ## @env PANOPTICHAIN_PROVIDERS_RPC_0_VALIDATOR_BALANCES - boolean - optional - default true
     ## Whether to fetch validator wallet balances via eth_getBalance batch calls.
@@ -321,6 +330,7 @@
   #   - name: "Polygon Mainnet"
   #     url: "https://polygon-rpc.com"
   #     label: "polygon-rpc.com"
+  #     state_sync_events: true
   #     validator_balances: false  # Skip eth_getBalance batch (default: true)
   #     missed_proposals: false    # Skip bor_getSnapshotProposerSequence (default: true)
   #     contracts:
@@ -329,6 +339,7 @@
   #   - name: "Polygon Amoy"
   #     url: "https://rpc-amoy.polygon.technology/"
   #     label: "polygon.technology"
+  #     state_sync_events: true
   #     contracts:
   #       state_sync_receiver_address: "0x0000000000000000000000000000000000001001"
   #
@@ -771,6 +782,7 @@
   #   - "spn_requester_usage"
   #   - "stake_manager"
   #   - "state_sync"
+  #   - "state_sync_events"
   #   - "stolen_block"
   #   - "system"
   #   - "time_to_finalized"
