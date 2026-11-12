@@ -439,6 +439,32 @@ additional `signer_address` tag, but since there's a (relatively) finite number
 of validators this is fine. Something that wouldn't be suitable as a tag would
 be a block number, which scales to infinity.
 
+#### Keep state in the provider, not the observer
+
+Deduplication, cursors and "already counted" bookkeeping belong in the
+provider, not the observer:
+
+- **Notify is concurrent.** The `EventBus` runs every `Notify` in its own
+  goroutine, so any state in an observer needs locking.
+- **Observer state is shared across providers.** There is one observer instance
+  for every provider and network, so its state is too. A bounded cache in an
+  observer lets one provider's traffic evict another's entries.
+- **A provider's cycle is single-threaded.** `RefreshState` and `PublishEvents`
+  run one after the other on the same goroutine, so provider state needs no
+  locking and is naturally per-provider.
+
+So make the provider publish each event once. For example, advance a cursor, or
+remember the last hour already reported, as `countedHours` does in
+[`spn.go`](./provider/spn.go). The observer then just sets or increments.
+
+The one exception is tracking which label sets an observer has exported, so it
+can delete series that no longer apply. A departed validator's balance is an
+example: left in place, it would stay frozen at its last value. Only the
+observer owns its metric vectors, so only it can do this. See
+`HeimdallValidatorFeeBalanceObserver` in [`heimdall.go`](./observer/heimdall.go).
+That state controls which series exist; it must never decide whether to count
+something.
+
 ### Topics
 
 Topics are the intermediary between providers and observers. Providers will send
