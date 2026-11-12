@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -33,6 +34,21 @@ const (
 	// stateSyncScanChunk is the fixed number of blocks requested per
 	// eth_getLogs call. It matches the range public Bor RPCs accept.
 	stateSyncScanChunk uint64 = 100
+
+	// stateSyncMaxChunksPerCycle bounds how many chunks one refresh cycle
+	// will scan. Each call is already bounded by stateSyncScanChunk, but
+	// without a per-cycle cap a large catch-up backlog (e.g. after an
+	// outage) could consume the whole cycle. The scan yields at the last
+	// completed chunk and the next cycle resumes from there, so the other
+	// collectors sharing the cycle keep their headroom. 50 chunks = 5000
+	// blocks ≈ 2.8 hours of Bor blocks per cycle.
+	stateSyncMaxChunksPerCycle = 50
+
+	// stateSyncScanTimeout bounds the whole scan's share of a refresh cycle,
+	// following the account-balance sweep convention: a subordinate deadline
+	// so a slow log endpoint cannot starve the checkpoint, validator and
+	// account collectors that share the cycle's context.
+	stateSyncScanTimeout = 15 * time.Second
 
 	// stateSyncSeenCap bounds the deduplication set. It comfortably covers the
 	// bootstrap window plus many cycles of ordinary state-sync traffic.
@@ -87,7 +103,9 @@ type stateSyncLogFetcher func(ctx context.Context, from, to uint64) ([]types.Log
 
 // refreshStateSyncEvents scans finalized blocks for StateCommitted and
 // StateSyncReplay logs when a state sync receiver is configured. It is a
-// metrics-only first slice: all scan state is process-local.
+// metrics-only first slice: all scan state is process-local. The scan runs
+// under a subordinate timeout so a large backlog or a slow log endpoint
+// cannot starve the collectors that share this refresh cycle.
 func (r *RPCProvider) refreshStateSyncEvents(ctx context.Context, c *ethclient.Client) {
 	if r.contracts.StateSyncReceiverAddress == nil {
 		return
@@ -105,7 +123,10 @@ func (r *RPCProvider) refreshStateSyncEvents(ctx context.Context, c *ethclient.C
 		return c.FilterLogs(ctx, query)
 	}
 
-	r.scanStateSyncLogs(ctx, receiver, r.finalizedHeight, fetch)
+	scanCtx, cancel := context.WithTimeout(ctx, stateSyncScanTimeout)
+	defer cancel()
+
+	r.scanStateSyncLogs(scanCtx, receiver, r.finalizedHeight, fetch)
 }
 
 // scanStateSyncLogs advances the provider's state-sync log cursor in fixed
@@ -121,17 +142,30 @@ func (r *RPCProvider) refreshStateSyncEvents(ctx context.Context, c *ethclient.C
 //     outcome, which is why the commit event boolean is counted rather than
 //     receipt status. A reorg of already-finalized blocks is a chain integrity
 //     failure this collector does not detect.
-//   - Cursor: the cursor only advances after a fully successful chunk scan. A
-//     failed chunk aborts the scan; the next cycle retries the same range, so
-//     blocks are never skipped and successfully scanned chunks are never
-//     re-scanned.
+//   - Response validation: every log in a fetched response must match what
+//     was requested — the StateReceiver emitter, the exact numeric range, a
+//     non-zero block hash, no removed flag and a decodable event. Any
+//     inconsistent log rejects the whole chunk: it is neither counted nor
+//     skipped, and its range is retried next cycle. A chunk is committed
+//     (events + dedup keys + cursor) only when it validates in full, so a
+//     retry can never double count a partially valid response.
+//   - Cursor: the cursor only advances after a fully successful chunk scan.
+//     A fetch error or a rejected chunk aborts the scan; the next cycle
+//     retries the same range, so blocks are never skipped and successfully
+//     scanned chunks are never re-scanned.
+//   - Budget: the scan performs at most stateSyncMaxChunksPerCycle chunk
+//     fetches per cycle and yields immediately on context cancellation
+//     (including its subordinate scan deadline). Catch-up resumes at the
+//     last completed chunk next cycle, leaving headroom for the other
+//     collectors in the cycle.
 //   - Bootstrap: the first scan starts a fixed lookback (blockLookBack, the
 //     same default used by the other log filters) below the current finalized
 //     head. Coverage starts there, not at genesis: counts are "since coverage
 //     start", not all-chain totals.
 //   - Deduplication: a bounded (block hash, log index) set prevents the same
-//     log from being counted twice across overlapping ranges, retries or
-//     republished messages.
+//     log from being counted twice across overlapping ranges or retried
+//     responses. The observer further deduplicates delivery per (network,
+//     provider, block hash, log index), so republication cannot double count.
 //   - Restart: all of this state (cursor, dedup set, counters) is
 //     process-local. A restart re-bootstraps and Prometheus counters reset
 //     with the process; no durable exactly-once delivery is claimed.
@@ -165,7 +199,25 @@ func (r *RPCProvider) scanStateSyncLogs(ctx context.Context, receiver common.Add
 		return
 	}
 
+	chunks := 0
 	for from := r.stateSyncCursor + 1; from <= finalized; from += stateSyncScanChunk {
+		// Yield on cancellation (including the subordinate scan deadline).
+		// The cursor already records the last completed chunk, so the next
+		// cycle resumes right here without skipping or recounting.
+		if ctx.Err() != nil {
+			return
+		}
+
+		// Bound this scan's share of the refresh cycle; catch-up resumes
+		// from the last completed chunk next cycle.
+		if chunks >= stateSyncMaxChunksPerCycle {
+			r.logger.Info().
+				Uint64("resume_block", from).
+				Int("chunks", chunks).
+				Msg("State sync scan reached its per-cycle chunk budget; continuing next cycle")
+			return
+		}
+
 		to := min(from+stateSyncScanChunk-1, finalized)
 
 		logs, err := fetch(ctx, from, to)
@@ -181,37 +233,74 @@ func (r *RPCProvider) scanStateSyncLogs(ctx context.Context, receiver common.Add
 			return
 		}
 
-		r.recordStateSyncLogs(receiver, logs)
+		staged, ok := r.decodeStateSyncChunk(receiver, from, to, logs)
+		if !ok {
+			// The response was inconsistent with the request. Like a fetch
+			// failure, this leaves the cursor at the last successful chunk so
+			// the range is retried — never silently skipped, and nothing from
+			// this chunk was counted or recorded in the dedup set.
+			r.logger.Warn().
+				Uint64("from_block", from).
+				Uint64("to_block", to).
+				Msg("Inconsistent state sync log response; will retry this range next cycle")
+			return
+		}
+
+		r.commitStateSyncChunk(staged)
 		r.stateSyncCursor = to
+		chunks++
 	}
 }
 
-// recordStateSyncLogs decodes, validates and deduplicates raw logs, adding
-// the well-formed events to this cycle's accumulation. Malformed, removed or
-// wrongly-addressed logs are logged and skipped: they are never counted.
-func (r *RPCProvider) recordStateSyncLogs(receiver common.Address, logs []types.Log) {
+// decodeStateSyncChunk validates an entire fetched response against what was
+// requested and stages the well-formed events for commit. It returns ok=false
+// when any returned log is inconsistent — a wrong emitter, a removed flag, a
+// block number outside [from, to], a zero block hash, an unknown signature
+// or an undecodable event — in which case the caller must reject the whole
+// chunk and retry its range. Logs already known to the dedup set (an
+// overlapping range or a re-delivered response) are valid and simply skipped:
+// they were already counted.
+func (r *RPCProvider) decodeStateSyncChunk(receiver common.Address, from, to uint64, logs []types.Log) (*observer.StateSyncEvents, bool) {
+	staged := &observer.StateSyncEvents{}
+	chunkSeen := make(map[stateSyncLogKey]struct{})
+
 	for i := range logs {
 		l := &logs[i]
 
-		// The log filter already constrains the emitter, but do not blindly
-		// trust the RPC to have honored it.
+		// The log filter already constrains the emitter and topics, but do
+		// not blindly trust the RPC to have honored them — or the range.
 		if l.Address != receiver {
 			r.logMalformedStateSyncLog(l, "unexpected emitter address")
-			continue
+			return nil, false
 		}
 
-		// A removed log is a reorg artifact, not a chain event.
+		// A removed log is a reorg artifact; a finalized range has none.
 		if l.Removed {
-			continue
+			r.logMalformedStateSyncLog(l, "removed log in a finalized range")
+			return nil, false
 		}
 
-		key := stateSyncLogKey{blockHash: l.BlockHash, logIndex: uint32(l.Index)}
-		if r.stateSyncSeen.seen(key) {
-			continue
+		// The response must stay inside the requested numeric range.
+		if l.BlockNumber < from || l.BlockNumber > to {
+			r.logMalformedStateSyncLog(l, "log outside the requested range")
+			return nil, false
+		}
+
+		// A mined log must carry the hash of its block.
+		if l.BlockHash == (common.Hash{}) {
+			r.logMalformedStateSyncLog(l, "missing block hash")
+			return nil, false
 		}
 
 		if len(l.Topics) == 0 {
 			r.logMalformedStateSyncLog(l, "missing event signature topic")
+			return nil, false
+		}
+
+		key := stateSyncLogKey{blockHash: l.BlockHash, logIndex: uint32(l.Index)}
+		if _, dup := chunkSeen[key]; dup || r.stateSyncSeen.seen(key) {
+			// Already counted by an earlier chunk or delivered twice within
+			// this response. Overlap is not an inconsistency.
 			continue
 		}
 
@@ -220,35 +309,56 @@ func (r *RPCProvider) recordStateSyncLogs(receiver common.Address, logs []types.
 			commit, ok := decodeStateSyncCommit(l)
 			if !ok {
 				r.logMalformedStateSyncLog(l, "invalid StateCommitted encoding")
-				continue
+				return nil, false
 			}
-			r.stateSyncEvents.Commits = append(r.stateSyncEvents.Commits, commit)
-			r.stateSyncSeen.add(key)
+			staged.Commits = append(staged.Commits, commit)
 
 		case stateSyncReplayTopic:
 			replay, ok := decodeStateSyncReplay(l)
 			if !ok {
 				r.logMalformedStateSyncLog(l, "invalid StateSyncReplay encoding")
-				continue
+				return nil, false
 			}
-			r.stateSyncEvents.Replays = append(r.stateSyncEvents.Replays, replay)
-			r.stateSyncSeen.add(key)
+			staged.Replays = append(staged.Replays, replay)
 
 		default:
 			// The log filter asks for exactly our two topics; anything else
 			// here would mean the RPC returned unrequested logs.
 			r.logMalformedStateSyncLog(l, "unexpected event signature")
+			return nil, false
 		}
+
+		chunkSeen[key] = struct{}{}
+	}
+
+	return staged, true
+}
+
+// commitStateSyncChunk moves a fully validated chunk's events into this
+// cycle's accumulation and records their log keys in the dedup set. It runs
+// only after decodeStateSyncChunk accepted the chunk in full, so a retried
+// range can never double count a partially valid response.
+func (r *RPCProvider) commitStateSyncChunk(staged *observer.StateSyncEvents) {
+	for _, commit := range staged.Commits {
+		r.stateSyncEvents.Commits = append(r.stateSyncEvents.Commits, commit)
+		r.stateSyncSeen.add(stateSyncLogKey{blockHash: commit.BlockHash, logIndex: commit.LogIndex})
+	}
+	for _, replay := range staged.Replays {
+		r.stateSyncEvents.Replays = append(r.stateSyncEvents.Replays, replay)
+		r.stateSyncSeen.add(stateSyncLogKey{blockHash: replay.BlockHash, logIndex: replay.LogIndex})
 	}
 }
 
+// logMalformedStateSyncLog records why a fetched response is inconsistent.
+// The offending log's whole chunk is rejected and its range retried next
+// cycle; the log itself is never counted.
 func (r *RPCProvider) logMalformedStateSyncLog(l *types.Log, reason string) {
 	r.logger.Warn().
 		Str("reason", reason).
 		Uint64("block_number", l.BlockNumber).
 		Str("block_hash", l.BlockHash.Hex()).
 		Uint32("log_index", uint32(l.Index)).
-		Msg("Discarding malformed state sync log")
+		Msg("Rejecting inconsistent state sync log")
 }
 
 // decodeStateSyncCommit decodes and validates a

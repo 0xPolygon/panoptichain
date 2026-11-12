@@ -2,6 +2,7 @@ package observer
 
 import (
 	"context"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/prometheus/client_golang/prometheus"
@@ -10,6 +11,23 @@ import (
 	"github.com/0xPolygon/panoptichain/metrics"
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
+
+// stateSyncSeenCap bounds the republication dedup set. It comfortably covers
+// the provider-side bootstrap window plus many cycles of ordinary state-sync
+// traffic; like the counters it guards, it is process-local.
+const stateSyncSeenCap = 4096
+
+// stateSyncEventKey identifies one observed log on one provider series.
+// Republication of the same bus message (a failed refresh re-publishing a
+// stale batch, or any re-delivery) must not count twice on that series,
+// while the same chain event observed via a different provider must still
+// count on that provider's own series — hence the provider-scoped key.
+type stateSyncEventKey struct {
+	network   string
+	provider  string
+	blockHash common.Hash
+	logIndex  uint32
+}
 
 // StateSyncCommit is one decoded StateCommitted(uint256 indexed stateId, bool
 // success) log from the StateReceiver. It represents the initial contract
@@ -54,9 +72,46 @@ type StateSyncEvents struct {
 // restarts, and each configured provider is counted independently. Multiple
 // providers observe the same chain events, so provider series must not be
 // summed for chain-level totals.
+//
+// Delivery is idempotent per series: a republication of a bus message (or any
+// concurrent re-delivery of the same events) is deduplicated on
+// (network, provider, block hash, log index), so it counts exactly once per
+// provider series. The dedup set is bounded and, like the counters,
+// process-local: it resets together with them on restart, which keeps the
+// two consistent (a reset counter never skips a re-bootstrapped event, and a
+// surviving counter never re-counts one).
 type StateSyncEventsObserver struct {
 	commits *prometheus.CounterVec
 	replays *prometheus.CounterVec
+
+	seenMu    sync.Mutex
+	seenKeys  map[stateSyncEventKey]struct{}
+	seenOrder []stateSyncEventKey
+}
+
+// markSeen reports whether the event has not been counted on this
+// (network, provider) series yet, recording it if so. The event bus delivers
+// messages from goroutines, so check-and-record must be one critical section
+// to stay idempotent under concurrent republication.
+func (o *StateSyncEventsObserver) markSeen(k stateSyncEventKey) bool {
+	o.seenMu.Lock()
+	defer o.seenMu.Unlock()
+
+	if _, ok := o.seenKeys[k]; ok {
+		return false
+	}
+	o.seenKeys[k] = struct{}{}
+	o.seenOrder = append(o.seenOrder, k)
+
+	if len(o.seenKeys) > stateSyncSeenCap {
+		drop := len(o.seenKeys) - stateSyncSeenCap/2
+		for _, old := range o.seenOrder[:drop] {
+			delete(o.seenKeys, old)
+		}
+		o.seenOrder = append(o.seenOrder[:0], o.seenOrder[drop:]...)
+	}
+
+	return true
 }
 
 func (o *StateSyncEventsObserver) Notify(ctx context.Context, m Message) {
@@ -64,8 +119,17 @@ func (o *StateSyncEventsObserver) Notify(ctx context.Context, m Message) {
 	events := m.Data().(*StateSyncEvents)
 	networkName := m.Network().GetName()
 	provider := m.Provider()
+	series := stateSyncEventKey{network: networkName, provider: provider}
 
 	for _, commit := range events.Commits {
+		key := series
+		key.blockHash = commit.BlockHash
+		key.logIndex = commit.LogIndex
+		if !o.markSeen(key) {
+			// A republication of an event already counted on this series.
+			continue
+		}
+
 		outcome := "failure"
 		if commit.Success {
 			outcome = "success"
@@ -87,6 +151,13 @@ func (o *StateSyncEventsObserver) Notify(ctx context.Context, m Message) {
 	}
 
 	for _, replay := range events.Replays {
+		key := series
+		key.blockHash = replay.BlockHash
+		key.logIndex = replay.LogIndex
+		if !o.markSeen(key) {
+			continue
+		}
+
 		logger.Info().
 			Uint64("state_id", replay.StateId).
 			Uint64("block_number", replay.BlockNumber).
@@ -100,6 +171,8 @@ func (o *StateSyncEventsObserver) Notify(ctx context.Context, m Message) {
 
 func (o *StateSyncEventsObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.BorStateSyncEvents, o)
+
+	o.seenKeys = make(map[stateSyncEventKey]struct{})
 
 	o.commits = metrics.NewCounter(
 		metrics.RPC,

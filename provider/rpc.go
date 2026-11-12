@@ -193,6 +193,13 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	defer timer(r.refreshStateTime)()
 
+	// Reset this cycle's state-sync event accumulation before any fallible
+	// setup. If the dial below fails, PublishEvents will deliver an empty
+	// batch instead of re-delivering the previous cycle's events.
+	if r.contracts.StateSyncReceiverAddress != nil {
+		r.stateSyncEvents = &observer.StateSyncEvents{}
+	}
+
 	c, err := ethclient.DialContext(ctx, r.url)
 	if err != nil {
 		r.logger.Error().Err(err).Msg("Failed to create the client")
@@ -273,8 +280,18 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 		r.bus.Publish(ctx, topics.BorStateSync, observer.NewMessage(r.network, r.label, stateSync))
 	}
 
-	if r.stateSyncEvents != nil && (len(r.stateSyncEvents.Commits) > 0 || len(r.stateSyncEvents.Replays) > 0) {
-		r.bus.Publish(ctx, topics.BorStateSyncEvents, observer.NewMessage(r.network, r.label, r.stateSyncEvents))
+	if r.stateSyncEvents != nil {
+		// Publish this cycle's batch — possibly empty: the scan may have
+		// found no events, or the refresh may have failed before scanning.
+		// Consume the batch as it is published, so republication cannot
+		// re-deliver the same events. The observer additionally
+		// deduplicates on (network, provider, block hash, log index), so
+		// even a concurrent re-delivery cannot double count. stateSyncEvents
+		// is only non-nil once state-sync scanning has been initialized for
+		// this provider (a configured StateReceiver address).
+		events := r.stateSyncEvents
+		r.stateSyncEvents = &observer.StateSyncEvents{}
+		r.bus.Publish(ctx, topics.BorStateSyncEvents, observer.NewMessage(r.network, r.label, events))
 	}
 
 	for _, checkpointSignatures := range r.checkpointSignatures {

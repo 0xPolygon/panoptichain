@@ -6,12 +6,16 @@ import (
 	"math"
 	"math/big"
 	"slices"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/0xPolygon/panoptichain/observer"
+	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
 // The configured StateReceiver (0x…1001 on Polygon mainnet and Amoy) and a
@@ -256,7 +260,11 @@ func TestDecodeStateSyncReplay(t *testing.T) {
 	}
 }
 
-func TestRecordStateSyncLogs(t *testing.T) {
+// The full decode/validate/dedup path over one fetched response: true and
+// false commits, a failed receiver inside a successful synthetic receipt,
+// replays, several state IDs delivered in one synthetic transaction, and a
+// log delivered twice within one response.
+func TestDecodeStateSyncChunk(t *testing.T) {
 	r := newStateSyncProvider(1000)
 
 	logs := []types.Log{
@@ -265,64 +273,161 @@ func TestRecordStateSyncLogs(t *testing.T) {
 		// receipt status is not part of the log, only the boolean is.
 		commitLog(100, 2, 1, false),
 		replayLog(101, 2, 0),
-		// Several state IDs delivered in one synthetic transaction.
+		// Several state IDs delivered in one synthetic transaction, as
+		// distinct logs (distinct log indices).
 		commitLog(102, 3, 0, true),
 		commitLog(102, 4, 1, true),
 		commitLog(102, 5, 2, false),
-		// Never counted: reorg artifact, wrong emitter, malformed.
-		func() types.Log {
-			l := commitLog(103, 6, 0, true)
-			l.Removed = true
-			return l
-		}(),
-		func() types.Log {
-			l := commitLog(103, 7, 1, true)
-			l.Address = otherEmitterAddress
-			return l
-		}(),
-		func() types.Log {
-			l := commitLog(103, 8, 2, true)
-			l.Data = append(make([]byte, 31), 2)
-			return l
-		}(),
-		// No topics at all.
-		{Address: stateReceiverAddress, BlockNumber: 103, BlockHash: stateSyncBlockHash(103), Index: 3},
+		// The same log delivered twice within one response.
+		commitLog(102, 5, 2, false),
 	}
 
-	r.recordStateSyncLogs(stateReceiverAddress, logs)
-
-	if got := commitIds(r.stateSyncEvents); !slices.Equal(got, []uint64{1, 2, 3, 4, 5}) {
+	staged, ok := r.decodeStateSyncChunk(stateReceiverAddress, 100, 102, logs)
+	if !ok {
+		t.Fatal("well-formed response rejected")
+	}
+	if got := commitIds(staged); !slices.Equal(got, []uint64{1, 2, 3, 4, 5}) {
 		t.Errorf("commit ids = %v, want [1 2 3 4 5]", got)
 	}
-	if got := replayIds(r.stateSyncEvents); !slices.Equal(got, []uint64{2}) {
+	if got := replayIds(staged); !slices.Equal(got, []uint64{2}) {
 		t.Errorf("replay ids = %v, want [2]", got)
 	}
-	for _, c := range r.stateSyncEvents.Commits {
+	for _, c := range staged.Commits {
 		if c.BlockHash != stateSyncBlockHash(c.BlockNumber) {
 			t.Errorf("commit %d block hash not carried", c.StateId)
 		}
 	}
 
-	// Re-delivering the same logs (an overlapping range, a retried response or
-	// a republished message) must not count anything twice.
-	r.stateSyncEvents = &observer.StateSyncEvents{}
-	r.recordStateSyncLogs(stateReceiverAddress, logs)
-	if got := commitIds(r.stateSyncEvents); len(got) != 0 {
-		t.Errorf("duplicate delivery counted %d commits, want 0", len(got))
+	// After commit, re-delivering the same logs (an overlapping range or a
+	// retried response) is valid but stages nothing: every key is already in
+	// the dedup set, so nothing is counted twice.
+	r.commitStateSyncChunk(staged)
+	staged2, ok := r.decodeStateSyncChunk(stateReceiverAddress, 100, 102, logs)
+	if !ok {
+		t.Fatal("re-delivered response rejected")
 	}
-	if got := replayIds(r.stateSyncEvents); len(got) != 0 {
-		t.Errorf("duplicate delivery counted %d replays, want 0", len(got))
+	if len(staged2.Commits) != 0 || len(staged2.Replays) != 0 {
+		t.Errorf("duplicate delivery staged %d commits and %d replays, want 0",
+			len(staged2.Commits), len(staged2.Replays))
 	}
 }
 
-func TestRecordStateSyncLogs_DuplicateWithinOneResponse(t *testing.T) {
+// A StateSyncReplay in an ordinary transaction (a real transaction hash, not
+// Bor's synthetic state-sync receipt) is the same event and decodes the same.
+func TestDecodeStateSyncChunk_OrdinaryTransactionReplay(t *testing.T) {
 	r := newStateSyncProvider(1000)
-	dup := commitLog(100, 9, 3, true)
 
-	r.recordStateSyncLogs(stateReceiverAddress, []types.Log{dup, dup})
+	l := replayLog(100, 42, 0)
+	l.TxHash = common.HexToHash("0x00000000000000000000000000000000000000000000000000000000feedbeef")
 
-	if got := commitIds(r.stateSyncEvents); !slices.Equal(got, []uint64{9}) {
-		t.Errorf("commit ids = %v, want [9]", got)
+	staged, ok := r.decodeStateSyncChunk(stateReceiverAddress, 100, 100, []types.Log{l})
+	if !ok {
+		t.Fatal("ordinary-transaction replay rejected")
+	}
+	if got := replayIds(staged); !slices.Equal(got, []uint64{42}) {
+		t.Errorf("replay ids = %v, want [42]", got)
+	}
+}
+
+// Any single inconsistent log rejects the whole chunk — it is never counted
+// and never silently skipped. A well-formed log in the same response must not
+// be partially committed either: the next decode of that log alone still
+// stages it, proving no dedup or event state leaked from the rejected chunk.
+func TestDecodeStateSyncChunk_InconsistentResponseRejected(t *testing.T) {
+	inRange := commitLog(100, 1, 0, true)
+
+	tests := []struct {
+		name string
+		log  types.Log
+	}{
+		// The bad logs carry a distinct log index from the in-range commit so
+		// they exercise the rejection paths, not the dedup skip.
+		{name: "log above the requested range", log: commitLog(101, 6, 1, true)},
+		{name: "log below the requested range", log: commitLog(99, 6, 1, true)},
+		{
+			name: "removed log in a finalized range",
+			log: func() types.Log {
+				l := commitLog(100, 6, 1, true)
+				l.Removed = true
+				return l
+			}(),
+		},
+		{
+			name: "zero block hash",
+			log: func() types.Log {
+				l := commitLog(100, 6, 1, true)
+				l.BlockHash = common.Hash{}
+				return l
+			}(),
+		},
+		{
+			name: "wrong emitter address",
+			log: func() types.Log {
+				l := commitLog(100, 6, 1, true)
+				l.Address = otherEmitterAddress
+				return l
+			}(),
+		},
+		// No topics at all.
+		{
+			name: "no topics",
+			log: types.Log{
+				Address:     stateReceiverAddress,
+				BlockNumber: 100,
+				BlockHash:   stateSyncBlockHash(100),
+				Index:       3,
+			},
+		},
+		{
+			name: "unexpected event signature",
+			log: types.Log{
+				Address:     stateReceiverAddress,
+				Topics:      []common.Hash{stateIdTopic(6)},
+				BlockNumber: 100,
+				BlockHash:   stateSyncBlockHash(100),
+				Index:       1,
+			},
+		},
+		{
+			name: "invalid commit boolean",
+			log: func() types.Log {
+				l := commitLog(100, 6, 1, true)
+				l.Data = append(make([]byte, 31), 2)
+				return l
+			}(),
+		},
+		{
+			name: "replay with data",
+			log: func() types.Log {
+				l := replayLog(100, 6, 1)
+				l.Data = make([]byte, 32)
+				return l
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newStateSyncProvider(1000)
+
+			staged, ok := r.decodeStateSyncChunk(stateReceiverAddress, 100, 100, []types.Log{inRange, tt.log})
+			if ok {
+				t.Fatal("inconsistent response accepted")
+			}
+			if staged != nil && (len(staged.Commits) > 0 || len(staged.Replays) > 0) {
+				t.Fatal("rejected chunk staged events")
+			}
+
+			// Nothing from the rejected chunk may have been committed: the
+			// well-formed log is staged again by a clean response.
+			staged, ok = r.decodeStateSyncChunk(stateReceiverAddress, 100, 100, []types.Log{inRange})
+			if !ok {
+				t.Fatal("clean response rejected after an inconsistent one")
+			}
+			if got := commitIds(staged); !slices.Equal(got, []uint64{1}) {
+				t.Errorf("commit ids after retry = %v, want [1] (no partial commit leaked)", got)
+			}
+		})
 	}
 }
 
@@ -432,30 +537,234 @@ func TestScanStateSyncLogs_PartialFailureRetriesWithoutSkipping(t *testing.T) {
 	}
 }
 
-// An RPC that returns the same logs for overlapping ranges (or re-delivers
-// them across retries) must not cause double counting: the (block hash, log
-// index) dedup set counts each log once.
-func TestScanStateSyncLogs_OverlappingRangesDeduplicate(t *testing.T) {
-	r := newStateSyncProvider(100)
+// A bounded fetcher that re-delivers in-range logs (each response contains
+// its logs twice, and each chunk's logs overlap the dedup keys committed by
+// earlier chunks) must not double count. Out-of-range re-delivery is not a
+// valid overlap: it rejects the chunk (see the rejection tests below).
+func TestScanStateSyncLogs_OverlappingDeliveryDeduplicates(t *testing.T) {
+	// Lookback 1000 keeps block 50 inside the bootstrap window (the default
+	// lookback of 100 with a finalized head of 200 starts at block 100).
+	r := newStateSyncProvider(1000)
 
-	allLogs := []types.Log{
-		commitLog(50, 1, 0, true),
-		commitLog(150, 2, 0, false),
-		replayLog(180, 1, 0),
+	allLogs := map[uint64][]types.Log{
+		50:  {commitLog(50, 1, 0, true)},
+		150: {commitLog(150, 2, 0, false)},
+		180: {replayLog(180, 1, 0)},
 	}
 
-	// A misbehaving fetcher: every range returns every log.
 	fetch := func(_ context.Context, from, to uint64) ([]types.Log, error) {
-		return allLogs, nil
+		var logs []types.Log
+		for block, ls := range allLogs {
+			if block >= from && block <= to {
+				// The same log delivered twice within one response.
+				logs = append(logs, ls...)
+				logs = append(logs, ls...)
+			}
+		}
+		return logs, nil
 	}
 
 	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 200, fetch)
 
 	if got := commitIds(r.stateSyncEvents); !slices.Equal(got, []uint64{1, 2}) {
-		t.Errorf("commit ids = %v, want [1 2] (overlaps deduplicated)", got)
+		t.Errorf("commit ids = %v, want [1 2] (in-range overlaps deduplicated)", got)
 	}
 	if got := replayIds(r.stateSyncEvents); !slices.Equal(got, []uint64{1}) {
-		t.Errorf("replay ids = %v, want [1]", got)
+		t.Errorf("replay ids = %v, want [1] (in-range overlaps deduplicated)", got)
+	}
+	if r.stateSyncCursor != 200 {
+		t.Errorf("cursor = %d, want 200", r.stateSyncCursor)
+	}
+}
+
+// A response that fails validation must not advance the cursor: the next
+// cycle retries the same range, and a corrected response is then counted.
+// This is the difference between "drop the malformed event and continue"
+// (which permanently skipped its blocks) and treating the chunk as
+// unsuccessful.
+func TestScanStateSyncLogs_InvalidChunkIsRetriedNotSkipped(t *testing.T) {
+	r := newStateSyncProvider(100)
+
+	calls := 0
+	fetch := func(_ context.Context, from, to uint64) ([]types.Log, error) {
+		calls++
+		l := commitLog(100, 1, 0, true)
+		if calls == 1 {
+			// First response carries a non-canonical boolean (value 2).
+			l.Data = append(make([]byte, 31), 2)
+		}
+		return []types.Log{l}, nil
+	}
+
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100, fetch)
+	if calls != 1 {
+		t.Fatalf("fetch calls = %d, want 1", calls)
+	}
+	if r.stateSyncCursor != 0 {
+		t.Fatalf("cursor advanced past an invalid chunk: %d, want 0", r.stateSyncCursor)
+	}
+	if len(r.stateSyncEvents.Commits) != 0 {
+		t.Fatalf("invalid chunk counted %d commits, want 0", len(r.stateSyncEvents.Commits))
+	}
+
+	r.stateSyncEvents = &observer.StateSyncEvents{}
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100, fetch)
+	if calls != 2 {
+		t.Fatalf("invalid range was not retried: fetch calls = %d, want 2", calls)
+	}
+	if got := commitIds(r.stateSyncEvents); !slices.Equal(got, []uint64{1}) {
+		t.Errorf("corrected response commits = %v, want [1]", got)
+	}
+	if r.stateSyncCursor != 100 {
+		t.Errorf("cursor after corrected retry = %d, want 100", r.stateSyncCursor)
+	}
+}
+
+// Inconsistent responses — a log above the finalized upper bound, a log with
+// a zero block hash, a removed log — are rejected before counting and
+// retried; the corrected response is then counted once.
+func TestScanStateSyncLogs_InconsistentResponsesRejectedAndRetried(t *testing.T) {
+	tests := []struct {
+		name string
+		bad  func() types.Log
+	}{
+		{
+			name: "log above the finalized bound",
+			bad:  func() types.Log { return commitLog(101, 1, 0, true) },
+		},
+		{
+			name: "zero block hash",
+			bad: func() types.Log {
+				l := commitLog(100, 1, 0, true)
+				l.BlockHash = common.Hash{}
+				return l
+			},
+		},
+		{
+			name: "removed log",
+			bad: func() types.Log {
+				l := commitLog(100, 1, 0, true)
+				l.Removed = true
+				return l
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newStateSyncProvider(100)
+			bad := true
+			fetch := func(_ context.Context, from, to uint64) ([]types.Log, error) {
+				if bad {
+					return []types.Log{tt.bad()}, nil
+				}
+				return []types.Log{commitLog(100, 1, 0, true)}, nil
+			}
+
+			r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100, fetch)
+			if r.stateSyncCursor != 0 {
+				t.Fatalf("cursor advanced past an inconsistent chunk: %d, want 0", r.stateSyncCursor)
+			}
+			if len(r.stateSyncEvents.Commits) != 0 {
+				t.Fatalf("inconsistent chunk counted %d commits, want 0", len(r.stateSyncEvents.Commits))
+			}
+
+			bad = false
+			r.stateSyncEvents = &observer.StateSyncEvents{}
+			r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100, fetch)
+			if got := commitIds(r.stateSyncEvents); !slices.Equal(got, []uint64{1}) {
+				t.Errorf("corrected response commits = %v, want [1]", got)
+			}
+			if r.stateSyncCursor != 100 {
+				t.Errorf("cursor after corrected retry = %d, want 100", r.stateSyncCursor)
+			}
+		})
+	}
+}
+
+// A state-sync record delivered to a receiver contract with no code emits no
+// log at all: the record is absent from the commit denominator while
+// lastStateId advances. This fixture models the documented absence with a
+// log-free block between two committed records (the synthetic receipt itself
+// is not part of these log fixtures, only its events are).
+func TestScanStateSyncLogs_NoCodeReceiverRecordAbsent(t *testing.T) {
+	r := newStateSyncProvider(100)
+	rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{
+		{1, 100}: {
+			commitLog(10, 1, 0, true),
+			// State ID 2 was delivered to a receiver with no code: Bor
+			// records the sync but no StateCommitted event exists to count,
+			// so there is no log fixture for it at block 50.
+			commitLog(90, 3, 0, true),
+		},
+	}}
+
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100, rec.fetch)
+
+	if got := commitIds(r.stateSyncEvents); !slices.Equal(got, []uint64{1, 3}) {
+		t.Errorf("commit ids = %v, want [1 3] (no-code record 2 emits nothing)", got)
+	}
+}
+
+// Cancellation must stop the scan at the last completed chunk: the fetcher
+// here cancels the context on its first call, so the first chunk completes
+// and the scan yields before fetching a second one. The next cycle resumes.
+func TestScanStateSyncLogs_CancellationYields(t *testing.T) {
+	r := newStateSyncProvider(100)
+	r.stateSyncBootstrapped = true
+	r.stateSyncCursor = 100
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	calls := 0
+	fetch := func(_ context.Context, from, to uint64) ([]types.Log, error) {
+		calls++
+		cancel()
+		return nil, nil
+	}
+
+	r.scanStateSyncLogs(ctx, stateReceiverAddress, 100100, fetch)
+
+	if calls > 1 {
+		t.Fatalf("scan performed %d fetches after cancellation instead of yielding", calls)
+	}
+	if r.stateSyncCursor != 200 {
+		t.Errorf("cursor = %d, want 200 (the chunk in flight when cancellation hit still completes)", r.stateSyncCursor)
+	}
+}
+
+// A large catch-up backlog must not consume the whole cycle: the scan stops
+// at its per-cycle chunk budget with the cursor at the last completed chunk,
+// and the next cycle resumes exactly there.
+func TestScanStateSyncLogs_PerCycleChunkBudget(t *testing.T) {
+	r := newStateSyncProvider(100)
+	r.stateSyncBootstrapped = true
+	r.stateSyncCursor = 0
+
+	var ranges [][2]uint64
+	fetch := func(_ context.Context, from, to uint64) ([]types.Log, error) {
+		ranges = append(ranges, [2]uint64{from, to})
+		return nil, nil
+	}
+
+	// 1000 pending chunks after an outage.
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100000, fetch)
+
+	if len(ranges) > stateSyncMaxChunksPerCycle {
+		t.Fatalf("scan performed %d chunk fetches, want at most %d", len(ranges), stateSyncMaxChunksPerCycle)
+	}
+	wantCursor := uint64(stateSyncMaxChunksPerCycle * 100)
+	if r.stateSyncCursor != wantCursor {
+		t.Fatalf("cursor = %d, want %d (last completed chunk)", r.stateSyncCursor, wantCursor)
+	}
+
+	// The next cycle resumes at the last completed chunk.
+	ranges = nil
+	r.stateSyncEvents = &observer.StateSyncEvents{}
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100000, fetch)
+	if len(ranges) == 0 || ranges[0][0] != wantCursor+1 {
+		t.Errorf("resumed at %v, want %d", ranges, wantCursor+1)
 	}
 }
 
@@ -533,5 +842,116 @@ func TestStateSyncSeenLogs_Bound(t *testing.T) {
 	// The oldest entries must have been evicted.
 	if s.seen(stateSyncLogKey{blockHash: stateSyncBlockHash(0), logIndex: 0}) {
 		t.Error("oldest key was retained past the cap")
+	}
+}
+
+// deliveryCountingObserver counts state-sync messages and the events they
+// carry on a real event bus, which delivers messages from goroutines.
+type deliveryCountingObserver struct {
+	events   atomic.Int64
+	messages atomic.Int64
+	done     chan struct{}
+}
+
+func (o *deliveryCountingObserver) Register(eb *observer.EventBus) {
+	eb.Subscribe(topics.BorStateSyncEvents, o)
+}
+
+func (o *deliveryCountingObserver) GetCollectors() []prometheus.Collector {
+	return nil
+}
+
+func (o *deliveryCountingObserver) Notify(_ context.Context, m observer.Message) {
+	events := m.Data().(*observer.StateSyncEvents)
+	o.events.Add(int64(len(events.Commits) + len(events.Replays)))
+	o.messages.Add(1)
+	o.done <- struct{}{}
+}
+
+func waitForDelivery(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("event delivery timed out")
+	}
+}
+
+// A failed refresh (here: an unreachable endpoint) must not re-deliver the
+// previous cycle's events. The accumulation is reset before the fallible
+// dial and publishing consumes the batch, so the post-failure publication
+// carries an empty batch — not the stale events — and nothing double counts.
+func TestRefreshStateDialFailureDoesNotRepublish(t *testing.T) {
+	r := newStateSyncProvider(100)
+	r.bus = observer.NewEventBus()
+	r.refreshStateTime = new(time.Duration)
+
+	o := &deliveryCountingObserver{done: make(chan struct{}, 10)}
+	r.bus.Subscribe(topics.BorStateSyncEvents, o)
+
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100, func(context.Context, uint64, uint64) ([]types.Log, error) {
+		return []types.Log{commitLog(100, 1, 0, false)}, nil
+	})
+
+	if err := r.PublishEvents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForDelivery(t, o.done)
+	if got := o.events.Load(); got != 1 {
+		t.Fatalf("events delivered = %d, want 1", got)
+	}
+
+	// A valid WebSocket URL whose endpoint is unreachable: DialContext fails
+	// before the scan could reset the batch.
+	r.url = "ws://127.0.0.1:1"
+	if err := r.RefreshState(context.Background()); err == nil {
+		t.Fatal("expected connection failure")
+	}
+	if err := r.PublishEvents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForDelivery(t, o.done)
+	if got := o.messages.Load(); got != 2 {
+		t.Fatalf("messages delivered = %d, want 2 (one per publication)", got)
+	}
+	if got := o.events.Load(); got != 1 {
+		t.Fatalf("stale events re-delivered after a failed refresh: %d events over 2 publications, want 1", got)
+	}
+}
+
+// Publishing twice without a refresh in between must not re-deliver the
+// consumed batch's events: the second publication carries an empty batch.
+func TestPublishEventsConsumesBatch(t *testing.T) {
+	r := newStateSyncProvider(100)
+	r.bus = observer.NewEventBus()
+
+	o := &deliveryCountingObserver{done: make(chan struct{}, 10)}
+	r.bus.Subscribe(topics.BorStateSyncEvents, o)
+
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100, func(context.Context, uint64, uint64) ([]types.Log, error) {
+		return []types.Log{
+			commitLog(100, 1, 0, true),
+			replayLog(100, 2, 1),
+		}, nil
+	})
+
+	if err := r.PublishEvents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForDelivery(t, o.done)
+	if got := o.events.Load(); got != 2 {
+		t.Fatalf("events delivered = %d, want 2 (one commit and one replay)", got)
+	}
+
+	if err := r.PublishEvents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForDelivery(t, o.done)
+	if got := o.messages.Load(); got != 2 {
+		t.Fatalf("messages delivered = %d, want 2 (one per publication)", got)
+	}
+	if got := o.events.Load(); got != 2 {
+		t.Fatalf("republished batch re-delivered events: %d over 2 publications, want 2 (no double count)", got)
 	}
 }
