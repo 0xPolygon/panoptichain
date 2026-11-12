@@ -15,17 +15,22 @@ import (
 )
 
 const (
-	// stateSyncSeenCap bounds the per-event republication dedup set. It
-	// comfortably covers the provider-side bootstrap window plus many cycles
-	// of ordinary state-sync traffic; like the counters it guards, it is
-	// process-local.
+	// stateSyncSeenCap bounds the per-event republication dedup set: the
+	// most recently counted distinct event keys are retained, evicting
+	// exactly one oldest entry per insertion past the cap (true FIFO, so
+	// the last stateSyncSeenCap counted keys are always covered). The
+	// store is observer-global across series; like the counters it guards,
+	// it is process-local.
 	stateSyncSeenCap = 4096
 
-	// stateSyncRecentBatchesCap bounds how many distinct recently delivered
-	// batches are remembered by digest. A digest is fixed-size regardless
-	// of batch size, so whole-batch republication idempotency holds for
-	// any supported publication size within this horizon; like the counters
-	// it guards, it is process-local.
+	// stateSyncRecentBatchesCap bounds how many distinct recently
+	// completed batches are remembered by digest: the most recently
+	// completed digests are retained, evicting exactly one oldest entry
+	// per insertion past the cap. A digest is fixed-size regardless of
+	// batch size, so whole-batch republication idempotency holds for any
+	// supported publication size within this horizon. The store is
+	// observer-global across series; like the counters it guards, it is
+	// process-local.
 	stateSyncRecentBatchesCap = 64
 )
 
@@ -87,13 +92,19 @@ type StateSyncEvents struct {
 //
 // Delivery is idempotent per series at two layers:
 //
-//   - Whole batches are deduplicated by content digest, so a republication of
-//     a bus message (a failed refresh re-publishing a stale batch, a retry,
-//     or any concurrent re-delivery) counts exactly once per provider series
-//     regardless of batch size. The digest is fixed-size, which makes this
-//     layer eviction-safe where a size-bounded per-event set alone is not:
-//     during one delivery of a batch larger than the per-event cap, the
-//     batch's own earliest keys would already be evicted by its end.
+//   - Whole batches are deduplicated by content digest. A claimed digest is
+//     pinned as in-flight for the entire active delivery and only enters
+//     the bounded completed-batch ring when that delivery finishes. The pin
+//     makes the layer eviction-safe under concurrency and provider
+//     interleaving: other series' traffic can push a digest out of the
+//     bounded completed ring, but never out of the in-flight set while its
+//     delivery is still consuming the batch — a concurrent or overlapping
+//     republication of an active batch therefore counts nothing. The
+//     completed ring retains the stateSyncRecentBatchesCap most recently
+//     completed distinct batches. The digest is fixed-size, which makes
+//     this layer eviction-safe where a size-bounded per-event set alone is
+//     not: during one delivery of a batch larger than the per-event cap,
+//     the batch's own earliest keys would already be evicted by its end.
 //   - Individual events are deduplicated on (network, provider, block hash,
 //     log index), guarding partial overlaps (a later batch re-delivering
 //     some already-counted events) within its bounded horizon.
@@ -101,11 +112,16 @@ type StateSyncEvents struct {
 // Both layers use bounded, process-local state that resets together with the
 // counters on restart, keeping them consistent (a reset counter never skips a
 // re-bootstrapped event, and a surviving counter never re-counts one). The
-// bounded idempotency horizon is therefore: a republication is suppressed
-// while its batch digest is among the stateSyncRecentBatchesCap most recent
-// distinct batches OR its events are among the stateSyncSeenCap most recent
-// event keys on that series; beyond both horizons a re-delivery counts again.
-// No durable or all-history exactly-once delivery is claimed.
+// bounded idempotency horizon is therefore: a republication racing an active
+// delivery of the same batch is always suppressed; a republication of a
+// completed batch is suppressed while its batch digest is among the
+// stateSyncRecentBatchesCap most recently completed distinct batches OR its
+// events are among the stateSyncSeenCap most recently counted distinct event
+// keys; beyond both horizons a re-delivery counts again. Both stores are
+// observer-global across series, so one provider's traffic can consume
+// another series' retention horizon — that global scope is intentional and
+// bounds total memory. No durable or all-history exactly-once delivery is
+// claimed.
 type StateSyncEventsObserver struct {
 	commits *prometheus.CounterVec
 	replays *prometheus.CounterVec
@@ -114,7 +130,14 @@ type StateSyncEventsObserver struct {
 	seenKeys  map[stateSyncEventKey]struct{}
 	seenOrder []stateSyncEventKey
 
-	batchesMu   sync.Mutex
+	batchesMu sync.Mutex
+	// inflight pins the digests of deliveries currently being consumed; it
+	// is bounded by the number of concurrently active deliveries and
+	// drained as each completes.
+	inflight map[[sha256.Size]byte]struct{}
+	// batchDigest/batchOrder retain the most recently completed distinct
+	// batch digests, observer-global, evicting exactly the oldest entry
+	// per insertion past the cap.
 	batchDigest map[[sha256.Size]byte]struct{}
 	batchOrder  [][sha256.Size]byte
 }
@@ -163,37 +186,64 @@ func stateSyncBatchDigest(network, provider string, events *StateSyncEvents) [sh
 	return digest
 }
 
-// claimBatch atomically reports whether this exact batch content has not been
-// delivered on this observer yet, recording its digest if so. The event bus
-// delivers messages from goroutines, so a republication can race the original
-// delivery and the check-and-record must be one critical section. The digest
-// ring is bounded like the per-event set: past the cap the oldest half is
-// evicted.
+// claimBatch atomically reports whether this exact batch content is neither
+// being delivered right now nor among the recently completed batches,
+// pinning the digest as in-flight if so. The pin survives for the whole
+// active delivery: other series' concurrent deliveries can evict completed
+// digests from the bounded ring, but never an in-flight one, so an
+// overlapping republication of a batch whose original delivery is still
+// consuming it is always rejected. The event bus delivers messages from
+// goroutines, so the check-and-pin must be one critical section. The
+// in-flight set is bounded by the number of concurrently active deliveries
+// and released when the claiming delivery finishes (completeBatch, called
+// via defer — also on panic or early return).
 func (o *StateSyncEventsObserver) claimBatch(digest [sha256.Size]byte) bool {
 	o.batchesMu.Lock()
 	defer o.batchesMu.Unlock()
 
+	if _, ok := o.inflight[digest]; ok {
+		return false
+	}
 	if _, ok := o.batchDigest[digest]; ok {
 		return false
+	}
+	o.inflight[digest] = struct{}{}
+
+	return true
+}
+
+// completeBatch releases an in-flight claim and records the digest in the
+// bounded completed-batch ring: the most recently completed distinct
+// batches are retained (observer-global), evicting exactly the oldest
+// entry per insertion past the cap — true FIFO, so a batch still among the
+// last stateSyncRecentBatchesCap completed ones is always suppressed. Only
+// the delivery that claimed the digest may complete it.
+func (o *StateSyncEventsObserver) completeBatch(digest [sha256.Size]byte) {
+	o.batchesMu.Lock()
+	defer o.batchesMu.Unlock()
+
+	delete(o.inflight, digest)
+
+	if _, ok := o.batchDigest[digest]; ok {
+		return
 	}
 	o.batchDigest[digest] = struct{}{}
 	o.batchOrder = append(o.batchOrder, digest)
 
 	if len(o.batchDigest) > stateSyncRecentBatchesCap {
-		drop := len(o.batchDigest) - stateSyncRecentBatchesCap/2
-		for _, old := range o.batchOrder[:drop] {
-			delete(o.batchDigest, old)
-		}
-		o.batchOrder = append(o.batchOrder[:0], o.batchOrder[drop:]...)
+		oldest := o.batchOrder[0]
+		delete(o.batchDigest, oldest)
+		o.batchOrder = append(o.batchOrder[:0], o.batchOrder[1:]...)
 	}
-
-	return true
 }
 
 // markSeen reports whether the event has not been counted on this
 // (network, provider) series yet, recording it if so. The event bus delivers
 // messages from goroutines, so check-and-record must be one critical section
-// to stay idempotent under concurrent republication.
+// to stay idempotent under concurrent republication. The store is bounded,
+// observer-global and a true FIFO: the most recently counted
+// stateSyncSeenCap distinct keys are retained, evicting exactly one oldest
+// entry per insertion past the cap.
 func (o *StateSyncEventsObserver) markSeen(k stateSyncEventKey) bool {
 	o.seenMu.Lock()
 	defer o.seenMu.Unlock()
@@ -205,11 +255,9 @@ func (o *StateSyncEventsObserver) markSeen(k stateSyncEventKey) bool {
 	o.seenOrder = append(o.seenOrder, k)
 
 	if len(o.seenKeys) > stateSyncSeenCap {
-		drop := len(o.seenKeys) - stateSyncSeenCap/2
-		for _, old := range o.seenOrder[:drop] {
-			delete(o.seenKeys, old)
-		}
-		o.seenOrder = append(o.seenOrder[:0], o.seenOrder[drop:]...)
+		oldest := o.seenOrder[0]
+		delete(o.seenKeys, oldest)
+		o.seenOrder = append(o.seenOrder[:0], o.seenOrder[1:]...)
 	}
 
 	return true
@@ -224,12 +272,17 @@ func (o *StateSyncEventsObserver) Notify(ctx context.Context, m Message) {
 	// Whole-batch idempotency first: a republication of this exact batch
 	// content — a failed refresh re-publishing a stale batch, a retry, or a
 	// concurrent re-delivery — counts nothing, regardless of batch size.
-	// The fixed-size digest makes this eviction-safe where the bounded
-	// per-event set alone is not; the per-event set below still guards
-	// partial overlaps within its own horizon.
-	if !o.claimBatch(stateSyncBatchDigest(networkName, provider, events)) {
+	// The claim pins the digest as in-flight for this whole delivery, so
+	// concurrent republication is rejected even if other series' traffic
+	// evicts completed digests from the bounded ring meanwhile; the digest
+	// enters the completed ring only when this delivery finishes. The
+	// per-event set below still guards partial overlaps within its own
+	// horizon.
+	digest := stateSyncBatchDigest(networkName, provider, events)
+	if !o.claimBatch(digest) {
 		return
 	}
+	defer o.completeBatch(digest)
 
 	series := stateSyncEventKey{network: networkName, provider: provider}
 
@@ -285,6 +338,7 @@ func (o *StateSyncEventsObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.BorStateSyncEvents, o)
 
 	o.seenKeys = make(map[stateSyncEventKey]struct{})
+	o.inflight = make(map[[sha256.Size]byte]struct{})
 	o.batchDigest = make(map[[sha256.Size]byte]struct{})
 
 	o.commits = metrics.NewCounter(
