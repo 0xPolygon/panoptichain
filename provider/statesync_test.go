@@ -396,6 +396,16 @@ func TestDecodeStateSyncChunk_InconsistentResponseRejected(t *testing.T) {
 				return l
 			}(),
 		},
+		// A malformed log reusing the in-range log's (block hash, log
+		// index) key: deduplication must not let it bypass validation.
+		{
+			name: "malformed duplicate of the in-range log",
+			log: func() types.Log {
+				l := commitLog(100, 6, 0, true)
+				l.Data = append(make([]byte, 31), 2)
+				return l
+			}(),
+		},
 		{
 			name: "replay with data",
 			log: func() types.Log {
@@ -617,6 +627,73 @@ func TestScanStateSyncLogs_InvalidChunkIsRetriedNotSkipped(t *testing.T) {
 	}
 	if r.stateSyncCursor != 100 {
 		t.Errorf("cursor after corrected retry = %d, want 100", r.stateSyncCursor)
+	}
+}
+
+// A malformed log reusing the (block hash, log index) key of a valid or an
+// already-counted log must not slip past validation through the dedup
+// path: the whole chunk is rejected, nothing is counted, the cursor does
+// not advance, and the range is retried. Only a well-formed duplicate is
+// suppressed as already counted.
+func TestScanStateSyncLogs_MalformedDuplicateRejectsChunk(t *testing.T) {
+	for _, prior := range []bool{false, true} {
+		name := "duplicate within one response"
+		if prior {
+			name = "duplicate of an already-counted log"
+		}
+		t.Run(name, func(t *testing.T) {
+			r := newStateSyncProvider(1000)
+			good := commitLog(100, 1, 0, true)
+
+			if prior {
+				// Count the good log in a previous cycle so its key is
+				// already in the dedup set when the malformed twin arrives.
+				staged, ok := r.decodeStateSyncChunk(stateReceiverAddress, 100, 100, []types.Log{good})
+				if !ok {
+					t.Fatal("control response rejected")
+				}
+				r.commitStateSyncChunk(staged)
+			}
+
+			bad := good
+			bad.Data = append(make([]byte, 31), 2)
+			response := []types.Log{good, bad}
+
+			calls := 0
+			fetch := func(_ context.Context, _, _ uint64) ([]types.Log, error) {
+				calls++
+				return response, nil
+			}
+
+			r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100, fetch)
+			if r.stateSyncCursor != 0 {
+				t.Fatalf("cursor advanced past a malformed duplicate: %d, want 0", r.stateSyncCursor)
+			}
+			if len(r.stateSyncEvents.Commits) != 0 {
+				t.Fatalf("malformed duplicate counted commits: %d, want 0", len(r.stateSyncEvents.Commits))
+			}
+
+			// The corrected response must be fetched and accepted.
+			response = []types.Log{good}
+			r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100, fetch)
+			if calls != 2 {
+				t.Fatalf("corrected response not retried: calls = %d, want 2", calls)
+			}
+			if r.stateSyncCursor != 100 {
+				t.Fatalf("cursor after corrected retry = %d, want 100", r.stateSyncCursor)
+			}
+			// In the already-counted variant the valid log was counted
+			// before the malformed twin arrived, so the corrected response
+			// legitimately stages nothing; in the within-response variant
+			// it stages the one valid log, exactly once.
+			want := []uint64{1}
+			if prior {
+				want = nil
+			}
+			if got := commitIds(r.stateSyncEvents); !slices.Equal(got, want) {
+				t.Errorf("commits after corrected retry = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

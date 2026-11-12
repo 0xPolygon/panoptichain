@@ -3,17 +3,20 @@ package observer
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math/big"
 	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/expfmt"
 
 	"github.com/0xPolygon/panoptichain/config"
+	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
 // Register (and the metrics constructors it calls) dereference the global
@@ -268,5 +271,136 @@ func TestStateSyncEvents_DedupSetBound(t *testing.T) {
 	defer o.seenMu.Unlock()
 	if len(o.seenKeys) > stateSyncSeenCap {
 		t.Errorf("dedup set size = %d, want at most %d", len(o.seenKeys), stateSyncSeenCap)
+	}
+}
+
+// The recent-batch digest ring is bounded like the per-event set: past the
+// cap the oldest half is evicted.
+func TestStateSyncEvents_BatchDigestRingBound(t *testing.T) {
+	o := newEventsObserver(t)
+
+	for i := uint64(0); i < stateSyncRecentBatchesCap*2; i++ {
+		o.claimBatch(stateSyncBatchDigest("n", "p", &StateSyncEvents{
+			Commits: []*StateSyncCommit{commitEvent(i, true)},
+		}))
+	}
+
+	o.batchesMu.Lock()
+	defer o.batchesMu.Unlock()
+	if len(o.batchDigest) > stateSyncRecentBatchesCap {
+		t.Errorf("digest ring size = %d, want at most %d", len(o.batchDigest), stateSyncRecentBatchesCap)
+	}
+	oldest := stateSyncBatchDigest("n", "p", &StateSyncEvents{
+		Commits: []*StateSyncCommit{commitEvent(0, true)},
+	})
+	if _, ok := o.batchDigest[oldest]; ok {
+		t.Error("oldest batch digest retained past the cap")
+	}
+}
+
+// batchDeliveryObserver acknowledges each Notify so a test can await the
+// real event bus's goroutine delivery.
+type batchDeliveryObserver struct {
+	*StateSyncEventsObserver
+	done chan struct{}
+}
+
+func (o *batchDeliveryObserver) Notify(ctx context.Context, m Message) {
+	o.StateSyncEventsObserver.Notify(ctx, m)
+	o.done <- struct{}{}
+}
+
+// largeCommitBatch builds a batch of distinct commits spread over several
+// blocks, as a multi-chunk scan cycle would accumulate.
+func largeCommitBatch(size int) *StateSyncEvents {
+	events := &StateSyncEvents{}
+	for i := uint64(1); i <= uint64(size); i++ {
+		event := commitEvent(i, true)
+		event.BlockNumber = 100 + i/100
+		event.BlockHash = common.BigToHash(new(big.Int).SetUint64(event.BlockNumber))
+		event.LogIndex = uint32(i % 100)
+		events.Commits = append(events.Commits, event)
+	}
+	return events
+}
+
+// An immediate republication of a batch larger than the per-event dedup cap
+// must still count exactly once per series: whole-batch idempotency is keyed
+// on a fixed-size content digest, not on the size-bounded per-event set, so
+// FIFO eviction inside the per-event set (which discards the start of such a
+// batch during its own delivery) cannot let the same batch count twice. Both
+// sides of the per-event cap boundary are covered, through the real event
+// bus.
+func TestStateSyncEvents_LargeBatchRepublicationCountsOnce(t *testing.T) {
+	for _, size := range []int{stateSyncSeenCap - 1, stateSyncSeenCap, stateSyncSeenCap + 1} {
+		t.Run(fmt.Sprintf("batch of %d events", size), func(t *testing.T) {
+			o := newEventsObserver(t)
+			// The counters live on the process-wide registry, so each
+			// subtest needs its own provider label.
+			provider := fmt.Sprintf("large-batch-%d", size)
+
+			m := NewMessage(testNetwork, provider, largeCommitBatch(size))
+			bus := NewEventBus()
+			delivery := &batchDeliveryObserver{StateSyncEventsObserver: o, done: make(chan struct{}, 2)}
+			bus.Subscribe(topics.BorStateSyncEvents, delivery)
+
+			publishAndWait := func() {
+				bus.Publish(context.Background(), topics.BorStateSyncEvents, m)
+				select {
+				case <-delivery.done:
+				case <-time.After(5 * time.Second):
+					t.Fatal("bus delivery timed out")
+				}
+			}
+
+			publishAndWait()
+			first := counterValue(t, o.commits, testNetwork.GetName(), provider, "success")
+			publishAndWait()
+			second := counterValue(t, o.commits, testNetwork.GetName(), provider, "success")
+
+			if first != float64(size) {
+				t.Errorf("first delivery counted %g, want %d", first, size)
+			}
+			if second != first {
+				t.Errorf("republication changed the counter: %g -> %g, want unchanged", first, second)
+			}
+		})
+	}
+}
+
+// The republication idempotency horizon is bounded by design: the dedup
+// state is process-local and size-bounded, so a republication is suppressed
+// only while its batch digest is in the recent ring OR its events are in
+// the per-event set. This test pushes one batch past both horizons and pins
+// the documented behavior: beyond them, a re-delivery counts again.
+func TestStateSyncEvents_RepublicationHorizonIsBounded(t *testing.T) {
+	o := newEventsObserver(t)
+	provider := "horizon"
+
+	first := &StateSyncEvents{Commits: []*StateSyncCommit{commitEvent(1, true)}}
+	o.Notify(context.Background(), NewMessage(testNetwork, provider, first))
+	if got := counterValue(t, o.commits, testNetwork.GetName(), provider, "success"); got != 1 {
+		t.Fatalf("first delivery counted %g, want 1", got)
+	}
+
+	// Evict the first batch's event key from the per-event set by counting
+	// more than the cap of fresh events...
+	o.Notify(context.Background(), NewMessage(testNetwork, provider, largeCommitBatch(stateSyncSeenCap+1)))
+
+	// ...and push its digest out of the recent-batch ring with a stream of
+	// distinct small batches.
+	for i := uint64(0); i < stateSyncRecentBatchesCap; i++ {
+		o.Notify(context.Background(), NewMessage(testNetwork, provider, &StateSyncEvents{
+			Commits: []*StateSyncCommit{commitEvent(100_000+i, true)},
+		}))
+	}
+
+	// Beyond both horizons the same batch counts again — the documented
+	// bound of the process-local, size-bounded dedup state.
+	before := counterValue(t, o.commits, testNetwork.GetName(), provider, "success")
+	o.Notify(context.Background(), NewMessage(testNetwork, provider, first))
+	after := counterValue(t, o.commits, testNetwork.GetName(), provider, "success")
+	if after != before+1 {
+		t.Errorf("republication beyond both dedup horizons did not count again: %g -> %g, want +1", before, after)
 	}
 }

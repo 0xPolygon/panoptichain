@@ -164,8 +164,11 @@ func (r *RPCProvider) refreshStateSyncEvents(ctx context.Context, c *ethclient.C
 //     start", not all-chain totals.
 //   - Deduplication: a bounded (block hash, log index) set prevents the same
 //     log from being counted twice across overlapping ranges or retried
-//     responses. The observer further deduplicates delivery per (network,
-//     provider, block hash, log index), so republication cannot double count.
+//     responses. The observer further deduplicates delivery twice: whole
+//     batches by content digest (so republication cannot double count
+//     regardless of batch size) and per event on (network, provider, block
+//     hash, log index) for partial overlaps, both with bounded process-local
+//     state.
 //   - Restart: all of this state (cursor, dedup set, counters) is
 //     process-local. A restart re-bootstraps and Prometheus counters reset
 //     with the process; no durable exactly-once delivery is claimed.
@@ -257,9 +260,10 @@ func (r *RPCProvider) scanStateSyncLogs(ctx context.Context, receiver common.Add
 // when any returned log is inconsistent — a wrong emitter, a removed flag, a
 // block number outside [from, to], a zero block hash, an unknown signature
 // or an undecodable event — in which case the caller must reject the whole
-// chunk and retry its range. Logs already known to the dedup set (an
-// overlapping range or a re-delivered response) are valid and simply skipped:
-// they were already counted.
+// chunk and retry its range. Every returned log is decoded and validated
+// before deduplication can skip it, so a malformed log can never hide behind
+// a duplicate key: only a well-formed duplicate is suppressed as already
+// counted (an overlapping range or a re-delivered response).
 func (r *RPCProvider) decodeStateSyncChunk(receiver common.Address, from, to uint64, logs []types.Log) (*observer.StateSyncEvents, bool) {
 	staged := &observer.StateSyncEvents{}
 	chunkSeen := make(map[stateSyncLogKey]struct{})
@@ -297,29 +301,30 @@ func (r *RPCProvider) decodeStateSyncChunk(receiver common.Address, from, to uin
 			return nil, false
 		}
 
-		key := stateSyncLogKey{blockHash: l.BlockHash, logIndex: uint32(l.Index)}
-		if _, dup := chunkSeen[key]; dup || r.stateSyncSeen.seen(key) {
-			// Already counted by an earlier chunk or delivered twice within
-			// this response. Overlap is not an inconsistency.
-			continue
-		}
-
+		// Decode every returned event before deduplication gets a chance
+		// to skip it: a malformed log that reuses a counted or in-response
+		// key must reject the chunk like any other inconsistent log, not
+		// slip past validation as a "duplicate".
+		var (
+			commit *observer.StateSyncCommit
+			replay *observer.StateSyncReplay
+		)
 		switch l.Topics[0] {
 		case stateCommittedTopic:
-			commit, ok := decodeStateSyncCommit(l)
+			c, ok := decodeStateSyncCommit(l)
 			if !ok {
 				r.logMalformedStateSyncLog(l, "invalid StateCommitted encoding")
 				return nil, false
 			}
-			staged.Commits = append(staged.Commits, commit)
+			commit = c
 
 		case stateSyncReplayTopic:
-			replay, ok := decodeStateSyncReplay(l)
+			rp, ok := decodeStateSyncReplay(l)
 			if !ok {
 				r.logMalformedStateSyncLog(l, "invalid StateSyncReplay encoding")
 				return nil, false
 			}
-			staged.Replays = append(staged.Replays, replay)
+			replay = rp
 
 		default:
 			// The log filter asks for exactly our two topics; anything else
@@ -328,6 +333,19 @@ func (r *RPCProvider) decodeStateSyncChunk(receiver common.Address, from, to uin
 			return nil, false
 		}
 
+		key := stateSyncLogKey{blockHash: l.BlockHash, logIndex: uint32(l.Index)}
+		if _, dup := chunkSeen[key]; dup || r.stateSyncSeen.seen(key) {
+			// A well-formed duplicate: already counted by an earlier chunk
+			// or delivered twice within this response. Overlap is not an
+			// inconsistency.
+			continue
+		}
+
+		if commit != nil {
+			staged.Commits = append(staged.Commits, commit)
+		} else {
+			staged.Replays = append(staged.Replays, replay)
+		}
 		chunkSeen[key] = struct{}{}
 	}
 

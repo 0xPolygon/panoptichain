@@ -2,6 +2,8 @@ package observer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -12,10 +14,20 @@ import (
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
 
-// stateSyncSeenCap bounds the republication dedup set. It comfortably covers
-// the provider-side bootstrap window plus many cycles of ordinary state-sync
-// traffic; like the counters it guards, it is process-local.
-const stateSyncSeenCap = 4096
+const (
+	// stateSyncSeenCap bounds the per-event republication dedup set. It
+	// comfortably covers the provider-side bootstrap window plus many cycles
+	// of ordinary state-sync traffic; like the counters it guards, it is
+	// process-local.
+	stateSyncSeenCap = 4096
+
+	// stateSyncRecentBatchesCap bounds how many distinct recently delivered
+	// batches are remembered by digest. A digest is fixed-size regardless
+	// of batch size, so whole-batch republication idempotency holds for
+	// any supported publication size within this horizon; like the counters
+	// it guards, it is process-local.
+	stateSyncRecentBatchesCap = 64
+)
 
 // stateSyncEventKey identifies one observed log on one provider series.
 // Republication of the same bus message (a failed refresh re-publishing a
@@ -73,13 +85,27 @@ type StateSyncEvents struct {
 // providers observe the same chain events, so provider series must not be
 // summed for chain-level totals.
 //
-// Delivery is idempotent per series: a republication of a bus message (or any
-// concurrent re-delivery of the same events) is deduplicated on
-// (network, provider, block hash, log index), so it counts exactly once per
-// provider series. The dedup set is bounded and, like the counters,
-// process-local: it resets together with them on restart, which keeps the
-// two consistent (a reset counter never skips a re-bootstrapped event, and a
-// surviving counter never re-counts one).
+// Delivery is idempotent per series at two layers:
+//
+//   - Whole batches are deduplicated by content digest, so a republication of
+//     a bus message (a failed refresh re-publishing a stale batch, a retry,
+//     or any concurrent re-delivery) counts exactly once per provider series
+//     regardless of batch size. The digest is fixed-size, which makes this
+//     layer eviction-safe where a size-bounded per-event set alone is not:
+//     during one delivery of a batch larger than the per-event cap, the
+//     batch's own earliest keys would already be evicted by its end.
+//   - Individual events are deduplicated on (network, provider, block hash,
+//     log index), guarding partial overlaps (a later batch re-delivering
+//     some already-counted events) within its bounded horizon.
+//
+// Both layers use bounded, process-local state that resets together with the
+// counters on restart, keeping them consistent (a reset counter never skips a
+// re-bootstrapped event, and a surviving counter never re-counts one). The
+// bounded idempotency horizon is therefore: a republication is suppressed
+// while its batch digest is among the stateSyncRecentBatchesCap most recent
+// distinct batches OR its events are among the stateSyncSeenCap most recent
+// event keys on that series; beyond both horizons a re-delivery counts again.
+// No durable or all-history exactly-once delivery is claimed.
 type StateSyncEventsObserver struct {
 	commits *prometheus.CounterVec
 	replays *prometheus.CounterVec
@@ -87,6 +113,81 @@ type StateSyncEventsObserver struct {
 	seenMu    sync.Mutex
 	seenKeys  map[stateSyncEventKey]struct{}
 	seenOrder []stateSyncEventKey
+
+	batchesMu   sync.Mutex
+	batchDigest map[[sha256.Size]byte]struct{}
+	batchOrder  [][sha256.Size]byte
+}
+
+// stateSyncBatchDigest identifies one delivered batch by content: the series
+// it was observed on and every event it carries. Two deliveries of the same
+// batch produce the same digest; any difference in series, events or their
+// order does not.
+func stateSyncBatchDigest(network, provider string, events *StateSyncEvents) [sha256.Size]byte {
+	h := sha256.New()
+	var word [8]byte
+
+	writeUint64 := func(v uint64) {
+		binary.BigEndian.PutUint64(word[:], v)
+		h.Write(word[:])
+	}
+
+	h.Write([]byte(network))
+	h.Write([]byte{0})
+	h.Write([]byte(provider))
+	h.Write([]byte{0})
+
+	writeUint64(uint64(len(events.Commits)))
+	for _, c := range events.Commits {
+		h.Write(c.BlockHash[:])
+		writeUint64(uint64(c.LogIndex))
+		writeUint64(c.StateId)
+		writeUint64(c.BlockNumber)
+		if c.Success {
+			h.Write([]byte{1})
+		} else {
+			h.Write([]byte{0})
+		}
+	}
+
+	writeUint64(uint64(len(events.Replays)))
+	for _, r := range events.Replays {
+		h.Write(r.BlockHash[:])
+		writeUint64(uint64(r.LogIndex))
+		writeUint64(r.StateId)
+		writeUint64(r.BlockNumber)
+	}
+
+	var digest [sha256.Size]byte
+	h.Sum(digest[:0])
+	return digest
+}
+
+// claimBatch atomically reports whether this exact batch content has not been
+// delivered on this observer yet, recording its digest if so. The event bus
+// delivers messages from goroutines, so a republication can race the original
+// delivery and the check-and-record must be one critical section. The digest
+// ring is bounded like the per-event set: past the cap the oldest half is
+// evicted.
+func (o *StateSyncEventsObserver) claimBatch(digest [sha256.Size]byte) bool {
+	o.batchesMu.Lock()
+	defer o.batchesMu.Unlock()
+
+	if _, ok := o.batchDigest[digest]; ok {
+		return false
+	}
+	o.batchDigest[digest] = struct{}{}
+	o.batchOrder = append(o.batchOrder, digest)
+
+	if len(o.batchDigest) > stateSyncRecentBatchesCap {
+		drop := len(o.batchDigest) - stateSyncRecentBatchesCap/2
+		for _, old := range o.batchOrder[:drop] {
+			delete(o.batchDigest, old)
+		}
+		o.batchOrder = append(o.batchOrder[:0], o.batchOrder[drop:]...)
+	}
+
+	return true
 }
 
 // markSeen reports whether the event has not been counted on this
@@ -119,6 +220,17 @@ func (o *StateSyncEventsObserver) Notify(ctx context.Context, m Message) {
 	events := m.Data().(*StateSyncEvents)
 	networkName := m.Network().GetName()
 	provider := m.Provider()
+
+	// Whole-batch idempotency first: a republication of this exact batch
+	// content — a failed refresh re-publishing a stale batch, a retry, or a
+	// concurrent re-delivery — counts nothing, regardless of batch size.
+	// The fixed-size digest makes this eviction-safe where the bounded
+	// per-event set alone is not; the per-event set below still guards
+	// partial overlaps within its own horizon.
+	if !o.claimBatch(stateSyncBatchDigest(networkName, provider, events)) {
+		return
+	}
+
 	series := stateSyncEventKey{network: networkName, provider: provider}
 
 	for _, commit := range events.Commits {
@@ -173,6 +285,7 @@ func (o *StateSyncEventsObserver) Register(eb *EventBus) {
 	eb.Subscribe(topics.BorStateSyncEvents, o)
 
 	o.seenKeys = make(map[stateSyncEventKey]struct{})
+	o.batchDigest = make(map[[sha256.Size]byte]struct{})
 
 	o.commits = metrics.NewCounter(
 		metrics.RPC,
