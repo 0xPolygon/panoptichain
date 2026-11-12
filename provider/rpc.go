@@ -84,6 +84,7 @@ type RPCProvider struct {
 	stateSyncBootstrapped bool
 	stateSyncCursor       uint64
 	stateSyncSeen         *stateSyncSeenLogs
+	stateSyncEventsOptIn  bool
 	// prevCheckpointID is the header block ID of the most recent checkpoint
 	// whose signatures were counted. Checkpoints are republished on every poll
 	// cycle, so this lets us mark republishes as seen and fire the counters
@@ -182,6 +183,7 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		accountBalanceBatchSize: balanceBatchSize,
 		accountBalanceTimeout:   balanceTimeout,
 		hasTxPool:               cfg.TxPool,
+		stateSyncEventsOptIn:    cfg.StateSyncEvents,
 		fetchValidatorBalances:  fetchValidatorBalances,
 		fetchMissedProposals:    fetchMissedProposals,
 	}
@@ -196,7 +198,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	// Reset this cycle's state-sync event accumulation before any fallible
 	// setup. If the dial below fails, PublishEvents will deliver an empty
 	// batch instead of re-delivering the previous cycle's events.
-	if r.contracts.StateSyncReceiverAddress != nil {
+	if r.stateSyncEventsEnabled() {
 		r.stateSyncEvents = &observer.StateSyncEvents{}
 	}
 
@@ -288,7 +290,7 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 		// deduplicates on (network, provider, block hash, log index), so
 		// even a concurrent re-delivery cannot double count. stateSyncEvents
 		// is only non-nil once state-sync scanning has been initialized for
-		// this provider (a configured StateReceiver address).
+		// this provider (see stateSyncEventsEnabled).
 		events := r.stateSyncEvents
 		r.stateSyncEvents = &observer.StateSyncEvents{}
 		r.bus.Publish(ctx, topics.BorStateSyncEvents, observer.NewMessage(r.network, r.label, events))

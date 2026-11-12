@@ -69,15 +69,27 @@ func replayLog(block, stateId uint64, index uint) types.Log {
 	}
 }
 
-func newStateSyncProvider(lookback uint64) *RPCProvider {
+// newFreshStateSyncProvider returns a provider whose scan has not
+// bootstrapped yet.
+func newFreshStateSyncProvider() *RPCProvider {
 	return &RPCProvider{
 		logger:        NewLogger(nil, "test"),
-		blockLookBack: lookback,
 		stateSyncSeen: newStateSyncSeenLogs(),
 		// recordStateSyncLogs is tested directly, without a full scan cycle
 		// to initialize the accumulator.
 		stateSyncEvents: &observer.StateSyncEvents{},
 	}
+}
+
+// newStateSyncProvider returns a provider whose scan already bootstrapped
+// with its cursor at the given block, so the next scan covers the blocks
+// after it. Production bootstraps at the finalized head and scans nothing on
+// that first cycle (see TestScanStateSyncLogs_BootstrapStartsAtFinalizedHead).
+func newStateSyncProvider(cursor uint64) *RPCProvider {
+	r := newFreshStateSyncProvider()
+	r.stateSyncBootstrapped = true
+	r.stateSyncCursor = cursor
+	return r
 }
 
 // rangeRecorder captures the ranges a scan requests and answers them from a
@@ -265,7 +277,7 @@ func TestDecodeStateSyncReplay(t *testing.T) {
 // replays, several state IDs delivered in one synthetic transaction, and a
 // log delivered twice within one response.
 func TestDecodeStateSyncChunk(t *testing.T) {
-	r := newStateSyncProvider(1000)
+	r := newStateSyncProvider(0)
 
 	logs := []types.Log{
 		commitLog(100, 1, 0, true),
@@ -315,7 +327,7 @@ func TestDecodeStateSyncChunk(t *testing.T) {
 // A StateSyncReplay in an ordinary transaction (a real transaction hash, not
 // Bor's synthetic state-sync receipt) is the same event and decodes the same.
 func TestDecodeStateSyncChunk_OrdinaryTransactionReplay(t *testing.T) {
-	r := newStateSyncProvider(1000)
+	r := newStateSyncProvider(0)
 
 	l := replayLog(100, 42, 0)
 	l.TxHash = common.HexToHash("0x00000000000000000000000000000000000000000000000000000000feedbeef")
@@ -418,7 +430,7 @@ func TestDecodeStateSyncChunk_InconsistentResponseRejected(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := newStateSyncProvider(1000)
+			r := newStateSyncProvider(0)
 
 			staged, ok := r.decodeStateSyncChunk(stateReceiverAddress, 100, 100, []types.Log{inRange, tt.log})
 			if ok {
@@ -441,56 +453,52 @@ func TestDecodeStateSyncChunk_InconsistentResponseRejected(t *testing.T) {
 	}
 }
 
-// A fresh provider bootstraps a fixed lookback below the current finalized
-// head and scans forward in fixed chunks; an empty scan still advances the
-// cursor (a zero-traffic scan is a successful scan).
-func TestScanStateSyncLogs_BootstrapAndEmptyScan(t *testing.T) {
-	r := newStateSyncProvider(1000)
+// A fresh provider bootstraps at the current finalized head and scans
+// nothing that cycle: these events feed counters, so there is no lookback
+// that would report old events as new on every restart. The next cycle scans
+// only the blocks finalized since, in fixed chunks, and an empty scan still
+// advances the cursor (a zero-traffic scan is a successful scan).
+func TestScanStateSyncLogs_BootstrapStartsAtFinalizedHead(t *testing.T) {
+	r := newFreshStateSyncProvider()
+	r.blockLookBack = 1000 // the shared log-filter lookback must not apply here
 	rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
 
-	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec.fetch)
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 2500, rec.fetch)
 
-	wantRanges := [][2]uint64{{1, 100}, {101, 200}, {201, 250}}
+	if len(rec.ranges) != 0 {
+		t.Errorf("bootstrap scanned %v, want nothing", rec.ranges)
+	}
+	if !r.stateSyncBootstrapped || r.stateSyncCursor != 2500 {
+		t.Errorf("bootstrapped=%v cursor=%d, want true and 2500", r.stateSyncBootstrapped, r.stateSyncCursor)
+	}
+
+	r.stateSyncEvents = &observer.StateSyncEvents{}
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 2750, rec.fetch)
+
+	wantRanges := [][2]uint64{{2501, 2600}, {2601, 2700}, {2701, 2750}}
 	if !slices.Equal(rec.ranges, wantRanges) {
 		t.Errorf("ranges = %v, want %v", rec.ranges, wantRanges)
 	}
-	if r.stateSyncCursor != 250 {
-		t.Errorf("cursor = %d, want 250", r.stateSyncCursor)
+	if r.stateSyncCursor != 2750 {
+		t.Errorf("cursor = %d, want 2750", r.stateSyncCursor)
 	}
 	if len(r.stateSyncEvents.Commits) != 0 || len(r.stateSyncEvents.Replays) != 0 {
 		t.Errorf("empty scan produced events")
 	}
 
-	// A second cycle with the same finalized head does nothing.
+	// A further cycle with the same finalized head does nothing.
 	rec.ranges = nil
 	r.stateSyncEvents = &observer.StateSyncEvents{}
-	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec.fetch)
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 2750, rec.fetch)
 	if len(rec.ranges) != 0 {
 		t.Errorf("caught-up scan refetched %v", rec.ranges)
-	}
-}
-
-func TestScanStateSyncLogs_BootstrapLookback(t *testing.T) {
-	r := newStateSyncProvider(1000)
-	rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
-
-	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 2500, rec.fetch)
-
-	if len(rec.ranges) == 0 {
-		t.Fatal("no ranges scanned")
-	}
-	if got := rec.ranges[0]; got != [2]uint64{1500, 1599} {
-		t.Errorf("first range = %v, want [1500 1599]", got)
-	}
-	if r.stateSyncCursor != 2500 {
-		t.Errorf("cursor = %d, want 2500", r.stateSyncCursor)
 	}
 }
 
 // A chunk failure must not skip blocks: the cursor stays at the last
 // successful chunk, and the next cycle resumes the failed range.
 func TestScanStateSyncLogs_PartialFailureRetriesWithoutSkipping(t *testing.T) {
-	r := newStateSyncProvider(250)
+	r := newStateSyncProvider(299)
 
 	chunkOne := [2]uint64{300, 399}
 	chunkTwo := [2]uint64{400, 499}
@@ -554,7 +562,7 @@ func TestScanStateSyncLogs_PartialFailureRetriesWithoutSkipping(t *testing.T) {
 func TestScanStateSyncLogs_OverlappingDeliveryDeduplicates(t *testing.T) {
 	// Lookback 1000 keeps block 50 inside the bootstrap window (the default
 	// lookback of 100 with a finalized head of 200 starts at block 100).
-	r := newStateSyncProvider(1000)
+	r := newStateSyncProvider(0)
 
 	allLogs := map[uint64][]types.Log{
 		50:  {commitLog(50, 1, 0, true)},
@@ -593,7 +601,7 @@ func TestScanStateSyncLogs_OverlappingDeliveryDeduplicates(t *testing.T) {
 // (which permanently skipped its blocks) and treating the chunk as
 // unsuccessful.
 func TestScanStateSyncLogs_InvalidChunkIsRetriedNotSkipped(t *testing.T) {
-	r := newStateSyncProvider(100)
+	r := newStateSyncProvider(0)
 
 	calls := 0
 	fetch := func(_ context.Context, from, to uint64) ([]types.Log, error) {
@@ -642,7 +650,7 @@ func TestScanStateSyncLogs_MalformedDuplicateRejectsChunk(t *testing.T) {
 			name = "duplicate of an already-counted log"
 		}
 		t.Run(name, func(t *testing.T) {
-			r := newStateSyncProvider(1000)
+			r := newStateSyncProvider(0)
 			good := commitLog(100, 1, 0, true)
 
 			if prior {
@@ -729,7 +737,7 @@ func TestScanStateSyncLogs_InconsistentResponsesRejectedAndRetried(t *testing.T)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := newStateSyncProvider(100)
+			r := newStateSyncProvider(0)
 			bad := true
 			fetch := func(_ context.Context, from, to uint64) ([]types.Log, error) {
 				if bad {
@@ -765,7 +773,7 @@ func TestScanStateSyncLogs_InconsistentResponsesRejectedAndRetried(t *testing.T)
 // log-free block between two committed records (the synthetic receipt itself
 // is not part of these log fixtures, only its events are).
 func TestScanStateSyncLogs_NoCodeReceiverRecordAbsent(t *testing.T) {
-	r := newStateSyncProvider(100)
+	r := newStateSyncProvider(0)
 	rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{
 		{1, 100}: {
 			commitLog(10, 1, 0, true),
@@ -787,7 +795,7 @@ func TestScanStateSyncLogs_NoCodeReceiverRecordAbsent(t *testing.T) {
 // here cancels the context on its first call, so the first chunk completes
 // and the scan yields before fetching a second one. The next cycle resumes.
 func TestScanStateSyncLogs_CancellationYields(t *testing.T) {
-	r := newStateSyncProvider(100)
+	r := newStateSyncProvider(99999)
 	r.stateSyncBootstrapped = true
 	r.stateSyncCursor = 100
 
@@ -815,7 +823,7 @@ func TestScanStateSyncLogs_CancellationYields(t *testing.T) {
 // at its per-cycle chunk budget with the cursor at the last completed chunk,
 // and the next cycle resumes exactly there.
 func TestScanStateSyncLogs_PerCycleChunkBudget(t *testing.T) {
-	r := newStateSyncProvider(100)
+	r := newStateSyncProvider(99899)
 	r.stateSyncBootstrapped = true
 	r.stateSyncCursor = 0
 
@@ -851,7 +859,7 @@ func TestScanStateSyncLogs_PerCycleChunkBudget(t *testing.T) {
 // ever scanned. (A reorg of already-finalized blocks is not detected by this
 // collector; it is a chain integrity failure.)
 func TestScanStateSyncLogs_FinalizedBehindCursorStalls(t *testing.T) {
-	r := newStateSyncProvider(100)
+	r := newStateSyncProvider(399)
 	rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
 
 	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 500, rec.fetch)
@@ -868,28 +876,34 @@ func TestScanStateSyncLogs_FinalizedBehindCursorStalls(t *testing.T) {
 	}
 }
 
-// All scan state is process-local: a restart builds a fresh provider that
-// re-bootstraps the same lookback window (counters reset with the process
-// too, so this is not double counting in one series — it is the documented
-// restart behavior).
-func TestScanStateSyncLogs_RestartRebootstrap(t *testing.T) {
-	first := newStateSyncProvider(1000)
+// All scan state is process-local. A restart builds a fresh provider that
+// bootstraps at the then-current finalized head: blocks the previous process
+// already counted are not rescanned (no double count on restart), and blocks
+// finalized while it was down are not counted (a documented gap).
+func TestScanStateSyncLogs_RestartDoesNotRescan(t *testing.T) {
+	first := newStateSyncProvider(0)
 	rec1 := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
 	first.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec1.fetch)
+	if first.stateSyncCursor != 250 {
+		t.Fatalf("first cursor = %d, want 250", first.stateSyncCursor)
+	}
 
-	second := newStateSyncProvider(1000)
+	second := newFreshStateSyncProvider()
 	rec2 := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
-	second.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec2.fetch)
+	second.scanStateSyncLogs(context.Background(), stateReceiverAddress, 400, rec2.fetch)
 
-	if !slices.Equal(rec1.ranges, rec2.ranges) {
-		t.Errorf("restart ranges %v differ from first bootstrap %v", rec2.ranges, rec1.ranges)
+	if len(rec2.ranges) != 0 {
+		t.Errorf("restart rescanned %v, want nothing", rec2.ranges)
+	}
+	if second.stateSyncCursor != 400 {
+		t.Errorf("restart cursor = %d, want 400", second.stateSyncCursor)
 	}
 }
 
 // A finalized head of zero means the finalized header was not fetched this
 // cycle; the scan must do nothing and try again next cycle.
 func TestScanStateSyncLogs_NoFinalizedHead(t *testing.T) {
-	r := newStateSyncProvider(1000)
+	r := newFreshStateSyncProvider()
 	rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
 
 	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 0, rec.fetch)
@@ -959,7 +973,7 @@ func waitForDelivery(t *testing.T, done <-chan struct{}) {
 // dial and publishing consumes the batch, so the post-failure publication
 // carries an empty batch — not the stale events — and nothing double counts.
 func TestRefreshStateDialFailureDoesNotRepublish(t *testing.T) {
-	r := newStateSyncProvider(100)
+	r := newStateSyncProvider(0)
 	r.bus = observer.NewEventBus()
 	r.refreshStateTime = new(time.Duration)
 
@@ -1000,7 +1014,7 @@ func TestRefreshStateDialFailureDoesNotRepublish(t *testing.T) {
 // Publishing twice without a refresh in between must not re-deliver the
 // consumed batch's events: the second publication carries an empty batch.
 func TestPublishEventsConsumesBatch(t *testing.T) {
-	r := newStateSyncProvider(100)
+	r := newStateSyncProvider(0)
 	r.bus = observer.NewEventBus()
 
 	o := &deliveryCountingObserver{done: make(chan struct{}, 10)}
@@ -1030,5 +1044,32 @@ func TestPublishEventsConsumesBatch(t *testing.T) {
 	}
 	if got := o.events.Load(); got != 2 {
 		t.Fatalf("republished batch re-delivered events: %d over 2 publications, want 2 (no double count)", got)
+	}
+}
+
+// The scan costs eth_getLogs calls every cycle, so it runs only when the
+// provider opts in and has a StateReceiver address to scan.
+func TestStateSyncEventsEnabled(t *testing.T) {
+	receiver := stateReceiverAddress.Hex()
+
+	for _, tc := range []struct {
+		name     string
+		optIn    bool
+		receiver *string
+		want     bool
+	}{
+		{"opted in with receiver", true, &receiver, true},
+		{"receiver without opt-in", false, &receiver, false},
+		{"opt-in without receiver", true, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newFreshStateSyncProvider()
+			r.stateSyncEventsOptIn = tc.optIn
+			r.contracts.StateSyncReceiverAddress = tc.receiver
+
+			if got := r.stateSyncEventsEnabled(); got != tc.want {
+				t.Errorf("stateSyncEventsEnabled() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

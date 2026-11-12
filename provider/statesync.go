@@ -101,13 +101,29 @@ func (s *stateSyncSeenLogs) add(k stateSyncLogKey) {
 // without a live RPC.
 type stateSyncLogFetcher func(ctx context.Context, from, to uint64) ([]types.Log, error)
 
+// stateSyncEventsEnabled reports whether this provider scans state-sync
+// logs: it must opt in with `state_sync_events` and have a StateReceiver
+// address configured. The opt-in exists because the scan costs eth_getLogs
+// calls on every cycle, per provider, whether or not the state_sync_events
+// observer is enabled, and deployments usually configure several providers
+// per network.
+func (r *RPCProvider) stateSyncEventsEnabled() bool {
+	return r.stateSyncEventsOptIn && r.contracts.StateSyncReceiverAddress != nil
+}
+
 // refreshStateSyncEvents scans finalized blocks for StateCommitted and
-// StateSyncReplay logs when a state sync receiver is configured. It is a
+// StateSyncReplay logs when enabled (see stateSyncEventsEnabled). It is a
 // metrics-only first slice: all scan state is process-local. The scan runs
 // under a subordinate timeout so a large backlog or a slow log endpoint
 // cannot starve the collectors that share this refresh cycle.
+//
+// It does not reuse getFilterOpts, which scans from the previous latest block
+// to the current latest block. That range includes unfinalized blocks, so a
+// reorg could count an event twice, and it overlaps the previous range by one
+// block. It also has no size bound, which public Bor RPCs reject. This scan
+// keeps its own cursor over finalized blocks in fixed chunks instead.
 func (r *RPCProvider) refreshStateSyncEvents(ctx context.Context, c *ethclient.Client) {
-	if r.contracts.StateSyncReceiverAddress == nil {
+	if !r.stateSyncEventsEnabled() {
 		return
 	}
 
@@ -158,10 +174,12 @@ func (r *RPCProvider) refreshStateSyncEvents(ctx context.Context, c *ethclient.C
 //     (including its subordinate scan deadline). Catch-up resumes at the
 //     last completed chunk next cycle, leaving headroom for the other
 //     collectors in the cycle.
-//   - Bootstrap: the first scan starts a fixed lookback (blockLookBack, the
-//     same default used by the other log filters) below the current finalized
-//     head. Coverage starts there, not at genesis: counts are "since coverage
-//     start", not all-chain totals.
+//   - Bootstrap: the first scan sets the cursor to the current finalized head
+//     and counts only blocks finalized after it. There is deliberately no
+//     lookback: these events feed counters, and backfilled history would land
+//     as a burst at process start, reporting old receiver failures as new ones
+//     on every restart. Counts are "since process start", not all-chain
+//     totals.
 //   - Deduplication: a bounded (block hash, log index) set prevents the same
 //     log from being counted twice across overlapping ranges or retried
 //     responses. The observer further deduplicates delivery twice: whole
@@ -170,8 +188,10 @@ func (r *RPCProvider) refreshStateSyncEvents(ctx context.Context, c *ethclient.C
 //     hash, log index) for partial overlaps, both with bounded process-local
 //     state.
 //   - Restart: all of this state (cursor, dedup set, counters) is
-//     process-local. A restart re-bootstraps and Prometheus counters reset
-//     with the process; no durable exactly-once delivery is claimed.
+//     process-local. A restart re-bootstraps at the then-current finalized
+//     head and Prometheus counters reset with the process, so events
+//     finalized while panoptichain was down are never counted (a gap, not a
+//     double count).
 func (r *RPCProvider) scanStateSyncLogs(ctx context.Context, receiver common.Address, finalized uint64, fetch stateSyncLogFetcher) {
 	// Each cycle publishes only what this scan accumulates.
 	r.stateSyncEvents = &observer.StateSyncEvents{}
@@ -182,17 +202,14 @@ func (r *RPCProvider) scanStateSyncLogs(ctx context.Context, receiver common.Add
 	}
 
 	if !r.stateSyncBootstrapped {
-		start := uint64(1)
-		if finalized > r.blockLookBack+1 {
-			start = finalized - r.blockLookBack
-		}
-		r.stateSyncCursor = start - 1
+		r.stateSyncCursor = finalized
 		r.stateSyncBootstrapped = true
 
 		r.logger.Info().
-			Uint64("start_block", start).
 			Uint64("finalized_block", finalized).
-			Msg("Bootstrapping state sync event scan")
+			Msg("Bootstrapping state sync event scan at the finalized head")
+
+		return
 	}
 
 	// A lagging RPC view can report a finalized head below our cursor. Wait

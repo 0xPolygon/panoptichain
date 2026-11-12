@@ -85,6 +85,11 @@ type RPC struct {
 	Observers               *Observers     `mapstructure:"observers"`
 	ValidatorBalances       *bool          `mapstructure:"validator_balances"`
 	MissedProposals         *bool          `mapstructure:"missed_proposals"`
+	// StateSyncEvents opts this provider into scanning finalized blocks for
+	// StateReceiver StateCommitted/StateSyncReplay logs. It requires
+	// contracts.state_sync_receiver_address and costs eth_getLogs calls every
+	// cycle, so it is off by default.
+	StateSyncEvents bool `mapstructure:"state_sync_events"`
 }
 
 // Contracts maps specific contracts to their addresses. This is used to
