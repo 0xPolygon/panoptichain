@@ -622,6 +622,23 @@
     ## panoptichain was down is never added and every later range total inherits
     ## the gap; use the gauge when a window must be exact across a restart.
     ##
+    ## @param client_cert - string - optional
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_CLIENT_CERT - string - optional
+    ## Path to a PEM client certificate presented for mTLS, for networks that
+    ## only accept mTLS. Must be set together with `client_key`; startup fails
+    ## if only one is set or either file is missing. Without them the
+    ## connection is server-authenticated TLS and `api_key` is the only
+    ## credential.
+    ##
+    ## The key pair is re-read every polling interval, so replacing the files
+    ## (e.g. updating the mounted Kubernetes secret) rotates the certificate
+    ## without a restart. A cycle whose key pair cannot be loaded fails and
+    ## publishes nothing.
+    ##
+    ## @param client_key - string - optional
+    ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_CLIENT_KEY - string - optional
+    ## Path to the PEM private key for `client_cert`.
+    ##
     ## @param interval - string - optional - default: runner.interval
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_INTERVAL - string - optional - default: runner.interval
     ## The polling interval for the `succinct_prover_network` provider.
@@ -638,6 +655,12 @@
   #         tag: "katana"
   #       - address: "0xacfe00ba538e753cd0a73ede2c5c27cc44a02fa8"
   #         tag: "agglayer-node-mainnet"
+  #   - name: "Succinct Prover Network"
+  #     label: "succinct.xyz"
+  #     url: "rpc.example.succinct.xyz:443"
+  #     api_key: "$SUCCINCT_PROVER_NETWORK_API_KEY"
+  #     client_cert: "/etc/panoptichain/mtls/cert.pem"
+  #     client_key: "/etc/panoptichain/mtls/key.pem"
 
   ## @param aggchain - list of objects - optional
   ## The `aggchain` provider fetches data from L1 and L2 RPCs. This should be 
