@@ -136,7 +136,13 @@ func (o *StateSyncEventsObserver) Register(eb *EventBus) {
 			"are counted; there is no startup backfill. Process-local counter: it resets on restart.",
 	)
 
+	// Zero-initialize only the providers that scan. A provider that never
+	// scans must not export a 0 failure series, which reads as "no failures"
+	// rather than "not measured".
 	for _, rpc := range config.Config().Providers.RPCs {
+		if !rpc.StateSyncEvents || rpc.Contracts.StateSyncReceiverAddress == nil {
+			continue
+		}
 		o.commits.WithLabelValues(rpc.Name, rpc.Label, "success").Add(0)
 		o.commits.WithLabelValues(rpc.Name, rpc.Label, "failure").Add(0)
 		o.replays.WithLabelValues(rpc.Name, rpc.Label).Add(0)

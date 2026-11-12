@@ -240,3 +240,74 @@ func TestStateSyncEvents_ExpositionNames(t *testing.T) {
 
 	t.Fatal("state sync commits counter family missing from the registry")
 }
+
+// Only providers that opt in and have a receiver address get zero-valued
+// series up front. A provider that never scans must not export series that
+// read as "no failures".
+func TestStateSyncEvents_InitializesOnlyScanningProviders(t *testing.T) {
+	dir := t.TempDir()
+	body := `
+namespace: test
+providers:
+  rpc:
+    - name: "Polygon Mainnet"
+      url: "https://rpc.example"
+      label: "scanning"
+      state_sync_events: true
+      contracts:
+        state_sync_receiver_address: "0x0000000000000000000000000000000000001001"
+    - name: "Polygon Mainnet"
+      url: "https://rpc.example"
+      label: "opted-out"
+      contracts:
+        state_sync_receiver_address: "0x0000000000000000000000000000000000001001"
+    - name: "Polygon Mainnet"
+      url: "https://rpc.example"
+      label: "no-receiver"
+      state_sync_events: true
+`
+	if err := os.WriteFile(dir+"/config.yml", []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	if err := config.Init(); err != nil {
+		t.Fatalf("config.Init: %v", err)
+	}
+
+	o := new(StateSyncEventsObserver)
+	o.Register(NewEventBus())
+
+	// The counters live on the process-wide registry, which other tests also
+	// write to, so look only at this test's provider labels.
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	series := map[string]int{}
+	for _, f := range families {
+		name := f.GetName()
+		if name != "test_rpc_state_sync_commits" && name != "test_rpc_state_sync_replays" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "provider" {
+					series[name+"/"+l.GetValue()]++
+				}
+			}
+		}
+	}
+
+	if got := series["test_rpc_state_sync_commits/scanning"]; got != 2 {
+		t.Errorf("scanning commit series = %d, want 2 (success and failure)", got)
+	}
+	if got := series["test_rpc_state_sync_replays/scanning"]; got != 1 {
+		t.Errorf("scanning replay series = %d, want 1", got)
+	}
+	for _, label := range []string{"opted-out", "no-receiver"} {
+		if series["test_rpc_state_sync_commits/"+label]+series["test_rpc_state_sync_replays/"+label] != 0 {
+			t.Errorf("provider %q was initialized but never scans", label)
+		}
+	}
+}
