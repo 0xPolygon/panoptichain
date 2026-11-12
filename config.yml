@@ -771,6 +771,7 @@
   #   - "spn_requester_usage"
   #   - "stake_manager"
   #   - "state_sync"
+  #   - "state_sync_events"
   #   - "stolen_block"
   #   - "system"
   #   - "time_to_finalized"

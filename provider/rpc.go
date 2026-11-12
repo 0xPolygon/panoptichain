@@ -74,6 +74,16 @@ type RPCProvider struct {
 	// PoS
 	stateSync            map[bool]*observer.StateSync
 	checkpointSignatures map[bool]*observer.CheckpointSignatures
+
+	// PoS state-sync outcome scanning (StateCommitted/StateSyncReplay logs).
+	// stateSyncEvents accumulates the events decoded during the current
+	// refresh cycle; the cursor, bootstrap flag and dedup set carry the
+	// scan position. All of it is process-local and resets on restart, as
+	// documented in scanStateSyncLogs.
+	stateSyncEvents       *observer.StateSyncEvents
+	stateSyncBootstrapped bool
+	stateSyncCursor       uint64
+	stateSyncSeen         *stateSyncSeenLogs
 	// prevCheckpointID is the header block ID of the most recent checkpoint
 	// whose signatures were counted. Checkpoints are republished on every poll
 	// cycle, so this lets us mark republishes as seen and fire the counters
@@ -161,6 +171,7 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		checkpointSignatures:    make(map[bool]*observer.CheckpointSignatures),
 		validatorBalances:       make(observer.ValidatorWalletBalances),
 		missedBlockProposal:     make(observer.MissedBlockProposal),
+		stateSyncSeen:           newStateSyncSeenLogs(),
 		bridgeEventTimes:        make(observer.BridgeEventTimes),
 		claimEventTimes:         make(observer.ClaimEventTimes),
 		trustedSequencers:       make(map[uint32]*RPCProvider),
@@ -194,6 +205,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	r.refreshBlockBuffer(ctx, c)
 	r.refreshStateSync(ctx, c, true)
 	r.refreshStateSync(ctx, c, false)
+	r.refreshStateSyncEvents(ctx, c)
 	r.refreshCheckpoint(ctx, c)
 
 	if r.network.IsPolygonPoS() {
@@ -259,6 +271,10 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 
 	for _, stateSync := range r.stateSync {
 		r.bus.Publish(ctx, topics.BorStateSync, observer.NewMessage(r.network, r.label, stateSync))
+	}
+
+	if r.stateSyncEvents != nil && (len(r.stateSyncEvents.Commits) > 0 || len(r.stateSyncEvents.Replays) > 0) {
+		r.bus.Publish(ctx, topics.BorStateSyncEvents, observer.NewMessage(r.network, r.label, r.stateSyncEvents))
 	}
 
 	for _, checkpointSignatures := range r.checkpointSignatures {
