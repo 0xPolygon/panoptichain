@@ -50,8 +50,8 @@ const (
 	// account collectors that share the cycle's context.
 	stateSyncScanTimeout = 15 * time.Second
 
-	// stateSyncSeenCap bounds the deduplication set. It comfortably covers the
-	// bootstrap window plus many cycles of ordinary state-sync traffic.
+	// stateSyncSeenCap bounds the deduplication set. It comfortably covers
+	// many cycles of ordinary state-sync traffic.
 	stateSyncSeenCap = 4096
 )
 
@@ -64,8 +64,8 @@ type stateSyncLogKey struct {
 
 // stateSyncSeenLogs is a bounded FIFO set of log keys that have already been
 // counted. It guards against counting the same event twice if an already
-// delivered log ever comes back in an overlapping range, a retried response,
-// or a republished bus message.
+// delivered log comes back in an overlapping range, a duplicate log entry, or
+// a retried RPC response.
 type stateSyncSeenLogs struct {
 	keys  map[stateSyncLogKey]struct{}
 	order []stateSyncLogKey
@@ -102,12 +102,14 @@ func (s *stateSyncSeenLogs) add(k stateSyncLogKey) {
 type stateSyncLogFetcher func(ctx context.Context, from, to uint64) ([]types.Log, error)
 
 // refreshStateSyncEvents scans finalized blocks for StateCommitted and
-// StateSyncReplay logs when a state sync receiver is configured. It is a
+// StateSyncReplay logs when both the per-RPC scan flag and a state sync
+// receiver are configured. The observer's enablement controls metric
+// consumption independently; it does not enable this RPC work. This is a
 // metrics-only first slice: all scan state is process-local. The scan runs
 // under a subordinate timeout so a large backlog or a slow log endpoint
 // cannot starve the collectors that share this refresh cycle.
 func (r *RPCProvider) refreshStateSyncEvents(ctx context.Context, c *ethclient.Client) {
-	if r.contracts.StateSyncReceiverAddress == nil {
+	if !r.stateSyncEventsEnabled || r.contracts.StateSyncReceiverAddress == nil {
 		return
 	}
 
@@ -158,20 +160,22 @@ func (r *RPCProvider) refreshStateSyncEvents(ctx context.Context, c *ethclient.C
 //     (including its subordinate scan deadline). Catch-up resumes at the
 //     last completed chunk next cycle, leaving headroom for the other
 //     collectors in the cycle.
-//   - Bootstrap: the first scan starts a fixed lookback (blockLookBack, the
-//     same default used by the other log filters) below the current finalized
-//     head. Coverage starts there, not at genesis: counts are "since coverage
-//     start", not all-chain totals.
+//   - Bootstrap: the first scan records the current finalized head as its
+//     cursor without fetching or counting historical events. Only blocks
+//     finalized after bootstrap are counted, avoiding a restart burst of old
+//     outcomes. While this process stays running, the same cursor retains and
+//     catches up on any backlog; a later restart establishes a new head.
 //   - Deduplication: a bounded (block hash, log index) set prevents the same
 //     log from being counted twice across overlapping ranges or retried
-//     responses. The observer further deduplicates delivery twice: whole
-//     batches by content digest (so republication cannot double count
-//     regardless of batch size) and per event on (network, provider, block
-//     hash, log index) for partial overlaps, both with bounded process-local
-//     state.
-//   - Restart: all of this state (cursor, dedup set, counters) is
-//     process-local. A restart re-bootstraps and Prometheus counters reset
-//     with the process; no durable exactly-once delivery is claimed.
+//     responses.
+//   - Restart: the cursor, dedup set and counters are process-local. A restart
+//     bootstraps at the new finalized head and Prometheus counters reset with
+//     the process; no historical backfill or durable exactly-once delivery is
+//     claimed.
+//
+// getFilterOpts is not reusable here: its latest-head/previous-height bounds
+// move as a pair, while this cursor needs independent finalized upper bounds
+// and fixed chunks that commit one at a time.
 func (r *RPCProvider) scanStateSyncLogs(ctx context.Context, receiver common.Address, finalized uint64, fetch stateSyncLogFetcher) {
 	// Each cycle publishes only what this scan accumulates.
 	r.stateSyncEvents = &observer.StateSyncEvents{}
@@ -182,17 +186,17 @@ func (r *RPCProvider) scanStateSyncLogs(ctx context.Context, receiver common.Add
 	}
 
 	if !r.stateSyncBootstrapped {
-		start := uint64(1)
-		if finalized > r.blockLookBack+1 {
-			start = finalized - r.blockLookBack
-		}
-		r.stateSyncCursor = start - 1
+		// Counters start at zero with the process. Do not add a lookback's
+		// historical events to them as a burst at startup; begin with blocks
+		// finalized after this head instead. The cursor still catches up on
+		// gaps that occur while this process remains running.
+		r.stateSyncCursor = finalized
 		r.stateSyncBootstrapped = true
 
 		r.logger.Info().
-			Uint64("start_block", start).
-			Uint64("finalized_block", finalized).
-			Msg("Bootstrapping state sync event scan")
+			Uint64("cursor_block", finalized).
+			Msg("Bootstrapping state sync event scan after finalized head")
+		return
 	}
 
 	// A lagging RPC view can report a finalized head below our cursor. Wait

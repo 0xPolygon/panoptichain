@@ -2,9 +2,12 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -12,8 +15,10 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/observer"
 	"github.com/0xPolygon/panoptichain/observer/topics"
 )
@@ -441,49 +446,70 @@ func TestDecodeStateSyncChunk_InconsistentResponseRejected(t *testing.T) {
 	}
 }
 
-// A fresh provider bootstraps a fixed lookback below the current finalized
-// head and scans forward in fixed chunks; an empty scan still advances the
-// cursor (a zero-traffic scan is a successful scan).
+// A fresh provider records the current finalized head as its cursor without
+// fetching or counting historical logs. Only blocks finalized after bootstrap
+// are scanned and counted.
+func TestScanStateSyncLogs_BootstrapSkipsHistoricalAndCountsNextFinalized(t *testing.T) {
+	r := newStateSyncProvider(1000)
+	rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{
+		{250, 250}: {commitLog(250, 1, 0, false)},
+		{251, 251}: {commitLog(251, 2, 0, true)},
+	}}
+
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec.fetch)
+
+	if len(rec.ranges) != 0 {
+		t.Fatalf("fresh boot fetched historical ranges %v, want none", rec.ranges)
+	}
+	if r.stateSyncCursor != 250 {
+		t.Errorf("cursor = %d, want finalized head 250", r.stateSyncCursor)
+	}
+	if len(r.stateSyncEvents.Commits) != 0 || len(r.stateSyncEvents.Replays) != 0 {
+		t.Fatal("fresh boot counted historical events")
+	}
+
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 251, rec.fetch)
+	if want := [][2]uint64{{251, 251}}; !slices.Equal(rec.ranges, want) {
+		t.Errorf("ranges after bootstrap = %v, want %v", rec.ranges, want)
+	}
+	if got := commitIds(r.stateSyncEvents); !slices.Equal(got, []uint64{2}) {
+		t.Errorf("commits after bootstrap = %v, want only next finalized event [2]", got)
+	}
+}
+
+// A caught-up scan does no work; when a later finalized head contains no
+// events, the successful empty scan still advances the cursor.
 func TestScanStateSyncLogs_BootstrapAndEmptyScan(t *testing.T) {
 	r := newStateSyncProvider(1000)
 	rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
 
 	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec.fetch)
-
-	wantRanges := [][2]uint64{{1, 100}, {101, 200}, {201, 250}}
-	if !slices.Equal(rec.ranges, wantRanges) {
-		t.Errorf("ranges = %v, want %v", rec.ranges, wantRanges)
+	if len(rec.ranges) != 0 {
+		t.Fatalf("fresh boot fetched ranges %v, want none", rec.ranges)
 	}
 	if r.stateSyncCursor != 250 {
 		t.Errorf("cursor = %d, want 250", r.stateSyncCursor)
 	}
 	if len(r.stateSyncEvents.Commits) != 0 || len(r.stateSyncEvents.Replays) != 0 {
-		t.Errorf("empty scan produced events")
+		t.Errorf("fresh boot produced events")
 	}
 
 	// A second cycle with the same finalized head does nothing.
-	rec.ranges = nil
-	r.stateSyncEvents = &observer.StateSyncEvents{}
 	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec.fetch)
 	if len(rec.ranges) != 0 {
 		t.Errorf("caught-up scan refetched %v", rec.ranges)
 	}
-}
 
-func TestScanStateSyncLogs_BootstrapLookback(t *testing.T) {
-	r := newStateSyncProvider(1000)
-	rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
-
-	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 2500, rec.fetch)
-
-	if len(rec.ranges) == 0 {
-		t.Fatal("no ranges scanned")
+	// The next finalized block is empty, but it is still a successful scan.
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 251, rec.fetch)
+	if want := [][2]uint64{{251, 251}}; !slices.Equal(rec.ranges, want) {
+		t.Errorf("empty next-block ranges = %v, want %v", rec.ranges, want)
 	}
-	if got := rec.ranges[0]; got != [2]uint64{1500, 1599} {
-		t.Errorf("first range = %v, want [1500 1599]", got)
+	if r.stateSyncCursor != 251 {
+		t.Errorf("cursor after empty scan = %d, want 251", r.stateSyncCursor)
 	}
-	if r.stateSyncCursor != 2500 {
-		t.Errorf("cursor = %d, want 2500", r.stateSyncCursor)
+	if len(r.stateSyncEvents.Commits) != 0 || len(r.stateSyncEvents.Replays) != 0 {
+		t.Errorf("empty scan produced events")
 	}
 }
 
@@ -510,6 +536,14 @@ func TestScanStateSyncLogs_PartialFailureRetriesWithoutSkipping(t *testing.T) {
 			return nil, errors.New("rpc is down")
 		}
 		return logs[key], nil
+	}
+
+	// Bootstrap performs no backfill. The backlog from 300 through 550 is
+	// therefore ongoing-process catch-up, which must retain the retry and
+	// non-skipping cursor guarantees exercised below.
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 299, fetch)
+	if len(ranges) != 0 {
+		t.Fatalf("bootstrap fetched historical ranges %v", ranges)
 	}
 
 	// Cycle 1: chunk two fails after chunk one succeeded.
@@ -552,9 +586,9 @@ func TestScanStateSyncLogs_PartialFailureRetriesWithoutSkipping(t *testing.T) {
 // earlier chunks) must not double count. Out-of-range re-delivery is not a
 // valid overlap: it rejects the chunk (see the rejection tests below).
 func TestScanStateSyncLogs_OverlappingDeliveryDeduplicates(t *testing.T) {
-	// Lookback 1000 keeps block 50 inside the bootstrap window (the default
-	// lookback of 100 with a finalized head of 200 starts at block 100).
 	r := newStateSyncProvider(1000)
+	r.stateSyncBootstrapped = true
+	r.stateSyncCursor = 0
 
 	allLogs := map[uint64][]types.Log{
 		50:  {commitLog(50, 1, 0, true)},
@@ -594,6 +628,8 @@ func TestScanStateSyncLogs_OverlappingDeliveryDeduplicates(t *testing.T) {
 // unsuccessful.
 func TestScanStateSyncLogs_InvalidChunkIsRetriedNotSkipped(t *testing.T) {
 	r := newStateSyncProvider(100)
+	r.stateSyncBootstrapped = true
+	r.stateSyncCursor = 0
 
 	calls := 0
 	fetch := func(_ context.Context, from, to uint64) ([]types.Log, error) {
@@ -643,6 +679,8 @@ func TestScanStateSyncLogs_MalformedDuplicateRejectsChunk(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			r := newStateSyncProvider(1000)
+			r.stateSyncBootstrapped = true
+			r.stateSyncCursor = 0
 			good := commitLog(100, 1, 0, true)
 
 			if prior {
@@ -730,6 +768,8 @@ func TestScanStateSyncLogs_InconsistentResponsesRejectedAndRetried(t *testing.T)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newStateSyncProvider(100)
+			r.stateSyncBootstrapped = true
+			r.stateSyncCursor = 0
 			bad := true
 			fetch := func(_ context.Context, from, to uint64) ([]types.Log, error) {
 				if bad {
@@ -766,6 +806,8 @@ func TestScanStateSyncLogs_InconsistentResponsesRejectedAndRetried(t *testing.T)
 // is not part of these log fixtures, only its events are).
 func TestScanStateSyncLogs_NoCodeReceiverRecordAbsent(t *testing.T) {
 	r := newStateSyncProvider(100)
+	r.stateSyncBootstrapped = true
+	r.stateSyncCursor = 0
 	rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{
 		{1, 100}: {
 			commitLog(10, 1, 0, true),
@@ -869,20 +911,31 @@ func TestScanStateSyncLogs_FinalizedBehindCursorStalls(t *testing.T) {
 }
 
 // All scan state is process-local: a restart builds a fresh provider that
-// re-bootstraps the same lookback window (counters reset with the process
-// too, so this is not double counting in one series — it is the documented
-// restart behavior).
-func TestScanStateSyncLogs_RestartRebootstrap(t *testing.T) {
-	first := newStateSyncProvider(1000)
-	rec1 := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
-	first.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec1.fetch)
+// records the current finalized head again. Neither process fetches or counts
+// the historical lookback, and the new process's counters start at zero.
+func TestScanStateSyncLogs_RestartSkipsHistoricalBackfill(t *testing.T) {
+	newProviderWithHistory := func() (*RPCProvider, *rangeRecorder) {
+		r := newStateSyncProvider(1000)
+		rec := &rangeRecorder{logs: map[[2]uint64][]types.Log{
+			{1, 100}:   {commitLog(50, 1, 0, false)},
+			{201, 250}: {commitLog(250, 2, 0, false)},
+		}}
+		r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec.fetch)
+		return r, rec
+	}
 
-	second := newStateSyncProvider(1000)
-	rec2 := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
-	second.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec2.fetch)
-
-	if !slices.Equal(rec1.ranges, rec2.ranges) {
-		t.Errorf("restart ranges %v differ from first bootstrap %v", rec2.ranges, rec1.ranges)
+	first, rec1 := newProviderWithHistory()
+	second, rec2 := newProviderWithHistory()
+	for i, rec := range []*rangeRecorder{rec1, rec2} {
+		if len(rec.ranges) != 0 {
+			t.Errorf("process %d fetched historical ranges %v", i+1, rec.ranges)
+		}
+	}
+	if first.stateSyncCursor != 250 || second.stateSyncCursor != 250 {
+		t.Errorf("restart cursors = %d, %d, want both 250", first.stateSyncCursor, second.stateSyncCursor)
+	}
+	if len(first.stateSyncEvents.Commits) != 0 || len(second.stateSyncEvents.Commits) != 0 {
+		t.Error("restart counted historical events")
 	}
 }
 
@@ -899,6 +952,88 @@ func TestScanStateSyncLogs_NoFinalizedHead(t *testing.T) {
 	}
 	if r.stateSyncBootstrapped {
 		t.Error("scan bootstrapped without a finalized head")
+	}
+}
+
+func TestNewRPCProvider_StateSyncEventsOptIn(t *testing.T) {
+	interval := time.Second
+	for _, enabled := range []bool{false, true} {
+		r := NewRPCProvider(nil, observer.NewEventBus(), config.RPC{
+			Name:            "test",
+			URL:             "http://localhost",
+			Label:           "test",
+			Interval:        &interval,
+			StateSyncEvents: enabled,
+		})
+		if r.stateSyncEventsEnabled != enabled {
+			t.Errorf("stateSyncEventsEnabled = %v, want %v", r.stateSyncEventsEnabled, enabled)
+		}
+	}
+}
+
+// The per-RPC flag controls the actual eth_getLogs work, independently of the
+// observer's metric registration. A configured receiver alone must not scan.
+func TestRefreshStateSyncEvents_ProviderFlagControlsNetworkScan(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var call struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&call); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if call.Method != "eth_getLogs" {
+			t.Errorf("unexpected RPC method %q", call.Method)
+		}
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      call.ID,
+			"result":  []types.Log{commitLog(100, 1, 0, true)},
+		})
+	}))
+	defer server.Close()
+
+	client, err := ethclient.Dial(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
+			r := newStateSyncProvider(100)
+			r.stateSyncEventsEnabled = enabled
+			receiver := stateReceiverAddress.Hex()
+			r.contracts.StateSyncReceiverAddress = &receiver
+			r.stateSyncBootstrapped = true
+			r.stateSyncCursor = 99
+			r.finalizedHeight = 100
+
+			before := requests.Load()
+			r.refreshStateSyncEvents(context.Background(), client)
+			gotRequests := requests.Load() - before
+			wantRequests := int64(0)
+			wantCursor := uint64(99)
+			wantCommits := 0
+			if enabled {
+				wantRequests = 1
+				wantCursor = 100
+				wantCommits = 1
+			}
+			if gotRequests != wantRequests {
+				t.Errorf("eth_getLogs requests = %d, want %d", gotRequests, wantRequests)
+			}
+			if r.stateSyncCursor != wantCursor {
+				t.Errorf("cursor = %d, want %d", r.stateSyncCursor, wantCursor)
+			}
+			if got := len(r.stateSyncEvents.Commits); got != wantCommits {
+				t.Errorf("decoded commits = %d, want %d", got, wantCommits)
+			}
+		})
 	}
 }
 
@@ -928,6 +1063,7 @@ type deliveryCountingObserver struct {
 	events   atomic.Int64
 	messages atomic.Int64
 	done     chan struct{}
+	batches  chan *observer.StateSyncEvents
 }
 
 func (o *deliveryCountingObserver) Register(eb *observer.EventBus) {
@@ -942,6 +1078,9 @@ func (o *deliveryCountingObserver) Notify(_ context.Context, m observer.Message)
 	events := m.Data().(*observer.StateSyncEvents)
 	o.events.Add(int64(len(events.Commits) + len(events.Replays)))
 	o.messages.Add(1)
+	if o.batches != nil {
+		o.batches <- events
+	}
 	o.done <- struct{}{}
 }
 
@@ -960,6 +1099,11 @@ func waitForDelivery(t *testing.T, done <-chan struct{}) {
 // carries an empty batch — not the stale events — and nothing double counts.
 func TestRefreshStateDialFailureDoesNotRepublish(t *testing.T) {
 	r := newStateSyncProvider(100)
+	r.stateSyncEventsEnabled = true
+	receiver := stateReceiverAddress.Hex()
+	r.contracts.StateSyncReceiverAddress = &receiver
+	r.stateSyncBootstrapped = true
+	r.stateSyncCursor = 0
 	r.bus = observer.NewEventBus()
 	r.refreshStateTime = new(time.Duration)
 
@@ -1001,6 +1145,8 @@ func TestRefreshStateDialFailureDoesNotRepublish(t *testing.T) {
 // consumed batch's events: the second publication carries an empty batch.
 func TestPublishEventsConsumesBatch(t *testing.T) {
 	r := newStateSyncProvider(100)
+	r.stateSyncBootstrapped = true
+	r.stateSyncCursor = 0
 	r.bus = observer.NewEventBus()
 
 	o := &deliveryCountingObserver{done: make(chan struct{}, 10)}
@@ -1030,5 +1176,52 @@ func TestPublishEventsConsumesBatch(t *testing.T) {
 	}
 	if got := o.events.Load(); got != 2 {
 		t.Fatalf("republished batch re-delivered events: %d over 2 publications, want 2 (no double count)", got)
+	}
+}
+
+// A published batch remains independent of later scans while the real bus
+// delivers messages asynchronously. This is the ownership guarantee that lets
+// the observer increment directly without batch digest or in-flight state.
+func TestPublishEventsBatchIsolatedFromNextScan(t *testing.T) {
+	r := newStateSyncProvider(100)
+	r.stateSyncBootstrapped = true
+	r.stateSyncCursor = 0
+	r.bus = observer.NewEventBus()
+
+	o := &deliveryCountingObserver{
+		done:    make(chan struct{}, 2),
+		batches: make(chan *observer.StateSyncEvents, 2),
+	}
+	r.bus.Subscribe(topics.BorStateSyncEvents, o)
+
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 100, func(context.Context, uint64, uint64) ([]types.Log, error) {
+		return []types.Log{commitLog(100, 1, 0, true)}, nil
+	})
+	if err := r.PublishEvents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForDelivery(t, o.done)
+	first := <-o.batches
+
+	r.scanStateSyncLogs(context.Background(), stateReceiverAddress, 101, func(context.Context, uint64, uint64) ([]types.Log, error) {
+		return []types.Log{commitLog(101, 2, 0, false)}, nil
+	})
+	if first == r.stateSyncEvents {
+		t.Fatal("next scan reused the published batch pointer")
+	}
+	if got := commitIds(first); !slices.Equal(got, []uint64{1}) {
+		t.Fatalf("next scan mutated the published batch: commits %v, want [1]", got)
+	}
+
+	if err := r.PublishEvents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForDelivery(t, o.done)
+	second := <-o.batches
+	if got := commitIds(second); !slices.Equal(got, []uint64{2}) {
+		t.Errorf("second published batch commits = %v, want [2]", got)
+	}
+	if got := commitIds(first); !slices.Equal(got, []uint64{1}) {
+		t.Errorf("first batch changed after second publication: %v, want [1]", got)
 	}
 }

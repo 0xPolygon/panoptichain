@@ -80,10 +80,11 @@ type RPCProvider struct {
 	// refresh cycle; the cursor, bootstrap flag and dedup set carry the
 	// scan position. All of it is process-local and resets on restart, as
 	// documented in scanStateSyncLogs.
-	stateSyncEvents       *observer.StateSyncEvents
-	stateSyncBootstrapped bool
-	stateSyncCursor       uint64
-	stateSyncSeen         *stateSyncSeenLogs
+	stateSyncEvents        *observer.StateSyncEvents
+	stateSyncEventsEnabled bool
+	stateSyncBootstrapped  bool
+	stateSyncCursor        uint64
+	stateSyncSeen          *stateSyncSeenLogs
 	// prevCheckpointID is the header block ID of the most recent checkpoint
 	// whose signatures were counted. Checkpoints are republished on every poll
 	// cycle, so this lets us mark republishes as seen and fire the counters
@@ -172,6 +173,7 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		validatorBalances:       make(observer.ValidatorWalletBalances),
 		missedBlockProposal:     make(observer.MissedBlockProposal),
 		stateSyncSeen:           newStateSyncSeenLogs(),
+		stateSyncEventsEnabled:  cfg.StateSyncEvents,
 		bridgeEventTimes:        make(observer.BridgeEventTimes),
 		claimEventTimes:         make(observer.ClaimEventTimes),
 		trustedSequencers:       make(map[uint32]*RPCProvider),
@@ -194,9 +196,9 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	defer timer(r.refreshStateTime)()
 
 	// Reset this cycle's state-sync event accumulation before any fallible
-	// setup. If the dial below fails, PublishEvents will deliver an empty
-	// batch instead of re-delivering the previous cycle's events.
-	if r.contracts.StateSyncReceiverAddress != nil {
+	// setup when scanning is enabled. If the dial below fails, PublishEvents
+	// will deliver an empty batch instead of the previous cycle's events.
+	if r.stateSyncEventsEnabled && r.contracts.StateSyncReceiverAddress != nil {
 		r.stateSyncEvents = &observer.StateSyncEvents{}
 	}
 
@@ -283,12 +285,11 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 	if r.stateSyncEvents != nil {
 		// Publish this cycle's batch — possibly empty: the scan may have
 		// found no events, or the refresh may have failed before scanning.
-		// Consume the batch as it is published, so republication cannot
-		// re-deliver the same events. The observer additionally
-		// deduplicates on (network, provider, block hash, log index), so
-		// even a concurrent re-delivery cannot double count. stateSyncEvents
-		// is only non-nil once state-sync scanning has been initialized for
-		// this provider (a configured StateReceiver address).
+		// Consume the batch before publishing so this pointer cannot be
+		// published twice. The next refresh allocates a new batch rather
+		// than mutating this one, which also keeps asynchronous bus delivery
+		// independent of later scans. EventBus delivers once per subscriber
+		// per Publish and has no replay path.
 		events := r.stateSyncEvents
 		r.stateSyncEvents = &observer.StateSyncEvents{}
 		r.bus.Publish(ctx, topics.BorStateSyncEvents, observer.NewMessage(r.network, r.label, events))

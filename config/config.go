@@ -82,6 +82,7 @@ type RPC struct {
 	AccountBalanceBatchSize *uint64        `mapstructure:"account_balance_batch_size" validate:"omitempty,gt=0"`
 	AccountBalanceTimeout   *time.Duration `mapstructure:"account_balance_timeout" validate:"omitempty,gt=0"`
 	TxPool                  bool           `mapstructure:"txpool"`
+	StateSyncEvents         bool           `mapstructure:"state_sync_events"`
 	Observers               *Observers     `mapstructure:"observers"`
 	ValidatorBalances       *bool          `mapstructure:"validator_balances"`
 	MissedProposals         *bool          `mapstructure:"missed_proposals"`
