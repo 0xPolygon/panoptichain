@@ -50,11 +50,14 @@ func replayEvent(id uint64) *StateSyncReplay {
 }
 
 // True and false commits land on their outcome series; the sum of the two
-// series is the number of initial contract-receiver attempts.
+// series is the number of initial contract-receiver attempts. The counters
+// live on the process-wide registry, so each test uses its own provider
+// label to read its series independently.
 func TestStateSyncEvents_CountsCommitsByOutcome(t *testing.T) {
 	o := newEventsObserver(t)
+	provider := "commits"
 
-	o.Notify(context.Background(), NewMessage(testNetwork, "test", &StateSyncEvents{
+	o.Notify(context.Background(), NewMessage(testNetwork, provider, &StateSyncEvents{
 		Commits: []*StateSyncCommit{
 			commitEvent(1, true),
 			commitEvent(2, true),
@@ -64,14 +67,14 @@ func TestStateSyncEvents_CountsCommitsByOutcome(t *testing.T) {
 		},
 	}))
 
-	if got := counterValue(t, o.commits, testNetwork.GetName(), "test", "success"); got != 2 {
+	if got := counterValue(t, o.commits, testNetwork.GetName(), provider, "success"); got != 2 {
 		t.Errorf("success = %v, want 2", got)
 	}
-	if got := counterValue(t, o.commits, testNetwork.GetName(), "test", "failure"); got != 3 {
+	if got := counterValue(t, o.commits, testNetwork.GetName(), provider, "failure"); got != 3 {
 		t.Errorf("failure = %v, want 3", got)
 	}
-	if got := counterValue(t, o.commits, testNetwork.GetName(), "test", "success") +
-		counterValue(t, o.commits, testNetwork.GetName(), "test", "failure"); got != 5 {
+	if got := counterValue(t, o.commits, testNetwork.GetName(), provider, "success") +
+		counterValue(t, o.commits, testNetwork.GetName(), provider, "failure"); got != 5 {
 		t.Errorf("success + failure = %v, want 5 attempts", got)
 	}
 }
@@ -81,21 +84,22 @@ func TestStateSyncEvents_CountsCommitsByOutcome(t *testing.T) {
 // legacy replay) is still counted, and it never touches the commit series.
 func TestStateSyncEvents_CountsReplaysSeparately(t *testing.T) {
 	o := newEventsObserver(t)
+	provider := "replays"
 
-	o.Notify(context.Background(), NewMessage(testNetwork, "test", &StateSyncEvents{
+	o.Notify(context.Background(), NewMessage(testNetwork, provider, &StateSyncEvents{
 		Replays: []*StateSyncReplay{
 			replayEvent(42),
 			replayEvent(43),
 		},
 	}))
 
-	if got := counterValue(t, o.replays, testNetwork.GetName(), "test"); got != 2 {
+	if got := counterValue(t, o.replays, testNetwork.GetName(), provider); got != 2 {
 		t.Errorf("replays = %v, want 2", got)
 	}
-	if got := counterValue(t, o.commits, testNetwork.GetName(), "test", "success"); got != 0 {
+	if got := counterValue(t, o.commits, testNetwork.GetName(), provider, "success"); got != 0 {
 		t.Errorf("success = %v, want 0 (replays are not commits)", got)
 	}
-	if got := counterValue(t, o.commits, testNetwork.GetName(), "test", "failure"); got != 0 {
+	if got := counterValue(t, o.commits, testNetwork.GetName(), provider, "failure"); got != 0 {
 		t.Errorf("failure = %v, want 0 (replays are not commits)", got)
 	}
 }
@@ -127,16 +131,17 @@ func TestStateSyncEvents_PerProviderSeries(t *testing.T) {
 // An empty scan publishes nothing; a message with no events changes nothing.
 func TestStateSyncEvents_EmptyEvents(t *testing.T) {
 	o := newEventsObserver(t)
+	provider := "empty"
 
-	o.Notify(context.Background(), NewMessage(testNetwork, "test", &StateSyncEvents{}))
+	o.Notify(context.Background(), NewMessage(testNetwork, provider, &StateSyncEvents{}))
 
-	if got := counterValue(t, o.commits, testNetwork.GetName(), "test", "success"); got != 0 {
+	if got := counterValue(t, o.commits, testNetwork.GetName(), provider, "success"); got != 0 {
 		t.Errorf("success = %v, want 0", got)
 	}
-	if got := counterValue(t, o.commits, testNetwork.GetName(), "test", "failure"); got != 0 {
+	if got := counterValue(t, o.commits, testNetwork.GetName(), provider, "failure"); got != 0 {
 		t.Errorf("failure = %v, want 0", got)
 	}
-	if got := counterValue(t, o.replays, testNetwork.GetName(), "test"); got != 0 {
+	if got := counterValue(t, o.replays, testNetwork.GetName(), provider); got != 0 {
 		t.Errorf("replays = %v, want 0", got)
 	}
 }

@@ -37,7 +37,7 @@ func stateIdTopic(stateId uint64) common.Hash {
 	return common.BigToHash(new(big.Int).SetUint64(stateId))
 }
 
-func commitLog(block, stateId uint64, index uint32, success bool) types.Log {
+func commitLog(block, stateId uint64, index uint, success bool) types.Log {
 	data := make([]byte, 32)
 	if success {
 		data[31] = 1
@@ -54,7 +54,7 @@ func commitLog(block, stateId uint64, index uint32, success bool) types.Log {
 	}
 }
 
-func replayLog(block, stateId uint64, index uint32) types.Log {
+func replayLog(block, stateId uint64, index uint) types.Log {
 	return types.Log{
 		Address:     stateReceiverAddress,
 		Topics:      []common.Hash{stateSyncReplayTopic, stateIdTopic(stateId)},
@@ -70,6 +70,9 @@ func newStateSyncProvider(lookback uint64) *RPCProvider {
 		logger:        NewLogger(nil, "test"),
 		blockLookBack: lookback,
 		stateSyncSeen: newStateSyncSeenLogs(),
+		// recordStateSyncLogs is tested directly, without a full scan cycle
+		// to initialize the accumulator.
+		stateSyncEvents: &observer.StateSyncEvents{},
 	}
 }
 
@@ -383,8 +386,8 @@ func TestScanStateSyncLogs_PartialFailureRetriesWithoutSkipping(t *testing.T) {
 		chunkThree: {replayLog(510, 2, 0)},
 	}
 
-	var fail bool
 	var ranges [][2]uint64
+	fail := true
 	fetch := func(_ context.Context, from, to uint64) ([]types.Log, error) {
 		key := [2]uint64{from, to}
 		ranges = append(ranges, key)
@@ -486,11 +489,11 @@ func TestScanStateSyncLogs_FinalizedBehindCursorStalls(t *testing.T) {
 func TestScanStateSyncLogs_RestartRebootstrap(t *testing.T) {
 	first := newStateSyncProvider(1000)
 	rec1 := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
-	first.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec1)
+	first.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec1.fetch)
 
 	second := newStateSyncProvider(1000)
 	rec2 := &rangeRecorder{logs: map[[2]uint64][]types.Log{}}
-	second.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec2)
+	second.scanStateSyncLogs(context.Background(), stateReceiverAddress, 250, rec2.fetch)
 
 	if !slices.Equal(rec1.ranges, rec2.ranges) {
 		t.Errorf("restart ranges %v differ from first bootstrap %v", rec2.ranges, rec1.ranges)

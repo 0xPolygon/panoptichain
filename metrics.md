@@ -1553,28 +1553,6 @@ Variable Labels:
 - validator_id
 - signer_address
 
-## StateSyncEventsObserver
-
-
-### panoptichain_rpc_state_sync_commits
-The total number of StateCommitted events observed from the StateReceiver, i.e. initial contract-receiver state-sync attempts. outcome=success means the receiver call succeeded; outcome=failure means it failed for any EVM reason (not necessarily out-of-gas). The sum over the outcome label is the number of initial contract-receiver attempts; records sent to receivers with no code emit no event and are not in this denominator. Each provider is counted independently (providers see the same events; do not sum provider series for chain totals). Process-local counter: it resets on restart.
-
-Metric Type: CounterVec
-
-Variable Labels:
-- network
-- provider
-- outcome
-
-### panoptichain_rpc_state_sync_replays
-The total number of StateSyncReplay events observed from the StateReceiver, i.e. canonical successful replays (legacy, hash-backed and historical replays included). Replays are a separate recovery signal and are not part of the commit attempt denominator; a replay without an observed matching failure is still counted. Each provider is counted independently (do not sum provider series for chain totals). Process-local counter: it resets on restart.
-
-Metric Type: CounterVec
-
-Variable Labels:
-- network
-- provider
-
 ## StateSyncObserver
 
 
@@ -1597,6 +1575,28 @@ Variable Labels:
 - network
 - provider
 - finalized
+
+## StateSyncEventsObserver
+
+
+### panoptichain_rpc_state_sync_commits
+The total number of StateCommitted events observed from the StateReceiver, i.e. initial contract-receiver state-sync attempts. outcome=success means the receiver call succeeded; outcome=failure means it failed for any EVM reason (not necessarily out-of-gas). The sum over the outcome label is the number of initial contract-receiver attempts; records sent to receivers with no code emit no event and are not in this denominator. Each provider is counted independently (providers see the same events; do not sum provider series for chain totals). Process-local counter: it resets on restart.
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
+- outcome
+
+### panoptichain_rpc_state_sync_replays
+The total number of StateSyncReplay events observed from the StateReceiver, i.e. canonical successful replays (legacy, hash-backed and historical replays included). Replays are a separate recovery signal and are not part of the commit attempt denominator; a replay without an observed matching failure is still counted. Each provider is counted independently (do not sum provider series for chain totals). Process-local counter: it resets on restart.
+
+Metric Type: CounterVec
+
+Variable Labels:
+- network
+- provider
 
 ## StolenBlockObserver
 

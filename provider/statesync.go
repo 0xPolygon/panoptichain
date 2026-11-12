@@ -205,7 +205,7 @@ func (r *RPCProvider) recordStateSyncLogs(receiver common.Address, logs []types.
 			continue
 		}
 
-		key := stateSyncLogKey{blockHash: l.BlockHash, logIndex: l.Index}
+		key := stateSyncLogKey{blockHash: l.BlockHash, logIndex: uint32(l.Index)}
 		if r.stateSyncSeen.seen(key) {
 			continue
 		}
@@ -247,7 +247,7 @@ func (r *RPCProvider) logMalformedStateSyncLog(l *types.Log, reason string) {
 		Str("reason", reason).
 		Uint64("block_number", l.BlockNumber).
 		Str("block_hash", l.BlockHash.Hex()).
-		Uint32("log_index", l.Index).
+		Uint32("log_index", uint32(l.Index)).
 		Msg("Discarding malformed state sync log")
 }
 
@@ -275,7 +275,7 @@ func decodeStateSyncCommit(l *types.Log) (*observer.StateSyncCommit, bool) {
 		Success:     success,
 		BlockNumber: l.BlockNumber,
 		BlockHash:   l.BlockHash,
-		LogIndex:    l.Index,
+		LogIndex:    uint32(l.Index),
 	}, true
 }
 
@@ -296,7 +296,7 @@ func decodeStateSyncReplay(l *types.Log) (*observer.StateSyncReplay, bool) {
 		StateId:     stateId,
 		BlockNumber: l.BlockNumber,
 		BlockHash:   l.BlockHash,
-		LogIndex:    l.Index,
+		LogIndex:    uint32(l.Index),
 	}, true
 }
 
