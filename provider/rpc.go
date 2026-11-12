@@ -74,6 +74,17 @@ type RPCProvider struct {
 	// PoS
 	stateSync            map[bool]*observer.StateSync
 	checkpointSignatures map[bool]*observer.CheckpointSignatures
+
+	// PoS state-sync outcome scanning (StateCommitted/StateSyncReplay logs).
+	// stateSyncEvents accumulates the events decoded during the current
+	// refresh cycle; the cursor, bootstrap flag and dedup set carry the
+	// scan position. All of it is process-local and resets on restart, as
+	// documented in scanStateSyncLogs.
+	stateSyncEvents        *observer.StateSyncEvents
+	stateSyncEventsEnabled bool
+	stateSyncBootstrapped  bool
+	stateSyncCursor        uint64
+	stateSyncSeen          *stateSyncSeenLogs
 	// prevCheckpointID is the header block ID of the most recent checkpoint
 	// whose signatures were counted. Checkpoints are republished on every poll
 	// cycle, so this lets us mark republishes as seen and fire the counters
@@ -161,6 +172,8 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 		checkpointSignatures:    make(map[bool]*observer.CheckpointSignatures),
 		validatorBalances:       make(observer.ValidatorWalletBalances),
 		missedBlockProposal:     make(observer.MissedBlockProposal),
+		stateSyncSeen:           newStateSyncSeenLogs(),
+		stateSyncEventsEnabled:  cfg.StateSyncEvents,
 		bridgeEventTimes:        make(observer.BridgeEventTimes),
 		claimEventTimes:         make(observer.ClaimEventTimes),
 		trustedSequencers:       make(map[uint32]*RPCProvider),
@@ -182,6 +195,13 @@ func NewRPCProvider(n network.Network, eb *observer.EventBus, cfg config.RPC) *R
 func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	defer timer(r.refreshStateTime)()
 
+	// Reset this cycle's state-sync event accumulation before any fallible
+	// setup when scanning is enabled. If the dial below fails, PublishEvents
+	// will deliver an empty batch instead of the previous cycle's events.
+	if r.stateSyncEventsEnabled && r.contracts.StateSyncReceiverAddress != nil {
+		r.stateSyncEvents = &observer.StateSyncEvents{}
+	}
+
 	c, err := ethclient.DialContext(ctx, r.url)
 	if err != nil {
 		r.logger.Error().Err(err).Msg("Failed to create the client")
@@ -194,6 +214,7 @@ func (r *RPCProvider) RefreshState(ctx context.Context) error {
 	r.refreshBlockBuffer(ctx, c)
 	r.refreshStateSync(ctx, c, true)
 	r.refreshStateSync(ctx, c, false)
+	r.refreshStateSyncEvents(ctx, c)
 	r.refreshCheckpoint(ctx, c)
 
 	if r.network.IsPolygonPoS() {
@@ -259,6 +280,19 @@ func (r *RPCProvider) PublishEvents(ctx context.Context) error {
 
 	for _, stateSync := range r.stateSync {
 		r.bus.Publish(ctx, topics.BorStateSync, observer.NewMessage(r.network, r.label, stateSync))
+	}
+
+	if r.stateSyncEvents != nil {
+		// Publish this cycle's batch — possibly empty: the scan may have
+		// found no events, or the refresh may have failed before scanning.
+		// Consume the batch before publishing so this pointer cannot be
+		// published twice. The next refresh allocates a new batch rather
+		// than mutating this one, which also keeps asynchronous bus delivery
+		// independent of later scans. EventBus delivers once per subscriber
+		// per Publish and has no replay path.
+		events := r.stateSyncEvents
+		r.stateSyncEvents = &observer.StateSyncEvents{}
+		r.bus.Publish(ctx, topics.BorStateSyncEvents, observer.NewMessage(r.network, r.label, events))
 	}
 
 	for _, checkpointSignatures := range r.checkpointSignatures {
