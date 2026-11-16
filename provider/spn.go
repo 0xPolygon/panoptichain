@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -99,10 +100,13 @@ func (r *SuccinctProverNetworkProvider) RefreshState(ctx context.Context) error 
 
 	c := spnpb.NewProverNetworkClient(conn)
 
-	r.refreshProofRequests(ctx, c)
-	r.refreshRequesterUsage(ctx, conn)
-
-	return nil
+	// Return the RPC errors rather than only logging them, so a server that
+	// rejects the handshake (an expired or unrecognized client certificate)
+	// shows up as a failed cycle instead of metrics that silently go flat.
+	return errors.Join(
+		r.refreshProofRequests(ctx, c),
+		r.refreshRequesterUsage(ctx, conn),
+	)
 }
 
 // transportCredentials builds the TLS credentials for one cycle, adding the
@@ -136,7 +140,7 @@ func (r *SuccinctProverNetworkProvider) transportCredentials() (credentials.Tran
 // most recent complete hour. The network buckets usage hourly, so an in-progress
 // hour would report a partial total that only climbs until the hour closes;
 // reading one hour behind keeps the gauge on settled numbers.
-func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Context, conn *grpc.ClientConn) {
+func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Context, conn *grpc.ClientConn) error {
 	r.usage = nil
 
 	end := time.Now().UTC().Truncate(time.Hour)
@@ -144,21 +148,30 @@ func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Contex
 
 	// The RPC is requester-scoped and has no "all requesters" mode, so each
 	// configured requester costs a call. With none configured, none are made.
+	// One requester's failure does not stop the others from being fetched.
+	var errs []error
 	for _, requester := range r.usageRequesters {
-		if usage := r.requesterUsage(ctx, conn, requester, start, end); usage != nil {
+		usage, err := r.requesterUsage(ctx, conn, requester, start, end)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if usage != nil {
 			r.usage = append(r.usage, usage)
 		}
 	}
+
+	return errors.Join(errs...)
 }
 
 // requesterUsage fetches a single requester's usage for the given window,
-// returning nil when the hour has no settled usage to report.
+// returning nil usage when the hour has no settled usage to report.
 func (r *SuccinctProverNetworkProvider) requesterUsage(
 	ctx context.Context,
 	conn *grpc.ClientConn,
 	requester config.UsageRequester,
 	start, end time.Time,
-) *observer.UsageSummary {
+) (*observer.UsageSummary, error) {
 	req := &spnpb.GetRequesterUsageRequest{
 		StartTime: start.Format(time.RFC3339),
 		EndTime:   end.Format(time.RFC3339),
@@ -173,8 +186,7 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 
 	res, err := spnpb.GetRequesterUsage(metadata.AppendToOutgoingContext(ctx, "api-key", r.apiKey), conn, req)
 	if err != nil {
-		r.logger.Error().Err(err).Str("requester", req.Requester).Msg("Failed to get requester usage")
-		return nil
+		return nil, fmt.Errorf("get requester usage for %s: %w", req.Requester, err)
 	}
 
 	// An hour with no usage comes back empty rather than zeroed. Leave the
@@ -186,7 +198,7 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 			Str("start_time", req.StartTime).
 			Str("end_time", req.EndTime).
 			Msg("No requester usage reported for the hour")
-		return nil
+		return nil, nil
 	}
 
 	// The window spans a single hour, but take the newest bucket rather than
@@ -199,7 +211,7 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 	}
 
 	if latest.UsageSummary == nil {
-		return nil
+		return nil, nil
 	}
 
 	usage := &observer.UsageSummary{
@@ -219,10 +231,10 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 		usage.NewHour = true
 	}
 
-	return usage
+	return usage, nil
 }
 
-func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context, c spnpb.ProverNetworkClient) {
+func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context, c spnpb.ProverNetworkClient) error {
 	r.proofRequests = nil
 
 	limit := uint32(100)
@@ -243,12 +255,11 @@ func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context
 
 	res, err := c.GetFilteredProofRequests(metadata.AppendToOutgoingContext(ctx, "api-key", r.apiKey), req)
 	if err != nil {
-		r.logger.Error().Err(err).Msg("Failed to get filtered proof requests")
+		return fmt.Errorf("get filtered proof requests: %w", err)
 	}
 
-	if res != nil {
-		r.proofRequests = res.Requests
-	}
+	r.proofRequests = res.Requests
+	return nil
 }
 
 func (r *SuccinctProverNetworkProvider) PublishEvents(ctx context.Context) error {

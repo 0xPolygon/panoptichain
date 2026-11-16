@@ -128,6 +128,13 @@ func writeClientCert(t *testing.T, ca *testCA, dir, cn string) (string, string) 
 // the common name of each client certificate it accepted.
 func newMTLSUsageServer(t *testing.T, ca *testCA) (string, func() []string) {
 	t.Helper()
+	return newTLSUsageServer(t, ca, tls.RequireAndVerifyClientCert)
+}
+
+// newTLSUsageServer is newMTLSUsageServer with the client-auth policy chosen by
+// the caller, so the same server can stand in for a network without mTLS.
+func newTLSUsageServer(t *testing.T, ca *testCA, clientAuth tls.ClientAuthType) (string, func() []string) {
+	t.Helper()
 
 	certPEM, keyPEM := ca.issue(t, "server", x509.ExtKeyUsageServerAuth, net.ParseIP("127.0.0.1"))
 	serverCert, err := tls.X509KeyPair(certPEM, keyPEM)
@@ -144,6 +151,14 @@ func newMTLSUsageServer(t *testing.T, ca *testCA) (string, func() []string) {
 		ServiceName: "network.ProverNetwork",
 		HandlerType: (*any)(nil),
 		Methods: []grpc.MethodDesc{{
+			MethodName: "GetFilteredProofRequests",
+			Handler: func(_ any, _ context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+				if err := dec(new(spnpb.GetFilteredProofRequestsRequest)); err != nil {
+					return nil, err
+				}
+				return new(spnpb.GetFilteredProofRequestsResponse), nil
+			},
+		}, {
 			MethodName: "GetRequesterUsage",
 			Handler: func(_ any, ctx context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
 				if err := dec(new(spnpb.GetRequesterUsageRequest)); err != nil {
@@ -171,7 +186,7 @@ func newMTLSUsageServer(t *testing.T, ca *testCA) (string, func() []string) {
 	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{serverCert},
 		ClientCAs:    ca.pool,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientAuth:   clientAuth,
 	})))
 	srv.RegisterService(&desc, new(struct{}))
 	go func() { _ = srv.Serve(lis) }()
@@ -226,14 +241,36 @@ func TestRefreshState_PresentsClientCertificate(t *testing.T) {
 }
 
 // Without a configured certificate the provider must keep working against a
-// server that does not ask for one, and must be rejected by one that does.
+// server that does not ask for one, which is every network without mTLS.
+func TestRefreshState_NoClientCertificateWithoutMTLS(t *testing.T) {
+	ca := newTestCA(t)
+	url, accepted := newTLSUsageServer(t, ca, tls.NoClientCert)
+
+	p := newMTLSProvider(url, ca, nil, nil)
+	if err := refresh(t, p); err != nil {
+		t.Fatalf("RefreshState: %v", err)
+	}
+
+	if len(p.usage) != 1 {
+		t.Fatalf("expected usage over plain TLS, got %d summaries", len(p.usage))
+	}
+
+	if got := accepted(); len(got) != 0 {
+		t.Fatalf("server saw client certificates %v, want none", got)
+	}
+}
+
+// A server that requires mTLS rejects a provider without a certificate, and
+// that rejection must fail the cycle: it is what an expired or unrecognized
+// certificate looks like, and a cycle that reports success would leave the
+// metrics silently flat.
 func TestRefreshState_NoClientCertificateIsRejected(t *testing.T) {
 	ca := newTestCA(t)
 	url, accepted := newMTLSUsageServer(t, ca)
 
 	p := newMTLSProvider(url, ca, nil, nil)
-	if err := refresh(t, p); err != nil {
-		t.Fatalf("RefreshState: %v", err)
+	if err := refresh(t, p); err == nil {
+		t.Fatal("expected RefreshState to fail when the server rejects the handshake")
 	}
 
 	if p.usage != nil {

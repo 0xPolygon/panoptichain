@@ -119,3 +119,15 @@ func TestSuccinctProverNetwork_ClientCertificateMustExist(t *testing.T) {
 		t.Fatal("expected a validation error for a missing certificate file")
 	}
 }
+
+// An env reference that expands to nothing leaves both paths as "". That must
+// fail at startup rather than pass validation and fail every cycle.
+func TestSuccinctProverNetwork_ClientCertificateRejectsEmptyPaths(t *testing.T) {
+	err := initSPNConfig(t, `
+      client_cert: ""
+      client_key: ""
+`)
+	if err == nil {
+		t.Fatal("expected a validation error for empty certificate paths")
+	}
+}

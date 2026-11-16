@@ -83,7 +83,7 @@ func TestRefreshRequesterUsage_PicksNewestHour(t *testing.T) {
 
 	requester := "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
 	h := newUsageProvider(requester)
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 
 	if len(h.usage) != 1 {
 		t.Fatalf("expected one usage summary, got %d", len(h.usage))
@@ -115,7 +115,7 @@ func TestRefreshRequesterUsage_EmptyHourLeavesUsageNil(t *testing.T) {
 
 	requester := "0x5428abf0e5aec1be48597a984a4f9570d9236f29"
 	h := newUsageProvider(requester)
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 
 	if len(h.usage) != 0 {
 		t.Fatalf("expected no usage for an empty hour, got %+v", h.usage)
@@ -131,7 +131,7 @@ func TestRefreshRequesterUsage_NoRequesterSkipsCall(t *testing.T) {
 	})
 
 	h := newUsageProvider()
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 
 	if len(h.usage) != 0 {
 		t.Fatalf("expected no usage without a configured requester, got %+v", h.usage)
@@ -157,7 +157,7 @@ func TestRefreshRequesterUsage_TracksEachRequester(t *testing.T) {
 	}
 
 	h := newUsageProvider(requesters...)
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 
 	if len(h.usage) != len(requesters) {
 		t.Fatalf("expected %d usage summaries, got %d", len(requesters), len(h.usage))
@@ -185,7 +185,7 @@ func TestRefreshRequesterUsage_CarriesRequesterTag(t *testing.T) {
 		Tag:     "katana",
 	}}
 
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 
 	if len(h.usage) != 1 {
 		t.Fatalf("expected one usage summary, got %d", len(h.usage))
@@ -210,7 +210,7 @@ func TestRefreshRequesterUsage_RequesterFilterDoesNotDriveUsage(t *testing.T) {
 	h := newUsageProvider()
 	h.requester = &requester
 
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 
 	if len(h.usage) != 0 {
 		t.Fatalf("expected no usage from the proof-request filter alone, got %+v", h.usage)
@@ -276,14 +276,14 @@ func TestRefreshRequesterUsage_FlagsEachHourOnce(t *testing.T) {
 
 	h := newUsageProvider("0x5428abf0e5aec1be48597a984a4f9570d9236f29")
 
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 	if len(h.usage) != 1 || !h.usage[0].NewHour {
 		t.Fatalf("first cycle must flag the hour as new, got %+v", h.usage)
 	}
 
 	// Later cycles re-read the same bucket and must not flag it again.
 	for cycle := 2; cycle <= 4; cycle++ {
-		h.refreshRequesterUsage(context.Background(), conn)
+		mustRefreshUsage(t, h, conn)
 		if len(h.usage) != 1 {
 			t.Fatalf("cycle %d: expected one summary, got %d", cycle, len(h.usage))
 		}
@@ -294,7 +294,7 @@ func TestRefreshRequesterUsage_FlagsEachHourOnce(t *testing.T) {
 
 	// The hour rolling over flags again.
 	hour = "2026-08-31T11:00:00Z"
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 	if len(h.usage) != 1 || !h.usage[0].NewHour {
 		t.Fatalf("a new hour must be flagged, got %+v", h.usage)
 	}
@@ -307,10 +307,10 @@ func TestRefreshRequesterUsage_DoesNotFlagOlderHour(t *testing.T) {
 	conn := newUsageServerFor(t, func() *spnpb.GetRequesterUsageResponse { return hourResponse(hour) })
 
 	h := newUsageProvider("0x5428abf0e5aec1be48597a984a4f9570d9236f29")
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 
 	hour = "2026-08-31T09:00:00Z"
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 
 	if len(h.usage) != 1 || h.usage[0].NewHour {
 		t.Fatalf("an older hour must not be flagged, got %+v", h.usage)
@@ -328,7 +328,7 @@ func TestRefreshRequesterUsage_FlagsPerRequester(t *testing.T) {
 		"0x5428abf0e5aec1be48597a984a4f9570d9236f29",
 		"0xafb1d2c26654c85f51f550c97f16699da0293dee",
 	)
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 
 	if len(h.usage) != 2 {
 		t.Fatalf("expected two summaries, got %d", len(h.usage))
@@ -352,12 +352,22 @@ func TestRefreshRequesterUsage_NoHourIsNeverFlagged(t *testing.T) {
 	})
 
 	h := newUsageProvider("0x5428abf0e5aec1be48597a984a4f9570d9236f29")
-	h.refreshRequesterUsage(context.Background(), conn)
+	mustRefreshUsage(t, h, conn)
 
 	if len(h.usage) != 1 {
 		t.Fatalf("expected one summary, got %d", len(h.usage))
 	}
 	if h.usage[0].NewHour {
 		t.Fatal("a summary with no hour must not be flagged new")
+	}
+}
+
+// mustRefreshUsage runs refreshRequesterUsage and fails the test on an error,
+// which none of the usage tests expect.
+func mustRefreshUsage(t *testing.T, h *SuccinctProverNetworkProvider, conn *grpc.ClientConn) {
+	t.Helper()
+
+	if err := h.refreshRequesterUsage(context.Background(), conn); err != nil {
+		t.Fatalf("refreshRequesterUsage: %v", err)
 	}
 }
