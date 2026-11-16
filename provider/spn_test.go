@@ -3,10 +3,14 @@ package provider
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/0xPolygon/panoptichain/config"
 	spnpb "github.com/0xPolygon/panoptichain/proto/network"
@@ -367,7 +371,74 @@ func TestRefreshRequesterUsage_NoHourIsNeverFlagged(t *testing.T) {
 func mustRefreshUsage(t *testing.T, h *SuccinctProverNetworkProvider, conn *grpc.ClientConn) {
 	t.Helper()
 
+	// RefreshState clears the previous cycle's results before calling this;
+	// do the same so repeated calls model separate cycles.
+	h.usage = nil
 	if err := h.refreshRequesterUsage(context.Background(), conn); err != nil {
 		t.Fatalf("refreshRequesterUsage: %v", err)
+	}
+}
+
+// One requester the server answers with an error must not cost the others:
+// they are still fetched, and the cycle fails with a count rather than
+// silently.
+func TestRefreshRequesterUsage_FailedRequesterIsCountedAndOthersFetched(t *testing.T) {
+	bad := "0xacfe00ba538e753cd0a73ede2c5c27cc44a02fa8"
+
+	desc := grpc.ServiceDesc{
+		ServiceName: "network.ProverNetwork",
+		HandlerType: (*any)(nil),
+		Methods: []grpc.MethodDesc{{
+			MethodName: "GetRequesterUsage",
+			Handler: func(_ any, _ context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+				req := new(spnpb.GetRequesterUsageRequest)
+				if err := dec(req); err != nil {
+					return nil, err
+				}
+				if req.Requester == bad {
+					return nil, status.Error(codes.InvalidArgument, "unknown requester")
+				}
+				return hourResponse("2026-08-31T10:00:00Z"), nil
+			},
+		}},
+	}
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	srv.RegisterService(&desc, new(struct{}))
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	h := newUsageProvider(bad, "0x5428abf0e5aec1be48597a984a4f9570d9236f29", "0x1111111111111111111111111111111111111111")
+	err = h.refreshRequesterUsage(context.Background(), conn)
+	if err == nil || !strings.Contains(err.Error(), "1 of 3 requesters") {
+		t.Fatalf("expected a failure count for 1 of 3 requesters, got %v", err)
+	}
+	if len(h.usage) != 2 {
+		t.Fatalf("expected the other two requesters' usage, got %d summaries", len(h.usage))
+	}
+}
+
+// fulfilled_at is optional on the wire; a proof without it must be skipped,
+// not dereferenced.
+func TestPublishEvents_SkipsProofWithoutFulfilledAt(t *testing.T) {
+	h := newUsageProvider()
+	h.seen = make(map[string]time.Time)
+	h.proofRequests = []*spnpb.ProofRequest{{RequestId: []byte("no-fulfilled-at")}}
+
+	if err := h.PublishEvents(context.Background()); err != nil {
+		t.Fatalf("PublishEvents: %v", err)
+	}
+	if len(h.seen) != 0 {
+		t.Fatalf("a proof without fulfilled_at was published: %v", h.seen)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -269,8 +270,20 @@ func TestRefreshState_NoClientCertificateIsRejected(t *testing.T) {
 	url, accepted := newMTLSUsageServer(t, ca)
 
 	p := newMTLSProvider(url, ca, nil, nil)
-	if err := refresh(t, p); err == nil {
+	p.usageRequesters = append(p.usageRequesters,
+		config.UsageRequester{Address: "0xacfe00ba538e753cd0a73ede2c5c27cc44a02fa8"},
+		config.UsageRequester{Address: "0x1111111111111111111111111111111111111111"},
+	)
+
+	err := refresh(t, p)
+	if err == nil {
 		t.Fatal("expected RefreshState to fail when the server rejects the handshake")
+	}
+
+	// The rejection is reported once, from the first call, not repeated for
+	// every requester on a connection that cannot work.
+	if strings.Contains(err.Error(), "requester usage") {
+		t.Fatalf("handshake failure repeated for usage requesters: %v", err)
 	}
 
 	if p.usage != nil {
@@ -282,7 +295,7 @@ func TestRefreshState_NoClientCertificateIsRejected(t *testing.T) {
 	}
 }
 
-// The key pair is re-read every cycle, so replacing the files (as a Kubernetes
+// The key pair is re-read on every handshake, so replacing the files (as a Kubernetes
 // secret update does) rotates the certificate without a restart.
 func TestRefreshState_PicksUpRotatedCertificate(t *testing.T) {
 	ca := newTestCA(t)
@@ -321,8 +334,9 @@ func TestRefreshState_UnreadableCertificateFailsCycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := refresh(t, p); err == nil {
-		t.Fatal("expected an error for an unreadable key")
+	err := refresh(t, p)
+	if err == nil || !strings.Contains(err.Error(), "load mTLS client certificate") {
+		t.Fatalf("expected a certificate load error, got %v", err)
 	}
 
 	if p.usage != nil {

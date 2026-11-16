@@ -12,8 +12,10 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/0xPolygon/panoptichain/config"
 	"github.com/0xPolygon/panoptichain/network"
@@ -87,12 +89,7 @@ func (r *SuccinctProverNetworkProvider) RefreshState(ctx context.Context) error 
 	r.proofRequests = nil
 	r.usage = nil
 
-	creds, err := r.transportCredentials()
-	if err != nil {
-		return err
-	}
-
-	conn, err := grpc.NewClient(r.url, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(r.url, grpc.WithTransportCredentials(r.transportCredentials()))
 	if err != nil {
 		return fmt.Errorf("create gRPC client: %w", err)
 	}
@@ -100,60 +97,90 @@ func (r *SuccinctProverNetworkProvider) RefreshState(ctx context.Context) error 
 
 	c := spnpb.NewProverNetworkClient(conn)
 
-	// Return the RPC errors rather than only logging them, so a server that
-	// rejects the handshake (an expired or unrecognized client certificate)
-	// shows up as a failed cycle instead of metrics that silently go flat.
-	return errors.Join(
-		r.refreshProofRequests(ctx, c),
-		r.refreshRequesterUsage(ctx, conn),
-	)
+	// Return RPC errors rather than only logging them, so a server that rejects
+	// the handshake (an expired or unrecognized client certificate) shows up as
+	// a failed cycle instead of metrics that silently go flat. A connection
+	// failure ends the cycle at once: every later call on this connection would
+	// fail the same way and only repeat the error.
+	proofErr := r.refreshProofRequests(ctx, c)
+	if isConnectionError(proofErr) {
+		return proofErr
+	}
+
+	return errors.Join(proofErr, r.refreshRequesterUsage(ctx, conn))
+}
+
+// isConnectionError reports whether err means the connection itself is
+// unusable (a refused or rejected handshake, an unreachable host, or the cycle
+// running out of time), as opposed to the server answering one call with an
+// error.
+func isConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+		return true
+	}
+	return false
 }
 
 // transportCredentials builds the TLS credentials for one cycle, adding the
-// mTLS client certificate when one is configured. The key pair is loaded from
-// disk each cycle so a rotated certificate (e.g. an updated Kubernetes secret
-// mount) takes effect without a restart. A load failure fails the cycle rather
-// than falling back to no certificate, which the server would reject anyway
-// with a less useful error.
-func (r *SuccinctProverNetworkProvider) transportCredentials() (credentials.TransportCredentials, error) {
+// mTLS client certificate when one is configured.
+//
+// The key pair is loaded on each handshake rather than once up front, so a
+// rotated certificate (e.g. an updated Kubernetes secret mount) is sent on the
+// next handshake without a restart, however long the connection lives. A load
+// failure fails the handshake, and with it the cycle, rather than falling back
+// to no certificate, which the server would reject with a less useful error.
+func (r *SuccinctProverNetworkProvider) transportCredentials() credentials.TransportCredentials {
 	cfg := &tls.Config{RootCAs: r.rootCAs}
 
 	if r.clientCert != nil && r.clientKey != nil {
-		cert, err := tls.LoadX509KeyPair(*r.clientCert, *r.clientKey)
-		if err != nil {
-			return nil, fmt.Errorf("load mTLS client certificate: %w", err)
-		}
+		certPath, keyPath := *r.clientCert, *r.clientKey
 
 		// Return the certificate unconditionally. With tls.Config.Certificates
 		// instead, Go only sends a certificate whose issuer is in the server's
 		// advertised acceptable CAs, and silently sends none otherwise, which
 		// surfaces as an opaque handshake rejection.
 		cfg.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+			if err != nil {
+				return nil, fmt.Errorf("load mTLS client certificate: %w", err)
+			}
 			return &cert, nil
 		}
 	}
 
-	return credentials.NewTLS(cfg), nil
+	return credentials.NewTLS(cfg)
 }
 
 // refreshRequesterUsage fetches each configured requester's gas usage for the
 // most recent complete hour. The network buckets usage hourly, so an in-progress
 // hour would report a partial total that only climbs until the hour closes;
 // reading one hour behind keeps the gauge on settled numbers.
+//
+// A requester the server answers with an error is logged with its address and
+// skipped, and the rest are still fetched; the cycle then fails with a count.
+// A connection failure stops at once, since every remaining call would fail
+// the same way.
 func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Context, conn *grpc.ClientConn) error {
-	r.usage = nil
-
 	end := time.Now().UTC().Truncate(time.Hour)
 	start := end.Add(-time.Hour)
 
 	// The RPC is requester-scoped and has no "all requesters" mode, so each
 	// configured requester costs a call. With none configured, none are made.
-	// One requester's failure does not stop the others from being fetched.
-	var errs []error
+	failed := 0
 	for _, requester := range r.usageRequesters {
 		usage, err := r.requesterUsage(ctx, conn, requester, start, end)
+		if isConnectionError(err) {
+			return err
+		}
 		if err != nil {
-			errs = append(errs, err)
+			failed++
 			continue
 		}
 		if usage != nil {
@@ -161,7 +188,11 @@ func (r *SuccinctProverNetworkProvider) refreshRequesterUsage(ctx context.Contex
 		}
 	}
 
-	return errors.Join(errs...)
+	if failed > 0 {
+		return fmt.Errorf("get requester usage failed for %d of %d requesters", failed, len(r.usageRequesters))
+	}
+
+	return nil
 }
 
 // requesterUsage fetches a single requester's usage for the given window,
@@ -186,6 +217,12 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 
 	res, err := spnpb.GetRequesterUsage(metadata.AppendToOutgoingContext(ctx, "api-key", r.apiKey), conn, req)
 	if err != nil {
+		// A connection failure is the caller's to report, once for the cycle.
+		// Anything else is specific to this requester, so log it here with the
+		// address as a field.
+		if !isConnectionError(err) {
+			r.logger.Error().Err(err).Str("requester", req.Requester).Msg("Failed to get requester usage")
+		}
 		return nil, fmt.Errorf("get requester usage for %s: %w", req.Requester, err)
 	}
 
@@ -235,8 +272,6 @@ func (r *SuccinctProverNetworkProvider) requesterUsage(
 }
 
 func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context, c spnpb.ProverNetworkClient) error {
-	r.proofRequests = nil
-
 	limit := uint32(100)
 
 	req := &spnpb.GetFilteredProofRequestsRequest{
@@ -264,7 +299,9 @@ func (r *SuccinctProverNetworkProvider) refreshProofRequests(ctx context.Context
 
 func (r *SuccinctProverNetworkProvider) PublishEvents(ctx context.Context) error {
 	for _, proof := range r.proofRequests {
-		if time.Unix(int64(*proof.FulfilledAt), 0).Compare(r.start) < 0 {
+		// fulfilled_at is optional on the wire; a proof without it cannot be
+		// placed after startup, so skip it rather than dereference nil.
+		if proof.FulfilledAt == nil || time.Unix(int64(proof.GetFulfilledAt()), 0).Compare(r.start) < 0 {
 			continue
 		}
 

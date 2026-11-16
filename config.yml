@@ -626,11 +626,11 @@
     ## @env PANOPTICHAIN_PROVIDERS_SUCCINCT_PROVER_NETWORK_0_CLIENT_CERT - string - optional
     ## Path to a PEM client certificate presented for mTLS, for networks that
     ## only accept mTLS. Must be set together with `client_key`; startup fails
-    ## if only one is set or either file is missing. Without them the
-    ## connection is server-authenticated TLS and `api_key` is the only
-    ## credential.
+    ## if only one is set, either file is missing, or the two do not load as a
+    ## matching key pair. Without them the connection is server-authenticated
+    ## TLS and `api_key` is the only credential.
     ##
-    ## The key pair is re-read every polling interval, so replacing the files
+    ## The key pair is re-read on every TLS handshake, so replacing the files
     ## (e.g. updating the mounted Kubernetes secret) rotates the certificate
     ## without a restart. A cycle whose key pair cannot be loaded fails and
     ## publishes nothing.

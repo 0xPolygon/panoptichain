@@ -3,7 +3,9 @@
 package config
 
 import (
+	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -217,8 +219,9 @@ type SuccinctProverNetwork struct {
 	// ClientCert and ClientKey are paths to a PEM client certificate and its
 	// private key, presented to the network for mTLS. They are set together or
 	// not at all; without them the connection is server-authenticated TLS and
-	// the API key is the only credential. The files are re-read every cycle, so
-	// a rotated certificate is picked up without a restart.
+	// the API key is the only credential. Init checks that the pair loads; the
+	// provider then re-reads it on every handshake, so a rotated certificate is
+	// picked up without a restart.
 	ClientCert *string `mapstructure:"client_cert" validate:"required_with=ClientKey,omitempty,file"`
 	ClientKey  *string `mapstructure:"client_key" validate:"required_with=ClientCert,omitempty,file"`
 }
@@ -373,7 +376,27 @@ func Init() error {
 		return err
 	}
 
+	if err := checkClientCertificates(next); err != nil {
+		return err
+	}
+
 	c = next
 
+	return nil
+}
+
+// checkClientCertificates loads each configured mTLS key pair once, so a pair
+// that does not parse or does not match (swapped files, a non-PEM file, a key
+// for another certificate) fails startup instead of every cycle. The provider
+// still reloads the pair on each handshake to pick up rotation.
+func checkClientCertificates(cfg *config) error {
+	for _, n := range cfg.Providers.SuccinctProverNetworks {
+		if n.ClientCert == nil || n.ClientKey == nil {
+			continue
+		}
+		if _, err := tls.LoadX509KeyPair(*n.ClientCert, *n.ClientKey); err != nil {
+			return fmt.Errorf("succinct_prover_network %q: load mTLS client certificate: %w", n.Name, err)
+		}
+	}
 	return nil
 }
